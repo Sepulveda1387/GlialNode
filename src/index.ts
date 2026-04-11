@@ -1,3 +1,4 @@
+export * from "./client/index.js";
 export * from "./core/config.js";
 export * from "./core/errors.js";
 export * from "./core/ids.js";

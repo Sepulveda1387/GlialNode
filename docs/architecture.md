@@ -62,6 +62,18 @@ Ranking should combine:
 - freshness
 - recency
 
+### Client Layer
+
+GlialNode now exposes a typed client API for programmatic use in addition to the CLI.
+
+The client layer should:
+
+- create and configure spaces
+- manage scopes, records, events, and links
+- run compaction, retention, and maintenance workflows
+- import and export space snapshots
+- provide a stable package surface so other systems do not need to shell out to the CLI
+
 ## Scopes
 
 GlialNode should support:
@@ -120,3 +132,4 @@ GlialNode is currently being hardened as a portable Node package:
 - the CLI is exposed through a package bin plus a dedicated `./cli` export
 - the compiled CLI keeps a shebang so package-manager-installed binaries work cleanly across Unix-like environments while still remaining Windows-compatible
 - package verification should include a dry-run pack step before any real publish
+- the typed client API should remain the primary programmatic integration surface

@@ -996,8 +996,7 @@ async function requireSpace(
   repository: SqliteMemoryRepository,
   spaceId: string,
 ): Promise<MemorySpace> {
-  const spaces = await repository.listSpaces();
-  const space = spaces.find((entry) => entry.id === spaceId);
+  const space = await repository.getSpace(spaceId);
 
   if (!space) {
     throw new Error(`Unknown space: ${spaceId}`);

@@ -114,6 +114,7 @@ GlialNode currently includes:
 - the v1 domain model for spaces, scopes, events, records, and links
 - a SQLite bootstrap schema with FTS5 indexing and sync triggers
 - a working SQLite repository implementation
+- a typed `GlialNodeClient` for programmatic use
 - retrieval ranking and record promotion helpers
 - a functional CLI for spaces, scopes, and memory records
 - import/export and memory lifecycle commands
@@ -170,6 +171,43 @@ The demo flow exercises the main operational loop:
 6. export the final snapshot
 
 That makes it a good first check for whether the current project shape matches your use case.
+
+## Library Example
+
+GlialNode can be used directly from code without shelling out to the CLI:
+
+```ts
+import { GlialNodeClient } from "glialnode";
+
+const client = new GlialNodeClient({
+  filename: ".glialnode/app.sqlite",
+});
+
+const space = await client.createSpace({ name: "Team Memory" });
+const scope = await client.addScope({
+  spaceId: space.id,
+  type: "agent",
+  label: "planner",
+});
+
+await client.addRecord({
+  spaceId: space.id,
+  scope: { id: scope.id, type: scope.type },
+  tier: "mid",
+  kind: "decision",
+  content: "Prefer lexical retrieval first.",
+  summary: "Retrieval preference",
+});
+
+const matches = await client.searchRecords({
+  spaceId: space.id,
+  text: "lexical retrieval",
+  limit: 5,
+});
+
+console.log(matches.map((record) => record.summary ?? record.content));
+client.close();
+```
 
 ## Packaging Notes
 

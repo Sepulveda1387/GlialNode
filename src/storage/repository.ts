@@ -21,6 +21,7 @@ export interface SpaceReport {
 export interface MemoryRepository {
   createSpace(space: MemorySpace): Promise<void>;
   listSpaces(): Promise<MemorySpace[]>;
+  getSpace(spaceId: string): Promise<MemorySpace | null>;
   upsertScope(scope: ScopeRecord): Promise<void>;
   listScopes(spaceId: string): Promise<ScopeRecord[]>;
   appendEvent(event: MemoryEvent): Promise<void>;

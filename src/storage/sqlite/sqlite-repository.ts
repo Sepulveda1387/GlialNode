@@ -515,6 +515,41 @@ export class SqliteMemoryRepository implements MemoryRepository {
     }));
   }
 
+  async getSpace(spaceId: string): Promise<MemorySpace | null> {
+    const row = this.db
+      .prepare(
+        `
+        SELECT id, name, description, settings_json, created_at, updated_at
+        FROM memory_spaces
+        WHERE id = ?
+        LIMIT 1
+        `,
+      )
+      .get(spaceId) as
+      | {
+          id: string;
+          name: string;
+          description: string | null;
+          settings_json: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      settings: parseJson(row.settings_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   async listScopes(spaceId: string): Promise<ScopeRecord[]> {
     const rows = this.db
       .prepare(
