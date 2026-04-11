@@ -47,7 +47,8 @@ export type EventType =
   | "memory_expired"
   | "memory_superseded"
   | "memory_conflicted"
-  | "memory_decayed";
+  | "memory_decayed"
+  | "memory_reinforced";
 
 export type MemoryLinkType =
   | "derived_from"
@@ -90,6 +91,13 @@ export interface MemorySpaceSettings {
     freshnessDecayPerDay?: number;
     minConfidence?: number;
     minFreshness?: number;
+  };
+  reinforcement?: {
+    enabled?: boolean;
+    confidenceBoost?: number;
+    freshnessBoost?: number;
+    maxConfidence?: number;
+    maxFreshness?: number;
   };
 }
 

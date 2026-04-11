@@ -1125,3 +1125,84 @@ test("CLI decay reduces stale durable memory trust and reports it", async () => 
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI reinforcement strengthens a record and surfaces the lifecycle event", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-reinforce-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Reinforcement Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    await runCommand(
+      parseArgs([
+        "space",
+        "configure",
+        "--id", spaceId,
+        "--reinforcement-confidence-boost", "0.05",
+        "--reinforcement-freshness-boost", "0.1",
+        "--reinforcement-max-confidence", "0.9",
+        "--reinforcement-max-freshness", "0.95",
+      ]),
+      { repository },
+    );
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const addRecordResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "fact",
+        "--content", "Lexical retrieval is still the confirmed default.",
+        "--summary", "Retrieval default",
+        "--confidence", "0.7",
+        "--freshness", "0.5",
+        "--importance", "0.82",
+      ]),
+      { repository },
+    );
+    const recordId = addRecordResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(recordId);
+
+    const reinforce = await runCommand(
+      parseArgs([
+        "memory", "reinforce",
+        "--record-id", recordId,
+        "--strength", "2",
+        "--reason", "manual-confirmation",
+      ]),
+      { repository },
+    );
+    assert.equal(reinforce.lines[0], "Reinforcement applied.");
+    assert.equal(reinforce.lines[1], "reinforced=1");
+
+    const show = await runCommand(
+      parseArgs(["memory", "show", "--record-id", recordId]),
+      { repository },
+    );
+    assert.match(show.lines.join("\n"), /links=1|links=2/);
+
+    const report = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId, "--recent-events", "10"]),
+      { repository },
+    );
+    assert.match(report.lines.join("\n"), /memory_reinforced/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

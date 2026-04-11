@@ -41,6 +41,14 @@ export interface DecayPolicy {
   minFreshness: number;
 }
 
+export interface ReinforcementPolicy {
+  enabled: boolean;
+  confidenceBoost: number;
+  freshnessBoost: number;
+  maxConfidence: number;
+  maxFreshness: number;
+}
+
 export const defaultConfig: GlialNodeConfig = {
   maxWorkingMemoryRecords: 50,
   staleRecordWindowDays: 14,
@@ -80,4 +88,12 @@ export const defaultDecayPolicy: DecayPolicy = {
   freshnessDecayPerDay: 0.02,
   minConfidence: 0.2,
   minFreshness: 0.15,
+};
+
+export const defaultReinforcementPolicy: ReinforcementPolicy = {
+  enabled: true,
+  confidenceBoost: 0.08,
+  freshnessBoost: 0.12,
+  maxConfidence: 1,
+  maxFreshness: 1,
 };

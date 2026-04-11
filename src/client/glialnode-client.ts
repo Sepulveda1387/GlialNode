@@ -1,7 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { CompactionPolicy, ConflictPolicy, DecayPolicy, RetentionPolicy } from "../core/config.js";
+import type {
+  CompactionPolicy,
+  ConflictPolicy,
+  DecayPolicy,
+  ReinforcementPolicy,
+  RetentionPolicy,
+} from "../core/config.js";
 import { createId } from "../core/ids.js";
 import type {
   ActorType,
@@ -34,6 +40,13 @@ import {
 } from "../memory/decay.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
+  applyReinforcementPlan,
+  createReinforcementEvents,
+  createReinforcementSummaryLinks,
+  createReinforcementSummaryRecord,
+  planReinforcement,
+} from "../memory/reinforcement.js";
+import {
   applyRetentionPlan,
   createRetentionEvents,
   createRetentionSummaryLinks,
@@ -63,6 +76,7 @@ export interface ConfigureSpaceInput {
   compaction?: Partial<CompactionPolicy>;
   conflict?: Partial<ConflictPolicy>;
   decay?: Partial<DecayPolicy>;
+  reinforcement?: Partial<ReinforcementPolicy>;
   retentionDays?: Partial<RetentionPolicy>;
 }
 
@@ -105,6 +119,12 @@ export interface MaintenanceResult {
   decayPlan: ReturnType<typeof planDecay>;
   retentionPlan: ReturnType<typeof planRetention>;
   applied: boolean;
+}
+
+export interface ReinforceRecordOptions {
+  reason?: string;
+  strength?: number;
+  now?: Date;
 }
 
 export class GlialNodeClient {
@@ -162,6 +182,7 @@ export class GlialNodeClient {
         input.retentionDays ? { retentionDays: input.retentionDays } : undefined,
         input.conflict ? { conflict: input.conflict } : undefined,
         input.decay ? { decay: input.decay } : undefined,
+        input.reinforcement ? { reinforcement: input.reinforcement } : undefined,
       ),
     );
 
@@ -390,6 +411,36 @@ export class GlialNodeClient {
     return plan;
   }
 
+  async reinforceRecord(recordId: string, options: ReinforceRecordOptions = {}): Promise<ReturnType<typeof planReinforcement>> {
+    const record = await requireRecord(this.repository, recordId);
+    const space = await requireSpace(this.repository, record.spaceId);
+    const records = await this.repository.listRecords(record.spaceId, Number.MAX_SAFE_INTEGER);
+    const plan = planReinforcement(records, space.settings?.reinforcement, {
+      recordIds: [recordId],
+      reason: options.reason,
+      strength: options.strength,
+      now: options.now,
+    });
+
+    for (const updatedRecord of applyReinforcementPlan(plan)) {
+      await this.repository.writeRecord(updatedRecord);
+    }
+
+    for (const event of createReinforcementEvents(plan)) {
+      await this.repository.appendEvent(event);
+    }
+
+    const summaryRecord = createReinforcementSummaryRecord(plan);
+    if (summaryRecord) {
+      await this.repository.writeRecord(summaryRecord);
+      for (const link of createReinforcementSummaryLinks(summaryRecord, plan)) {
+        await this.repository.linkRecords(link);
+      }
+    }
+
+    return plan;
+  }
+
   async maintainSpace(spaceId: string, options: { apply?: boolean } = {}): Promise<MaintenanceResult> {
     const space = await requireSpace(this.repository, spaceId);
     const initialRecords = await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
@@ -541,45 +592,32 @@ export class GlialNodeClient {
 }
 
 function mergeSpaceSettings(
-  existing?: MemorySpaceSettings,
-  first?: MemorySpaceSettings,
-  second?: MemorySpaceSettings,
-  third?: MemorySpaceSettings,
-  fourth?: MemorySpaceSettings,
+  ...settings: Array<MemorySpaceSettings | undefined>
 ): MemorySpaceSettings {
+  const [existing, ...rest] = settings;
+
   return {
     ...(existing ?? {}),
-    ...(first ?? {}),
-    ...(second ?? {}),
-    ...(third ?? {}),
-    ...(fourth ?? {}),
+    ...Object.assign({}, ...rest.map((entry) => entry ?? {})),
     retentionDays: {
       ...(existing?.retentionDays ?? {}),
-      ...(first?.retentionDays ?? {}),
-      ...(second?.retentionDays ?? {}),
-      ...(third?.retentionDays ?? {}),
-      ...(fourth?.retentionDays ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.retentionDays ?? {})),
     },
     compaction: {
       ...(existing?.compaction ?? {}),
-      ...(first?.compaction ?? {}),
-      ...(second?.compaction ?? {}),
-      ...(third?.compaction ?? {}),
-      ...(fourth?.compaction ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.compaction ?? {})),
     },
     conflict: {
       ...(existing?.conflict ?? {}),
-      ...(first?.conflict ?? {}),
-      ...(second?.conflict ?? {}),
-      ...(third?.conflict ?? {}),
-      ...(fourth?.conflict ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.conflict ?? {})),
     },
     decay: {
       ...(existing?.decay ?? {}),
-      ...(first?.decay ?? {}),
-      ...(second?.decay ?? {}),
-      ...(third?.decay ?? {}),
-      ...(fourth?.decay ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.decay ?? {})),
+    },
+    reinforcement: {
+      ...(existing?.reinforcement ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.reinforcement ?? {})),
     },
   };
 }

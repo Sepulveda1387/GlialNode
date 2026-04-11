@@ -14,6 +14,7 @@ export * from "./conflicts.js";
 export * from "./decay.js";
 export * from "./distillation.js";
 export * from "./promotion.js";
+export * from "./reinforcement.js";
 export * from "./retention.js";
 export * from "./retrieval.js";
 export * from "./service.js";

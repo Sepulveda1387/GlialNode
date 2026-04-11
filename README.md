@@ -129,6 +129,7 @@ GlialNode currently includes:
 - semantic distillation of related records during compaction
 - automatic contradiction detection with confidence penalties on older conflicting memory
 - time-based confidence and freshness decay for stale durable memory
+- explicit reinforcement workflows that strengthen confirmed memory again
 - per-space policy settings for configurable memory behavior
 - SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
 - applied SQLite migration tracking and schema-version introspection
@@ -344,6 +345,31 @@ The default decay policy is:
 
 Decay can be run directly or as part of `space maintain`.
 
+## Memory Reinforcement
+
+GlialNode now includes explicit reinforcement for memory that has been confirmed again.
+
+Instead of mutating trust on every read, reinforcement is an observable workflow. That keeps retrieval side-effect free by default while still letting an operator or host system strengthen a record after:
+
+- a manual confirmation
+- a successful downstream use
+- a deliberate review step
+
+Reinforcement can raise:
+
+- `confidence` when a memory has been revalidated
+- `freshness` when a memory has become recently relevant again
+
+The default reinforcement policy is:
+
+- `enabled=true`
+- `confidenceBoost=0.08`
+- `freshnessBoost=0.12`
+- `maxConfidence=1`
+- `maxFreshness=1`
+
+Reinforcement creates a `memory_reinforced` event and a reinforcement summary record so the trust increase is inspectable later.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -372,11 +398,13 @@ glialnode memory compact --space-id <space-id>
 glialnode memory compact --space-id <space-id> --apply
 glialnode memory decay --space-id <space-id>
 glialnode memory decay --space-id <space-id> --apply
+glialnode memory reinforce --record-id <record-id> --strength 2 --reason manual-confirmation
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
 glialnode space configure --id <space-id> --decay-enabled true --decay-min-age-days 7 --decay-confidence-per-day 0.02 --decay-freshness-per-day 0.03
+glialnode space configure --id <space-id> --reinforcement-enabled true --reinforcement-confidence-boost 0.05 --reinforcement-freshness-boost 0.1
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>
 glialnode space maintain --id <space-id>

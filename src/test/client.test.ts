@@ -394,3 +394,56 @@ test("GlialNodeClient decay lowers stale durable memory trust", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient reinforcement strengthens a durable memory explicitly", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-reinforce-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Reinforcement Space",
+      settings: {
+        reinforcement: {
+          confidenceBoost: 0.05,
+          freshnessBoost: 0.1,
+          maxConfidence: 0.96,
+          maxFreshness: 0.92,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const record = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable search flows.",
+      summary: "Retrieval preference",
+      confidence: 0.7,
+      freshness: 0.45,
+      importance: 0.82,
+    });
+
+    const plan = await client.reinforceRecord(record.id, {
+      reason: "operator-confirmed",
+      strength: 2,
+    });
+    assert.equal(plan.reinforced.length, 1);
+
+    const updated = await client.getRecord(record.id);
+    assert.equal(updated.confidence, 0.8);
+    assert.equal(updated.freshness, 0.65);
+
+    const report = await client.getSpaceReport(space.id, 10);
+    assert.match(report.recentLifecycleEvents.map((event) => event.type).join(","), /memory_reinforced/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

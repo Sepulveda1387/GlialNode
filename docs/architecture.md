@@ -99,6 +99,18 @@ The current design:
 - respects configured floors so decay does not erase trust completely
 - emits a `memory_decayed` event and a decay summary record for observability
 
+### Reinforcement Handling
+
+The system also needs a positive trust path, not only decay.
+
+The current design:
+
+- keeps retrieval side-effect free by default
+- strengthens memory through an explicit reinforcement workflow
+- raises confidence and freshness within configured ceilings
+- emits a `memory_reinforced` event and a reinforcement summary record
+- allows different spaces to tune how quickly memories regain trust
+
 ### Client Layer
 
 GlialNode now exposes a typed client API for programmatic use in addition to the CLI.
