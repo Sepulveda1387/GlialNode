@@ -87,6 +87,13 @@ And it should be able to turn that recall pack into an answer trace:
 - citations for primary and supporting records
 - provenance-aware reasons such as query match, distilled memory, or explicit record links
 
+For downstream execution, the retrieval layer should also be able to emit a memory bundle:
+
+- normalized primary and supporting entries
+- readable and compact memory text together
+- the trace produced from the same recall pack
+- links needed to preserve provenance inside the handoff object
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.

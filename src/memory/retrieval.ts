@@ -87,6 +87,25 @@ export interface RecallTrace {
   citations: RecallCitation[];
 }
 
+export interface MemoryBundleEntry {
+  recordId: string;
+  role: "primary" | "supporting";
+  tier: MemoryRecord["tier"];
+  kind: MemoryRecord["kind"];
+  status: MemoryRecord["status"];
+  summary?: string;
+  content: string;
+  compactContent?: string;
+  tags: string[];
+}
+
+export interface MemoryBundle {
+  trace: RecallTrace;
+  primary: MemoryBundleEntry;
+  supporting: MemoryBundleEntry[];
+  links: MemoryRecordLink[];
+}
+
 export interface BuildRecallPackOptions {
   queryText?: string;
   supportLimit?: number;
@@ -179,6 +198,15 @@ export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTr
   };
 }
 
+export function buildMemoryBundle(pack: RecallPack, queryText?: string): MemoryBundle {
+  return {
+    trace: buildRecallTrace(pack, queryText),
+    primary: toBundleEntry(pack.primary, "primary"),
+    supporting: pack.supporting.map((record) => toBundleEntry(record, "supporting")),
+    links: pack.links,
+  };
+}
+
 function isContextuallyRelated(primary: MemoryRecord, candidate: MemoryRecord, queryText?: string): boolean {
   const primaryTags = new Set(primary.tags.map((tag) => tag.toLowerCase()));
   const candidateTags = new Set(candidate.tags.map((tag) => tag.toLowerCase()));
@@ -263,6 +291,20 @@ function truncateText(value: string, length: number): string {
   }
 
   return `${value.slice(0, length - 3)}...`;
+}
+
+function toBundleEntry(record: MemoryRecord, role: "primary" | "supporting"): MemoryBundleEntry {
+  return {
+    recordId: record.id,
+    role,
+    tier: record.tier,
+    kind: record.kind,
+    status: record.status,
+    summary: record.summary,
+    content: record.content,
+    compactContent: record.compactContent,
+    tags: record.tags,
+  };
 }
 
 function scoreQueryAlignment(record: MemoryRecord, queryText: string): number {

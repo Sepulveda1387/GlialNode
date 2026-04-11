@@ -46,7 +46,7 @@ import {
   planReinforcement,
   summarizeReinforcementPlan,
 } from "../memory/reinforcement.js";
-import { buildRecallPack, buildRecallTrace } from "../memory/retrieval.js";
+import { buildMemoryBundle, buildRecallPack, buildRecallTrace } from "../memory/retrieval.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -132,6 +132,7 @@ export function usageText(): string {
     "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
+    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
@@ -643,6 +644,65 @@ async function runMemoryCommand(
     }
 
     return { lines };
+  }
+
+  if (action === "bundle") {
+    const spaceId = requireFlag(parsed.flags, "space-id");
+    const query = {
+      spaceId,
+      text: parsed.flags.text,
+      scopeIds: parsed.flags["scope-id"] ? [parsed.flags["scope-id"]] : undefined,
+      tiers: parsed.flags.tier ? [requireTier(parsed.flags.tier)] : undefined,
+      kinds: parsed.flags.kind ? [requireKind(parsed.flags.kind)] : undefined,
+      visibility: parsed.flags.visibility ? [requireVisibility(parsed.flags.visibility)] : undefined,
+      statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
+      limit: parsed.flags.limit ? Number(parsed.flags.limit) : 3,
+    };
+    const records = await context.repository.searchRecords(query);
+
+    if (parsed.flags.reinforce === "true" && records.length > 0) {
+      const space = await requireSpace(context.repository, spaceId);
+      const availableRecords = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+      const reinforceLimit = parsed.flags["reinforce-limit"]
+        ? Number(parsed.flags["reinforce-limit"])
+        : records.length;
+      const plan = planReinforcement(availableRecords, space.settings?.reinforcement, {
+        recordIds: records.slice(0, Math.max(reinforceLimit, 0)).map((record) => record.id),
+        strength: parseOptionalNumber(parsed.flags["reinforce-strength"]),
+        reason: parsed.flags["reinforce-reason"] ?? "successful-retrieval",
+      });
+
+      for (const updatedRecord of applyReinforcementPlan(plan)) {
+        await context.repository.writeRecord(updatedRecord);
+      }
+
+      for (const event of createReinforcementEvents(plan)) {
+        await context.repository.appendEvent(event);
+      }
+
+      const summaryRecord = createReinforcementSummaryRecord(plan);
+      if (summaryRecord) {
+        await context.repository.writeRecord(summaryRecord);
+        for (const link of createReinforcementSummaryLinks(summaryRecord, plan)) {
+          await context.repository.linkRecords(link);
+        }
+      }
+    }
+
+    const allRecords = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+    const bundles = [];
+    for (const primary of records) {
+      const links = await context.repository.listLinksForRecord(primary.id);
+      const pack = buildRecallPack(primary, allRecords, links, {
+        queryText: parsed.flags.text,
+        supportLimit: parsed.flags["support-limit"] ? Number(parsed.flags["support-limit"]) : 3,
+      });
+      bundles.push(buildMemoryBundle(pack, parsed.flags.text));
+    }
+
+    return {
+      lines: JSON.stringify(bundles, null, 2).split(/\r?\n/),
+    };
   }
 
   if (action === "list") {

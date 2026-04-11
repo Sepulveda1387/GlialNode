@@ -301,6 +301,25 @@ console.log(traces[0]?.summary);
 console.log(traces[0]?.citations);
 ```
 
+For direct multi-agent handoff, GlialNode can also build a memory bundle:
+
+```ts
+const bundles = await client.bundleRecall(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval",
+    limit: 1,
+  },
+  {
+    primaryLimit: 1,
+    supportLimit: 3,
+  },
+);
+
+console.log(bundles[0]?.primary.compactContent);
+console.log(bundles[0]?.trace);
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -376,6 +395,15 @@ It can also emit recall traces:
 - reasons such as direct query match, distilled scope memory, or linked provenance like `supports`
 
 That makes it easier for downstream agents to answer with evidence instead of opaque recall.
+
+And it can package the whole result as a memory bundle:
+
+- the primary memory in a normalized handoff shape
+- supporting memory entries with readable and compact text
+- the recall trace
+- relevant intra-bundle links
+
+That gives downstream orchestrators and agents a stable object they can consume directly instead of reconstructing context from raw search results.
 
 ## Contradiction Handling
 
@@ -468,6 +496,7 @@ glialnode memory search --space-id <space-id> --text lexical
 glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

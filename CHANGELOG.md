@@ -14,6 +14,7 @@
 - Added opt-in reinforcement for successful search results in the client and CLI without changing default search behavior.
 - Added recall-pack retrieval so client and CLI can return primary matches with linked supporting memory.
 - Added structured recall traces with citation-style reasons for primary and supporting memory.
+- Added reusable memory bundles for downstream agent and orchestrator handoff.
 
 ## 0.1.0
 

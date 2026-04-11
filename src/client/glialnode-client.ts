@@ -46,7 +46,14 @@ import {
   createReinforcementSummaryRecord,
   planReinforcement,
 } from "../memory/reinforcement.js";
-import { buildRecallPack, buildRecallTrace, type RecallPack, type RecallTrace } from "../memory/retrieval.js";
+import {
+  buildMemoryBundle,
+  buildRecallPack,
+  buildRecallTrace,
+  type MemoryBundle,
+  type RecallPack,
+  type RecallTrace,
+} from "../memory/retrieval.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -324,6 +331,14 @@ export class GlialNodeClient {
   ): Promise<RecallTrace[]> {
     const packs = await this.recallRecords(query, options);
     return packs.map((pack) => buildRecallTrace(pack, query.text));
+  }
+
+  async bundleRecall(
+    query: Parameters<MemoryRepository["searchRecords"]>[0],
+    options: RecallOptions = {},
+  ): Promise<MemoryBundle[]> {
+    const packs = await this.recallRecords(query, options);
+    return packs.map((pack) => buildMemoryBundle(pack, query.text));
   }
 
   async promoteRecord(recordId: string): Promise<MemoryRecord> {

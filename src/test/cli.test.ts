@@ -1479,3 +1479,102 @@ test("CLI trace returns structured recall citations", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI bundle returns a reusable memory bundle payload", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const primaryResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable search flows.",
+        "--summary", "Lexical retrieval decision",
+        "--compact-content", "U:req retrieval=lexical_first",
+        "--tags", "retrieval,search",
+      ]),
+      { repository },
+    );
+    const primaryId = primaryResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(primaryId);
+
+    const supportResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval is easier to debug than a heavier semantic stack.",
+        "--summary", "Lexical debugging benefit",
+        "--compact-content", "F:retrieval debug=easy",
+        "--tags", "retrieval,debugging",
+      ]),
+      { repository },
+    );
+    const supportId = supportResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(supportId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", primaryId,
+        "--to-record-id", supportId,
+        "--type", "supports",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "lexical retrieval",
+        "--limit", "1",
+        "--support-limit", "3",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      trace: { summary: string };
+      primary: { compactContent?: string; recordId: string };
+      supporting: Array<{ recordId: string }>;
+      links: Array<{ type: string }>;
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.match(parsed[0]?.trace.summary ?? "", /Recalled/);
+    assert.ok(parsed[0]?.primary.compactContent);
+    assert.ok(
+      parsed[0]?.primary.recordId === supportId ||
+      parsed[0]?.supporting.some((entry) => entry.recordId === supportId),
+    );
+    assert.ok(parsed[0]?.links.some((link) => link.type === "supports"));
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
