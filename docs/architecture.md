@@ -41,6 +41,9 @@ Each record can also carry two representations at once:
 - a human-readable memory body
 - a compact symbolic memory body for lower-token internal recall
 
+Generated compact memory should stay aligned with the record lifecycle.
+That means tier/status changes and maintenance workflows may rewrite generated compact text, while manually supplied compact text should be preserved.
+
 ### Link Store
 
 Memory records may reference other records so GlialNode can keep provenance and resolve changing truth over time.

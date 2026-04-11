@@ -7,6 +7,7 @@
 - Added a typed client API for programmatic use.
 - Added a runnable cross-platform client demo for the package API.
 - Added compact memory encoding support for lower-token internal recall.
+- Added compact-memory source tracking and automatic refresh for generated encodings.
 - Added SQLite connection hardening defaults and runtime inspection.
 - Added applied SQLite migration tracking and schema version reporting.
 - Added memory spaces, scopes, records, events, and provenance links.

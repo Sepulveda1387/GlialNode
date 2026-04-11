@@ -474,6 +474,7 @@ async function runMemoryCommand(
         `tags=${record.tags.join(",")}`,
         `summary=${record.summary ?? ""}`,
         `compactContent=${record.compactContent ?? ""}`,
+        `compactSource=${record.compactSource ?? ""}`,
         `content=${record.content}`,
         `links=${links.length}`,
         ...links.map((link) => `${link.id} ${link.type} ${link.fromRecordId} -> ${link.toRecordId}`),

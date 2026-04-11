@@ -21,6 +21,7 @@ export type MemoryKind =
   | "error";
 
 export type MemoryVisibility = "private" | "shared" | "space";
+export type CompactContentSource = "generated" | "manual";
 
 export type RecordStatus = "active" | "archived" | "superseded" | "expired";
 
@@ -98,6 +99,7 @@ export interface MemoryRecord {
   content: string;
   summary?: string;
   compactContent?: string;
+  compactSource?: CompactContentSource;
   scope: MemoryScope;
   visibility: MemoryVisibility;
   status: RecordStatus;
@@ -139,6 +141,7 @@ export interface CreateMemoryRecordInput {
   content: string;
   summary?: string;
   compactContent?: string;
+  compactSource?: CompactContentSource;
   scope: MemoryScope;
   visibility?: MemoryVisibility;
   status?: RecordStatus;

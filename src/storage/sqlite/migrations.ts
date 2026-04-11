@@ -194,6 +194,17 @@ BEGIN
 END;
 `,
   },
+  {
+    version: 3,
+    description: "Track whether compact memory content was generated or provided manually.",
+    sql: `
+ALTER TABLE memory_records ADD COLUMN compact_source TEXT CHECK (compact_source IN ('generated', 'manual'));
+
+UPDATE memory_records
+SET compact_source = 'generated'
+WHERE compact_source IS NULL;
+`,
+  },
 ];
 
 export function applySqliteMigrations(

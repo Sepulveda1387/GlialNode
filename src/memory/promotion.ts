@@ -1,5 +1,6 @@
 import type { MemoryRecord, MemoryTier } from "../core/types.js";
 import { ValidationError } from "../core/errors.js";
+import { refreshCompactMemoryRecord } from "./compact.js";
 
 const tierOrder: MemoryTier[] = ["short", "mid", "long"];
 
@@ -21,11 +22,11 @@ export function moveRecordToTier(record: MemoryRecord, targetTier: MemoryTier): 
     throw new ValidationError("Records cannot be demoted with moveRecordToTier.");
   }
 
-  return {
+  return refreshCompactMemoryRecord({
     ...record,
     tier: targetTier,
     updatedAt: new Date().toISOString(),
-  };
+  });
 }
 
 export function promoteRecord(record: MemoryRecord): MemoryRecord {

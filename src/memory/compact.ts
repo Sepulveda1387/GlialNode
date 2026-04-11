@@ -1,4 +1,9 @@
-import type { CreateMemoryRecordInput, MemoryRecord, MemoryScope } from "../core/types.js";
+import type {
+  CompactContentSource,
+  CreateMemoryRecordInput,
+  MemoryRecord,
+  MemoryScope,
+} from "../core/types.js";
 
 const kindCodes: Record<MemoryRecord["kind"], string> = {
   fact: "fct",
@@ -110,6 +115,67 @@ export function ensureCompactMemoryText(record: CreateMemoryRecordInput): string
   }
 
   return buildCompactMemoryText(record);
+}
+
+export function resolveCompactContentSource(
+  input: Pick<CreateMemoryRecordInput, "compactContent" | "compactSource">,
+): CompactContentSource {
+  if (input.compactSource) {
+    return input.compactSource;
+  }
+
+  return input.compactContent?.trim() ? "manual" : "generated";
+}
+
+export function refreshCompactMemoryRecord(record: MemoryRecord, updateTimestamp = true): MemoryRecord {
+  if (record.compactSource === "manual") {
+    return record;
+  }
+
+  const nextCompactContent = buildCompactMemoryText({
+    tier: record.tier,
+    kind: record.kind,
+    content: record.content,
+    summary: record.summary,
+    scope: record.scope,
+    tags: record.tags,
+    importance: record.importance,
+    confidence: record.confidence,
+    freshness: record.freshness,
+    status: record.status,
+  });
+
+  if (nextCompactContent === record.compactContent && record.compactSource === "generated") {
+    return record;
+  }
+
+  return {
+    ...record,
+    compactContent: nextCompactContent,
+    compactSource: "generated",
+    updatedAt: updateTimestamp ? new Date().toISOString() : record.updatedAt,
+  };
+}
+
+export function shouldRefreshCompactMemory(record: MemoryRecord): boolean {
+  if (record.compactSource === "manual") {
+    return false;
+  }
+
+  const expected = buildCompactMemoryText({
+    tier: record.tier,
+    kind: record.kind,
+    content: record.content,
+    summary: record.summary,
+    scope: record.scope,
+    tags: record.tags,
+    importance: record.importance,
+    confidence: record.confidence,
+    freshness: record.freshness,
+    status: record.status,
+  });
+
+  return expected !== (record.compactContent ?? "");
 }
 
 function summarizeTokens(text: string, limit: number): string[] {

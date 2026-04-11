@@ -38,6 +38,7 @@ interface MemoryRecordRow {
   content: string;
   summary: string | null;
   compact_content: string | null;
+  compact_source: MemoryRecord["compactSource"] | null;
   scope_id: string;
   scope_type: ScopeRecord["type"];
   visibility: MemoryRecord["visibility"];
@@ -200,16 +201,17 @@ export class SqliteMemoryRepository implements MemoryRepository {
       .prepare(
         `
         INSERT INTO memory_records (
-          id, space_id, scope_id, tier, kind, content, summary, compact_content, visibility, status, tags_json,
+          id, space_id, scope_id, tier, kind, content, summary, compact_content, compact_source, visibility, status, tags_json,
           importance, confidence, freshness, source_event_id, expires_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           tier = excluded.tier,
           kind = excluded.kind,
           content = excluded.content,
           summary = excluded.summary,
           compact_content = excluded.compact_content,
+          compact_source = excluded.compact_source,
           visibility = excluded.visibility,
           status = excluded.status,
           tags_json = excluded.tags_json,
@@ -230,6 +232,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         record.content,
         record.summary ?? null,
         record.compactContent ?? null,
+        record.compactSource ?? "generated",
         record.visibility,
         record.status,
         JSON.stringify(record.tags),
@@ -307,6 +310,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
           mr.content,
           mr.summary,
           mr.compact_content,
+          mr.compact_source,
           mr.visibility,
           mr.status,
           mr.tags_json,
@@ -343,6 +347,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
           mr.content,
           mr.summary,
           mr.compact_content,
+          mr.compact_source,
           mr.visibility,
           mr.status,
           mr.tags_json,
@@ -404,6 +409,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         mr.content,
         mr.summary,
         mr.compact_content,
+        mr.compact_source,
         mr.visibility,
         mr.status,
         mr.tags_json,
@@ -677,6 +683,7 @@ function mapMemoryRecordRow(row: MemoryRecordRow): MemoryRecord {
     content: row.content,
     summary: row.summary ?? undefined,
     compactContent: row.compact_content ?? undefined,
+    compactSource: row.compact_source ?? undefined,
     scope: {
       id: row.scope_id,
       type: row.scope_type,

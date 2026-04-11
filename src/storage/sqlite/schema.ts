@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 2;
+export const SQLITE_SCHEMA_VERSION = 3;
 
 export const sqliteBootstrapSql = `
 CREATE TABLE IF NOT EXISTS memory_spaces (
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS memory_records (
   content TEXT NOT NULL,
   summary TEXT,
   compact_content TEXT,
+  compact_source TEXT CHECK (compact_source IN ('generated', 'manual')),
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'shared', 'space')),
   status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'superseded', 'expired')),
   tags_json TEXT NOT NULL,

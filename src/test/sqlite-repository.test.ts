@@ -201,11 +201,12 @@ test("SqliteMemoryRepository tracks applied schema migrations", async () => {
   const firstRepository = new SqliteMemoryRepository({ filename: databasePath });
 
   try {
-    assert.equal(firstRepository.getSchemaVersion(), 2);
+    assert.equal(firstRepository.getSchemaVersion(), 3);
     const firstPass = listAppliedSqliteMigrations(firstRepository.db);
-    assert.equal(firstPass.length, 2);
+    assert.equal(firstPass.length, 3);
     assert.equal(firstPass[0]?.version, 1);
     assert.equal(firstPass[1]?.version, 2);
+    assert.equal(firstPass[2]?.version, 3);
   } finally {
     firstRepository.close();
   }
@@ -213,11 +214,12 @@ test("SqliteMemoryRepository tracks applied schema migrations", async () => {
   const secondRepository = new SqliteMemoryRepository({ filename: databasePath });
 
   try {
-    assert.equal(secondRepository.getSchemaVersion(), 2);
+    assert.equal(secondRepository.getSchemaVersion(), 3);
     const secondPass = listAppliedSqliteMigrations(secondRepository.db);
-    assert.equal(secondPass.length, 2);
+    assert.equal(secondPass.length, 3);
     assert.equal(secondPass[0]?.version, 1);
     assert.equal(secondPass[1]?.version, 2);
+    assert.equal(secondPass[2]?.version, 3);
   } finally {
     secondRepository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

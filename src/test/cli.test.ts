@@ -535,6 +535,7 @@ test("CLI compaction dry-run and apply behave predictably", async () => {
     assert.equal(dryRunResult.lines[0], "Compaction dry run.");
     assert.equal(dryRunResult.lines[1], "promotions=1");
     assert.equal(dryRunResult.lines[2], "archives=1");
+    assert.equal(dryRunResult.lines[3], "refreshed=0");
 
     const beforeList = await runCommand(
       parseArgs(["memory", "list", "--space-id", spaceId, "--limit", "10"]),
@@ -644,6 +645,7 @@ test("Space policy settings can change compaction behavior", async () => {
 
     assert.equal(compactResult.lines[1], "promotions=0");
     assert.equal(compactResult.lines[2], "archives=0");
+    assert.equal(compactResult.lines[3], "refreshed=0");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
