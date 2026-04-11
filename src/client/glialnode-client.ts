@@ -32,11 +32,13 @@ import {
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import type { MemoryRepository, SpaceReport } from "../storage/repository.js";
+import type { SqliteConnectionPolicy } from "../storage/sqlite/connection.js";
 import { SqliteMemoryRepository } from "../storage/sqlite/sqlite-repository.js";
 
 export interface GlialNodeClientOptions {
   filename?: string;
   repository?: MemoryRepository;
+  sqlite?: Partial<SqliteConnectionPolicy>;
 }
 
 export interface CreateSpaceInput {
@@ -105,7 +107,10 @@ export class GlialNodeClient {
 
     const filename = resolve(options.filename ?? ".glialnode/glialnode.sqlite");
     mkdirSync(dirname(filename), { recursive: true });
-    const repository = new SqliteMemoryRepository({ filename });
+    const repository = new SqliteMemoryRepository({
+      filename,
+      connection: options.sqlite,
+    });
     this.repository = repository;
     this.closeRepository = () => repository.close();
   }

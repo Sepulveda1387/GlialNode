@@ -11,10 +11,17 @@ import type {
 import { rankRecordsForRetrieval } from "../../memory/retrieval.js";
 import type { MemoryRepository, SpaceReport } from "../repository.js";
 import { sqliteBootstrapSql } from "./schema.js";
+import {
+  applySqliteConnectionPolicy,
+  createSqliteDatabaseOptions,
+  type SqliteConnectionPolicy,
+  type SqliteRuntimeSettings,
+} from "./connection.js";
 
-interface SqliteRepositoryOptions {
+export interface SqliteRepositoryOptions {
   filename?: string;
   bootstrap?: boolean;
+  connection?: Partial<SqliteConnectionPolicy>;
 }
 
 interface ScopeRow {
@@ -68,9 +75,14 @@ interface MemoryRecordLinkRow {
 
 export class SqliteMemoryRepository implements MemoryRepository {
   readonly db: DatabaseSync;
+  readonly runtimeSettings: SqliteRuntimeSettings;
 
   constructor(options: SqliteRepositoryOptions = {}) {
-    this.db = new DatabaseSync(options.filename ?? ":memory:");
+    this.db = new DatabaseSync(
+      options.filename ?? ":memory:",
+      createSqliteDatabaseOptions(options.connection),
+    );
+    this.runtimeSettings = applySqliteConnectionPolicy(this.db, options.connection);
 
     if (options.bootstrap ?? true) {
       this.bootstrap();
@@ -585,6 +597,10 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
   close(): void {
     this.db.close();
+  }
+
+  getRuntimeSettings(): SqliteRuntimeSettings {
+    return this.runtimeSettings;
   }
 
   private async listEventsByType(

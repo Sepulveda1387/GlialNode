@@ -127,11 +127,17 @@ export function usageText(): string {
 
 async function runStatusCommand(context: CommandContext): Promise<CommandResult> {
   const spaces = await context.repository.listSpaces();
+  const runtime = context.repository.getRuntimeSettings();
+
   return {
     lines: [
-      "GlialNode CLI",
       `spaces=${spaces.length}`,
       "status=ready",
+      `journalMode=${runtime.journalMode.toLowerCase()}`,
+      `synchronous=${runtime.synchronous.toLowerCase()}`,
+      `busyTimeoutMs=${runtime.busyTimeoutMs}`,
+      `foreignKeys=${runtime.foreignKeys ? "on" : "off"}`,
+      `defensive=${runtime.defensive === null ? "unsupported" : runtime.defensive ? "on" : "off"}`,
     ],
   };
 }

@@ -71,6 +71,7 @@ flowchart TD
 - search memory with lexical retrieval and structured filters
 - promote, archive, compact, and expire records through explicit policy workflows
 - configure compaction and retention policy per space
+- apply hardened SQLite defaults for file-backed databases
 - inspect memory health through reporting and maintenance commands
 - import and export full space snapshots
 
@@ -121,6 +122,7 @@ GlialNode currently includes:
 - record provenance and link management
 - compaction history with system events and summary records
 - per-space policy settings for configurable memory behavior
+- SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
 - active retention sweeps with expiration events and summaries
 - space-level reporting for memory and lifecycle observability
 - unified maintenance workflow for operational upkeep
@@ -129,6 +131,16 @@ GlialNode currently includes:
 ## Current Notes
 
 GlialNode currently uses Node's built-in `node:sqlite` module to keep the first release lightweight. In Node 24, that API is still marked experimental, so a later release may choose to wrap it behind a stricter storage boundary or swap the underlying SQLite driver without changing the GlialNode memory model.
+
+File-backed SQLite connections now default to:
+
+- `journal_mode=WAL`
+- `synchronous=NORMAL`
+- `busy_timeout=5000`
+- foreign key enforcement enabled
+- defensive mode enabled when the runtime supports it
+
+These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
 
 ## Quick Start
 
@@ -209,6 +221,8 @@ console.log(matches.map((record) => record.summary ?? record.content));
 client.close();
 ```
 
+The client also accepts SQLite connection policy overrides when you need to tune lock handling or journaling for a local deployment.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -223,6 +237,7 @@ GlialNode is packaged as both a library and a CLI:
 
 ```bash
 glialnode space create --name "Team Memory"
+glialnode status
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory search --space-id <space-id> --text lexical
@@ -254,7 +269,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 
 ## Current Limitations
 
-- SQLite is currently best treated as local single-writer infrastructure
+- SQLite now uses WAL and a busy timeout by default, but it is still best treated as local single-writer infrastructure
 - retrieval is lexical-first; semantic retrieval is not implemented yet
 - policy is explicit and rule-based; it is not model-driven
 - the extra PowerShell demo script remains Windows-oriented; use `npm run demo` for the portable path

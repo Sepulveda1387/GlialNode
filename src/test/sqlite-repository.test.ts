@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createId,
@@ -120,4 +123,73 @@ test("SqliteMemoryRepository lists spaces and scopes", async () => {
   assert.equal(scopes[0]?.type, "orchestrator");
 
   repository.close();
+});
+
+test("SqliteMemoryRepository applies durable defaults for file-backed databases", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-sqlite-runtime-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = new SqliteMemoryRepository({ filename: databasePath });
+
+  try {
+    const runtime = repository.getRuntimeSettings();
+
+    assert.equal(runtime.filename, databasePath);
+    assert.equal(runtime.journalMode, "WAL");
+    assert.equal(runtime.synchronous, "NORMAL");
+    assert.equal(runtime.busyTimeoutMs, 5000);
+    assert.equal(runtime.foreignKeys, true);
+
+    if (runtime.defensive !== null) {
+      assert.equal(runtime.defensive, true);
+    }
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("SqliteMemoryRepository honors busy timeout during write contention", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-sqlite-lock-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const firstRepository = new SqliteMemoryRepository({
+    filename: databasePath,
+    connection: {
+      busyTimeoutMs: 50,
+    },
+  });
+  const secondRepository = new SqliteMemoryRepository({
+    filename: databasePath,
+    connection: {
+      busyTimeoutMs: 50,
+    },
+  });
+
+  try {
+    const initialSpace = createFixtureSpace();
+
+    await firstRepository.createSpace(initialSpace);
+    firstRepository.db.exec("BEGIN IMMEDIATE");
+
+    const contenderSpace = createFixtureSpace();
+    const startedAt = Date.now();
+
+    await assert.rejects(
+      secondRepository.createSpace(contenderSpace),
+      /database is locked|SQLITE_BUSY/i,
+    );
+
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(elapsedMs >= 25);
+    assert.equal(secondRepository.getRuntimeSettings().busyTimeoutMs, 50);
+  } finally {
+    try {
+      firstRepository.db.exec("ROLLBACK");
+    } catch {
+      // Transaction may already be closed if the test failed earlier.
+    }
+
+    firstRepository.close();
+    secondRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
 });

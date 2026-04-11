@@ -1,8 +1,6 @@
 export const SQLITE_SCHEMA_VERSION = 1;
 
 export const sqliteBootstrapSql = `
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS memory_spaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

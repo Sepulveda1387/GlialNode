@@ -4,6 +4,8 @@
 
 - Bootstrapped the GlialNode TypeScript project structure.
 - Added SQLite-first storage with FTS-backed retrieval.
+- Added a typed client API for programmatic use.
+- Added SQLite connection hardening defaults and runtime inspection.
 - Added memory spaces, scopes, records, events, and provenance links.
 - Added CLI workflows for create, search, import/export, and inspection.
 - Added lifecycle operations for promote, archive, compaction, retention, reporting, and maintenance.

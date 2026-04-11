@@ -105,7 +105,17 @@ GlialNode v1 is SQLite-first and lexical-first:
 
 ## V1 Operational Note
 
-The current SQLite-first implementation is best treated as a local single-writer foundation. Multiple concurrent CLI or process writes against the same database file may require a later hardening pass with connection policy, WAL tuning, or a different backing store.
+The current SQLite-first implementation is best treated as a local single-writer foundation.
+
+The storage layer now applies a first hardening pass:
+
+- foreign keys are enforced at connection open
+- file-backed databases default to `journal_mode=WAL`
+- `synchronous=NORMAL` is applied for the local durability/throughput balance
+- a busy timeout is applied to reduce immediate lock failures
+- defensive mode is enabled when the runtime exposes it
+
+This improves resilience for local agents and repeated process restarts, but it does not change the broader recommendation: heavier concurrent writers may still need a later backing-store boundary or a different database.
 
 ## Current CLI Lifecycle Support
 
@@ -133,3 +143,13 @@ GlialNode is currently being hardened as a portable Node package:
 - the compiled CLI keeps a shebang so package-manager-installed binaries work cleanly across Unix-like environments while still remaining Windows-compatible
 - package verification should include a dry-run pack step before any real publish
 - the typed client API should remain the primary programmatic integration surface
+
+## Current Storage Boundary
+
+The current SQLite boundary now exposes:
+
+- a resolved connection policy for file-backed databases
+- runtime settings inspection for status and tests
+- lock timeout behavior that is exercised under contention in tests
+
+That boundary is still intentionally narrow so a future driver swap can happen without changing the memory model.
