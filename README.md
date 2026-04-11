@@ -69,7 +69,7 @@ flowchart TD
 - scope memory to agents, subagents, sessions, tasks, and projects
 - store curated records, raw events, and provenance links
 - store both human-readable memory text and compact internal memory text
-- search memory with lexical retrieval and structured filters
+- search memory with query-aware lexical retrieval and structured filters
 - promote, archive, compact, and expire records through explicit policy workflows
 - distill related active records into durable summary memory with provenance links
 - configure compaction and retention policy per space
@@ -120,7 +120,7 @@ GlialNode currently includes:
 - a working SQLite repository implementation
 - a typed `GlialNodeClient` for programmatic use
 - compact memory encoding for lower-token internal recall
-- retrieval ranking and record promotion helpers
+- query-aware retrieval ranking and record promotion helpers
 - a functional CLI for spaces, scopes, and memory records
 - import/export and memory lifecycle commands
 - record provenance and link management
@@ -285,6 +285,19 @@ When a distilled summary is strong enough, GlialNode can also mark the contribut
 Normal search now defaults to `active` records unless you explicitly request another status such as `superseded`, `archived`, or `expired`.
 
 These values can be tuned through space policy settings if you want distillation to be stricter or more aggressive.
+
+## Retrieval Behavior
+
+GlialNode is still lexical-first in v1, but ranking is now query-aware instead of purely generic.
+
+When records match a query, retrieval now balances:
+
+- structural memory quality like importance, confidence, freshness, and recency
+- direct query alignment across summary, content, compact memory text, and tags
+- a modest preference for distilled long-term summaries when the query is broad
+- a modest preference for specific decisions, facts, or summaries when the query wording clearly asks for them
+
+That means a distilled durable summary can lead for broad recall, while a more specific raw decision can still win when the query is narrow and intent-heavy.
 
 ## Packaging Notes
 

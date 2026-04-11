@@ -7,6 +7,7 @@
 - Added compaction policy knobs for `distillMinClusterSize` and `distillMinTokenOverlap`.
 - Added controlled source-record supersession for strong distilled summaries.
 - Made normal memory search default to active records unless a status filter is provided.
+- Added query-aware lexical ranking so broad queries can favor distilled memory while narrow queries can still favor specific records.
 
 ## 0.1.0
 

@@ -225,3 +225,109 @@ test("SqliteMemoryRepository tracks applied schema migrations", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("SqliteMemoryRepository retrieval prefers distilled summaries for broad recall", async () => {
+  const repository = new SqliteMemoryRepository();
+  const space = createFixtureSpace();
+  const scope = createFixtureScope(space.id);
+
+  await repository.createSpace(space);
+  await repository.upsertScope(scope);
+
+  const sourceDecision = createMemoryRecord({
+    spaceId: space.id,
+    tier: "mid",
+    kind: "decision",
+    content: "Prefer lexical retrieval first for standard search flows.",
+    summary: "Lexical retrieval first",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["retrieval", "search"],
+    importance: 0.82,
+    confidence: 0.8,
+    freshness: 0.68,
+    status: "superseded",
+  });
+
+  const distilledSummary = createMemoryRecord({
+    spaceId: space.id,
+    tier: "long",
+    kind: "summary",
+    content: "Distilled memory from related retrieval records: lexical retrieval first; lexical search reliability.",
+    summary: "Distilled retrieval memory",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["retrieval", "distilled", "compaction"],
+    importance: 0.8,
+    confidence: 0.9,
+    freshness: 0.66,
+  });
+
+  await repository.writeRecord(sourceDecision);
+  await repository.writeRecord(distilledSummary);
+
+  const broadMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "distilled retrieval memory",
+    limit: 10,
+  });
+
+  assert.equal(broadMatches[0]?.id, distilledSummary.id);
+
+  const supersededMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "lexical retrieval first",
+    statuses: ["superseded"],
+    limit: 10,
+  });
+
+  assert.equal(supersededMatches[0]?.id, sourceDecision.id);
+
+  repository.close();
+});
+
+test("SqliteMemoryRepository retrieval still surfaces specific raw records when the query is narrow", async () => {
+  const repository = new SqliteMemoryRepository();
+  const space = createFixtureSpace();
+  const scope = createFixtureScope(space.id);
+
+  await repository.createSpace(space);
+  await repository.upsertScope(scope);
+
+  const distilledSummary = createMemoryRecord({
+    spaceId: space.id,
+    tier: "long",
+    kind: "summary",
+    content: "Distilled memory from related retrieval records: lexical retrieval first; lexical search reliability.",
+    summary: "Distilled retrieval memory",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["retrieval", "distilled", "compaction"],
+    importance: 0.8,
+    confidence: 0.9,
+    freshness: 0.66,
+  });
+
+  const specificDecision = createMemoryRecord({
+    spaceId: space.id,
+    tier: "mid",
+    kind: "decision",
+    content: "Prefer lexical retrieval first for standard search flows.",
+    summary: "Lexical retrieval decision",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["retrieval", "search"],
+    importance: 0.78,
+    confidence: 0.84,
+    freshness: 0.8,
+  });
+
+  await repository.writeRecord(distilledSummary);
+  await repository.writeRecord(specificDecision);
+
+  const matches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "decision lexical retrieval first",
+    limit: 10,
+  });
+
+  assert.equal(matches[0]?.id, specificDecision.id);
+
+  repository.close();
+});

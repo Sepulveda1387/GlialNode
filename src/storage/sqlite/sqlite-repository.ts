@@ -441,7 +441,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
     params.push(query.limit ?? 50);
 
     const rows = this.db.prepare(sql).all(...params) as unknown as MemoryRecordRow[];
-    return rankRecordsForRetrieval(rows.map(mapMemoryRecordRow));
+    return rankRecordsForRetrieval(rows.map(mapMemoryRecordRow), query.text);
   }
 
   async getSpaceReport(spaceId: string, recentEventLimit = 10): Promise<SpaceReport> {

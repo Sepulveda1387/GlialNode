@@ -71,6 +71,9 @@ Ranking should combine:
 - confidence
 - freshness
 - recency
+- query alignment across summary, content, compact memory text, and tags
+- a small preference for distilled durable summaries during broad recall
+- a small preference for more specific kinds when the query wording signals intent
 
 ### Client Layer
 
