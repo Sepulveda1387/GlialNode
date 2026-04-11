@@ -44,7 +44,8 @@ export type EventType =
   | "memory_written"
   | "memory_promoted"
   | "memory_archived"
-  | "memory_expired";
+  | "memory_expired"
+  | "memory_superseded";
 
 export type MemoryLinkType =
   | "derived_from"
@@ -70,6 +71,8 @@ export interface MemorySpaceSettings {
     archiveImportanceMax?: number;
     archiveConfidenceMax?: number;
     archiveFreshnessMax?: number;
+    distillMinClusterSize?: number;
+    distillMinTokenOverlap?: number;
   };
 }
 

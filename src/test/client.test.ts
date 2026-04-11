@@ -63,7 +63,7 @@ test("GlialNodeClient supports the core programmatic memory workflow", async () 
     assert.equal(maintenance.retentionPlan.expired.length, 1);
 
     const report = await client.getSpaceReport(space.id, 10);
-    assert.equal(report.recordCount, 4);
+    assert.equal(report.recordCount, 5);
     assert.ok(report.eventCount >= 2);
 
     const promotedRecord = await client.getRecord(promotable.id);
@@ -209,6 +209,66 @@ test("GlialNodeClient maintenance refreshes generated compact memory when it dri
   } finally {
     client.close();
     repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient compaction distills related records into a summary with provenance", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-distill-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Distill Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for standard search flows.",
+      summary: "Lexical retrieval first",
+      tags: ["retrieval", "search"],
+      importance: 0.82,
+      confidence: 0.8,
+      freshness: 0.7,
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical search remains the most reliable default for user-facing memory recall.",
+      summary: "Lexical search reliability",
+      tags: ["retrieval", "ranking"],
+      importance: 0.78,
+      confidence: 0.76,
+      freshness: 0.68,
+    });
+
+    const plan = await client.compactSpace(space.id, { apply: true });
+    assert.equal(plan.distilled.length, 1);
+
+    const report = await client.getSpaceReport(space.id, 10);
+    assert.ok(report.recordCount >= 3);
+    assert.ok(report.eventCount >= 1);
+
+    const distilled = plan.distilled[0]!.distilledRecord;
+    const stored = await client.getRecord(distilled.id);
+    assert.equal(stored.kind, "summary");
+    assert.match(stored.summary ?? "", /Distilled retrieval memory/);
+
+    const links = await client.listLinksForRecord(distilled.id);
+    assert.equal(links.length, 3);
+    assert.equal(links.filter((link) => link.type === "derived_from").length, 2);
+  } finally {
+    client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });

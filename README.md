@@ -71,6 +71,7 @@ flowchart TD
 - store both human-readable memory text and compact internal memory text
 - search memory with lexical retrieval and structured filters
 - promote, archive, compact, and expire records through explicit policy workflows
+- distill related active records into durable summary memory with provenance links
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
@@ -124,6 +125,7 @@ GlialNode currently includes:
 - import/export and memory lifecycle commands
 - record provenance and link management
 - compaction history with system events and summary records
+- semantic distillation of related records during compaction
 - per-space policy settings for configurable memory behavior
 - SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
 - applied SQLite migration tracking and schema-version introspection
@@ -259,6 +261,25 @@ If you do not provide `compactContent`, GlialNode generates one automatically wh
 
 Generated compact memory stays in sync automatically when records are promoted, archived, expired, or refreshed during maintenance. Manual compact memory is preserved as-is so GlialNode does not overwrite a custom symbolic language you intentionally stored.
 
+## Distilled Memory
+
+GlialNode compaction now includes a semantic distillation pass.
+
+When multiple active records in the same scope share meaningful tags or enough signal-token overlap, GlialNode can create a new durable summary record that:
+
+- captures the common thread in a single higher-value memory
+- links back to the source records with `derived_from` provenance
+- avoids re-distilling prior system-generated compaction and retention summaries
+
+This gives the system a more brain-like behavior: it does not just keep records tidy, it can consolidate repeated related knowledge into something easier to retrieve later.
+
+The default distillation policy is conservative:
+
+- `distillMinClusterSize=2`
+- `distillMinTokenOverlap=2`
+
+Both values can be tuned through space policy settings if you want distillation to be stricter or more aggressive.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -286,6 +307,7 @@ glialnode memory show --record-id <record-b>
 glialnode memory compact --space-id <space-id>
 glialnode memory compact --space-id <space-id> --apply
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
+glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>
 glialnode space maintain --id <space-id>
@@ -308,7 +330,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 
 - SQLite now uses WAL and a busy timeout by default, but it is still best treated as local single-writer infrastructure
 - retrieval is lexical-first; semantic retrieval is not implemented yet
-- policy is explicit and rule-based; it is not model-driven
+- policy is explicit and heuristic-driven; it is not model-driven
 - the extra PowerShell demo script remains Windows-oriented; use `npm run demo` for the portable path
 
 ## Publishing Checklist

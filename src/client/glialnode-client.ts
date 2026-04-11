@@ -17,6 +17,8 @@ import type {
 } from "../core/types.js";
 import {
   applyCompactionPlan,
+  createCompactionDistillationLinks,
+  createCompactionDistilledRecords,
   createCompactionEvents,
   createCompactionSummaryLinks,
   createCompactionSummaryRecord,
@@ -279,8 +281,16 @@ export class GlialNodeClient {
         await this.repository.writeRecord(record);
       }
 
+      for (const record of createCompactionDistilledRecords(plan)) {
+        await this.repository.writeRecord(record);
+      }
+
       for (const event of createCompactionEvents(plan)) {
         await this.repository.appendEvent(event);
+      }
+
+      for (const link of createCompactionDistillationLinks(plan)) {
+        await this.repository.linkRecords(link);
       }
 
       const summaryRecord = createCompactionSummaryRecord(plan);
@@ -333,8 +343,16 @@ export class GlialNodeClient {
         await this.repository.writeRecord(record);
       }
 
+      for (const record of createCompactionDistilledRecords(compactionPlan)) {
+        await this.repository.writeRecord(record);
+      }
+
       for (const event of createCompactionEvents(compactionPlan)) {
         await this.repository.appendEvent(event);
+      }
+
+      for (const link of createCompactionDistillationLinks(compactionPlan)) {
+        await this.repository.linkRecords(link);
       }
 
       const compactionSummary = createCompactionSummaryRecord(compactionPlan);

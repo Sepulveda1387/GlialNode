@@ -40,6 +40,7 @@ Each record can also carry two representations at once:
 
 - a human-readable memory body
 - a compact symbolic memory body for lower-token internal recall
+- a distilled durable summary when related active records converge on the same signal
 
 Generated compact memory should stay aligned with the record lifecycle.
 That means tier/status changes and maintenance workflows may rewrite generated compact text, while manually supplied compact text should be preserved.
@@ -51,6 +52,7 @@ Memory records may reference other records so GlialNode can keep provenance and 
 Examples:
 
 - a summary record derived from multiple raw notes
+- a distilled memory derived from multiple related active records in the same scope
 - a corrected decision that supersedes an earlier one
 - an alert that contradicts a stale fact
 
@@ -134,6 +136,7 @@ The current CLI now supports:
 - adding, listing, searching, promoting, and archiving memory records
 - running dry-run or applied memory compaction by simple policy
 - recording compaction outcomes as system events and summary records
+- distilling related active memories into higher-value summary records with provenance links
 - storing per-space policy settings that can tune compaction behavior
 - enforcing per-space retention windows through sweepable expiration policy
 - surfacing space-level observability for counts and recent lifecycle actions
@@ -160,6 +163,7 @@ The current SQLite boundary now exposes:
 - runtime settings inspection for status and tests
 - applied migration tracking inside the database
 - storage and indexing for compact memory text
+- non-recursive semantic distillation that avoids re-distilling system-generated maintenance summaries
 - lock timeout behavior that is exercised under contention in tests
 
 That boundary is still intentionally narrow so a future driver swap can happen without changing the memory model.

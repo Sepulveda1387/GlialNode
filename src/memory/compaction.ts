@@ -2,6 +2,7 @@ import { createId } from "../core/ids.js";
 import { defaultCompactionPolicy, type CompactionPolicy } from "../core/config.js";
 import type { MemoryEvent, MemoryRecord, MemoryRecordLink } from "../core/types.js";
 import { refreshCompactMemoryRecord, shouldRefreshCompactMemory } from "./compact.js";
+import { type DistillationAction, planDistillation } from "./distillation.js";
 import { promoteRecord } from "./promotion.js";
 import { createMemoryRecord, updateRecordStatus } from "./service.js";
 
@@ -18,6 +19,7 @@ export interface CompactionPlan {
   promoted: CompactionAction[];
   archived: CompactionAction[];
   refreshed: CompactionAction[];
+  distilled: DistillationAction[];
 }
 
 export function planCompaction(
@@ -31,6 +33,7 @@ export function planCompaction(
   const promoted: CompactionAction[] = [];
   const archived: CompactionAction[] = [];
   const refreshed: CompactionAction[] = [];
+  const distilled = planDistillation(records, resolvedPolicy);
 
   for (const record of records) {
     if (record.status !== "active") {
@@ -67,7 +70,7 @@ export function planCompaction(
     }
   }
 
-  return { promoted, archived, refreshed };
+  return { promoted, archived, refreshed, distilled };
 }
 
 export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
@@ -75,6 +78,7 @@ export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
     `promotions=${plan.promoted.length}`,
     `archives=${plan.archived.length}`,
     `refreshed=${plan.refreshed.length}`,
+    `distilled=${plan.distilled.length}`,
   ];
 
   for (const action of plan.promoted) {
@@ -91,6 +95,12 @@ export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
 
   for (const action of plan.refreshed) {
     lines.push(`refresh ${action.before.id} ${action.reason}`);
+  }
+
+  for (const action of plan.distilled) {
+    lines.push(
+      `distill ${action.sourceRecords.map((record) => record.id).join(",")} -> ${action.distilledRecord.id} ${action.reason}`,
+    );
   }
 
   return lines;
@@ -153,8 +163,7 @@ export function applyCompactionPlan(plan: CompactionPlan): MemoryRecord[] {
 
 export function createCompactionEvents(plan: CompactionPlan): MemoryEvent[] {
   const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
-
-  return actions.map((action) => ({
+  const lifecycleEvents: MemoryEvent[] = actions.map((action) => ({
     id: createId("evt"),
     spaceId: action.after.spaceId,
     scope: action.after.scope,
@@ -182,23 +191,44 @@ export function createCompactionEvents(plan: CompactionPlan): MemoryEvent[] {
     },
     createdAt: action.after.updatedAt,
   }));
+
+  const distillationEvents: MemoryEvent[] = plan.distilled.map((action) => ({
+    id: createId("evt"),
+    spaceId: action.distilledRecord.spaceId,
+    scope: action.distilledRecord.scope,
+    actorType: "system" as const,
+    actorId: "glialnode-compact",
+    type: "memory_written" as const,
+    summary: `Compaction distilled ${action.sourceRecords.length} related records into ${action.distilledRecord.id}.`,
+    payload: {
+      reason: action.reason,
+      sourceRecordIds: action.sourceRecords.map((record) => record.id),
+      distilledRecordId: action.distilledRecord.id,
+      distilledTier: action.distilledRecord.tier,
+    },
+    createdAt: action.distilledRecord.createdAt,
+  }));
+
+  return [...lifecycleEvents, ...distillationEvents];
 }
 
 export function createCompactionSummaryRecord(plan: CompactionPlan): MemoryRecord | null {
   const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
 
-  if (actions.length === 0) {
+  if (actions.length === 0 && plan.distilled.length === 0) {
     return null;
   }
 
-  const anchor = actions[0].after;
+  const anchor = actions[0]?.after ?? plan.distilled[0]!.distilledRecord;
   const promotedIds = plan.promoted.map((action) => action.before.id);
   const archivedIds = plan.archived.map((action) => action.before.id);
   const refreshedIds = plan.refreshed.map((action) => action.before.id);
+  const distilledIds = plan.distilled.map((action) => action.distilledRecord.id);
   const summaryParts = [
     `promoted ${promotedIds.length} record(s)`,
     `archived ${archivedIds.length} record(s)`,
     `refreshed ${refreshedIds.length} compact encoding(s)`,
+    `distilled ${distilledIds.length} summary record(s)`,
   ];
 
   return createMemoryRecord({
@@ -218,8 +248,7 @@ export function createCompactionSummaryRecord(plan: CompactionPlan): MemoryRecor
 
 export function createCompactionSummaryLinks(summaryRecord: MemoryRecord, plan: CompactionPlan): MemoryRecordLink[] {
   const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
-
-  return actions.map((action) => ({
+  const links: MemoryRecordLink[] = actions.map((action) => ({
     id: createId("link"),
     spaceId: summaryRecord.spaceId,
     fromRecordId: summaryRecord.id,
@@ -227,4 +256,35 @@ export function createCompactionSummaryLinks(summaryRecord: MemoryRecord, plan: 
     type: "references",
     createdAt: summaryRecord.createdAt,
   }));
+
+  const distilledLinks: MemoryRecordLink[] = plan.distilled.map((action) => ({
+    id: createId("link"),
+    spaceId: summaryRecord.spaceId,
+    fromRecordId: summaryRecord.id,
+    toRecordId: action.distilledRecord.id,
+    type: "references",
+    createdAt: summaryRecord.createdAt,
+  }));
+
+  return [
+    ...links,
+    ...distilledLinks,
+  ];
+}
+
+export function createCompactionDistilledRecords(plan: CompactionPlan): MemoryRecord[] {
+  return plan.distilled.map((action) => action.distilledRecord);
+}
+
+export function createCompactionDistillationLinks(plan: CompactionPlan): MemoryRecordLink[] {
+  return plan.distilled.flatMap<MemoryRecordLink>((action) =>
+    action.sourceRecords.map((record) => ({
+      id: createId("link"),
+      spaceId: action.distilledRecord.spaceId,
+      fromRecordId: action.distilledRecord.id,
+      toRecordId: record.id,
+      type: "derived_from",
+      createdAt: action.distilledRecord.createdAt,
+    })),
+  );
 }

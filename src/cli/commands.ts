@@ -20,6 +20,8 @@ import type {
 import type { CompactionPolicy } from "../core/config.js";
 import {
   applyCompactionPlan,
+  createCompactionDistillationLinks,
+  createCompactionDistilledRecords,
   createCompactionEvents,
   createCompactionSummaryLinks,
   createCompactionSummaryRecord,
@@ -105,7 +107,7 @@ export function usageText(): string {
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -262,8 +264,14 @@ async function runSpaceCommand(
       for (const record of compactionUpdates) {
         await context.repository.writeRecord(record);
       }
+      for (const record of createCompactionDistilledRecords(compactionPlan)) {
+        await context.repository.writeRecord(record);
+      }
       for (const event of createCompactionEvents(compactionPlan)) {
         await context.repository.appendEvent(event);
+      }
+      for (const link of createCompactionDistillationLinks(compactionPlan)) {
+        await context.repository.linkRecords(link);
       }
       const summaryRecord = createCompactionSummaryRecord(compactionPlan);
       if (summaryRecord) {
@@ -496,9 +504,17 @@ async function runMemoryCommand(
         await context.repository.writeRecord(record);
       }
 
+      for (const record of createCompactionDistilledRecords(plan)) {
+        await context.repository.writeRecord(record);
+      }
+
       const events = createCompactionEvents(plan);
       for (const event of events) {
         await context.repository.appendEvent(event);
+      }
+
+      for (const link of createCompactionDistillationLinks(plan)) {
+        await context.repository.linkRecords(link);
       }
 
       const summaryRecord = createCompactionSummaryRecord(plan);
@@ -921,6 +937,8 @@ function parseCompactionFlags(flags: Record<string, string>): MemorySpace["setti
     ["archiveImportanceMax", parseOptionalNumber(flags["archive-importance-max"])],
     ["archiveConfidenceMax", parseOptionalNumber(flags["archive-confidence-max"])],
     ["archiveFreshnessMax", parseOptionalNumber(flags["archive-freshness-max"])],
+    ["distillMinClusterSize", parseOptionalNumber(flags["distill-min-cluster-size"])],
+    ["distillMinTokenOverlap", parseOptionalNumber(flags["distill-min-token-overlap"])],
   ];
 
   const compaction = Object.fromEntries(

@@ -845,3 +845,94 @@ test("Space maintain runs compaction and retention in one workflow", async () =>
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI compaction distills related records into a summary record with provenance", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-distill-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Distill Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for standard search flows.",
+        "--summary", "Lexical retrieval first",
+        "--tags", "retrieval,search",
+        "--importance", "0.82",
+        "--confidence", "0.8",
+        "--freshness", "0.7",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical search remains the most reliable default for user-facing memory recall.",
+        "--summary", "Lexical search reliability",
+        "--tags", "retrieval,ranking",
+        "--importance", "0.78",
+        "--confidence", "0.76",
+        "--freshness", "0.68",
+      ]),
+      { repository },
+    );
+
+    const dryRun = await runCommand(
+      parseArgs(["memory", "compact", "--space-id", spaceId]),
+      { repository },
+    );
+    assert.equal(dryRun.lines[4], "distilled=1");
+
+    const apply = await runCommand(
+      parseArgs(["memory", "compact", "--space-id", spaceId, "--apply"]),
+      { repository },
+    );
+    assert.equal(apply.lines[0], "Compaction applied.");
+
+    const search = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--text", "Distilled retrieval memory"]),
+      { repository },
+    );
+    assert.equal(search.lines[0], "records=1");
+
+    const distilledRecordId = search.lines[1]?.split(" ")[0];
+    assert.ok(distilledRecordId);
+
+    const show = await runCommand(
+      parseArgs(["memory", "show", "--record-id", distilledRecordId]),
+      { repository },
+    );
+    assert.equal(show.lines.find((line) => line.startsWith("links=")), "links=3");
+    assert.match(show.lines.join("\n"), /derived_from/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

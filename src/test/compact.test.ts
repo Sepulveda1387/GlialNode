@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { defaultCompactionPolicy } from "../core/config.js";
+import { planDistillation } from "../memory/distillation.js";
 import { buildCompactMemoryText, createMemoryRecord, promoteRecord, updateRecordStatus } from "../index.js";
 
 test("compact memory text preserves structured signal in a token-efficient form", () => {
@@ -89,4 +91,39 @@ test("manual compact memory is preserved through record lifecycle changes", () =
 
   const archived = updateRecordStatus(promoted, "archived");
   assert.equal(archived.compactContent, "U:req keep mobile");
+});
+
+test("distillation groups related records into a durable summary", () => {
+  const first = createMemoryRecord({
+    spaceId: "space_1",
+    tier: "mid",
+    kind: "decision",
+    content: "Prefer lexical retrieval first for standard search flows.",
+    summary: "Lexical retrieval first",
+    scope: { id: "planner-1", type: "agent" },
+    tags: ["retrieval", "search"],
+    importance: 0.82,
+    confidence: 0.8,
+    freshness: 0.7,
+  });
+
+  const second = createMemoryRecord({
+    spaceId: "space_1",
+    tier: "mid",
+    kind: "fact",
+    content: "Lexical search remains the most reliable default for user-facing memory recall.",
+    summary: "Lexical search reliability",
+    scope: { id: "planner-1", type: "agent" },
+    tags: ["retrieval", "ranking"],
+    importance: 0.78,
+    confidence: 0.76,
+    freshness: 0.68,
+  });
+
+  const actions = planDistillation([first, second], defaultCompactionPolicy);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]?.distilledRecord.kind, "summary");
+  assert.equal(actions[0]?.distilledRecord.tier, "long");
+  assert.match(actions[0]?.distilledRecord.summary ?? "", /Distilled retrieval memory/);
+  assert.match(actions[0]?.distilledRecord.content ?? "", /Lexical retrieval first/);
 });

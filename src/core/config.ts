@@ -14,6 +14,8 @@ export interface CompactionPolicy {
   archiveImportanceMax: number;
   archiveConfidenceMax: number;
   archiveFreshnessMax: number;
+  distillMinClusterSize: number;
+  distillMinTokenOverlap: number;
 }
 
 export interface RetentionPolicy {
@@ -37,6 +39,8 @@ export const defaultCompactionPolicy: CompactionPolicy = {
   archiveImportanceMax: 0.4,
   archiveConfidenceMax: 0.55,
   archiveFreshnessMax: 0.4,
+  distillMinClusterSize: 2,
+  distillMinTokenOverlap: 2,
 };
 
 export const defaultRetentionPolicy: RetentionPolicy = {
