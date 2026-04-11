@@ -243,6 +243,26 @@ client.close();
 
 The client also accepts SQLite connection policy overrides when you need to tune lock handling or journaling for a local deployment.
 
+Search stays side-effect free by default, but host apps can opt into reinforcing records that proved useful:
+
+```ts
+const matches = await client.searchRecords(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval",
+    limit: 5,
+  },
+  {
+    reinforce: {
+      enabled: true,
+      limit: 2,
+      strength: 1.5,
+      reason: "successful-retrieval",
+    },
+  },
+);
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -370,6 +390,8 @@ The default reinforcement policy is:
 
 Reinforcement creates a `memory_reinforced` event and a reinforcement summary record so the trust increase is inspectable later.
 
+Host applications can also opt into reinforcement during search when a result was actually used successfully. Normal search does not mutate memory unless you ask for that behavior explicitly.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -389,6 +411,7 @@ glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
 glialnode memory search --space-id <space-id> --text lexical
+glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

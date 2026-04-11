@@ -11,6 +11,7 @@
 - Added contradiction detection for new durable memory with `contradicts` links and confidence penalties on older conflicting records.
 - Added explicit stale-memory decay with configurable confidence and freshness reduction during maintenance.
 - Added explicit memory reinforcement with configurable confidence and freshness boosts for revalidated records.
+- Added opt-in reinforcement for successful search results in the client and CLI without changing default search behavior.
 
 ## 0.1.0
 

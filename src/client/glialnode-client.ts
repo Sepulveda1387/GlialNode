@@ -127,6 +127,11 @@ export interface ReinforceRecordOptions {
   now?: Date;
 }
 
+export interface SearchReinforcementOptions extends ReinforceRecordOptions {
+  enabled?: boolean;
+  limit?: number;
+}
+
 export class GlialNodeClient {
   private readonly repository: MemoryRepository;
   private readonly closeRepository: (() => void) | null;
@@ -251,9 +256,27 @@ export class GlialNodeClient {
     return this.repository.listRecords(spaceId, limit);
   }
 
-  async searchRecords(query: Parameters<MemoryRepository["searchRecords"]>[0]): Promise<MemoryRecord[]> {
+  async searchRecords(
+    query: Parameters<MemoryRepository["searchRecords"]>[0],
+    options: { reinforce?: SearchReinforcementOptions } = {},
+  ): Promise<MemoryRecord[]> {
     await requireSpace(this.repository, query.spaceId);
-    return this.repository.searchRecords(query);
+    const results = await this.repository.searchRecords(query);
+
+    if (options.reinforce?.enabled) {
+      const limit = options.reinforce.limit ?? results.length;
+      const recordIds = results.slice(0, Math.max(limit, 0)).map((record) => record.id);
+
+      if (recordIds.length > 0) {
+        await this.reinforceRecords(recordIds, {
+          reason: options.reinforce.reason ?? "successful-retrieval",
+          strength: options.reinforce.strength,
+          now: options.reinforce.now,
+        });
+      }
+    }
+
+    return results;
   }
 
   async promoteRecord(recordId: string): Promise<MemoryRecord> {
@@ -412,32 +435,37 @@ export class GlialNodeClient {
   }
 
   async reinforceRecord(recordId: string, options: ReinforceRecordOptions = {}): Promise<ReturnType<typeof planReinforcement>> {
-    const record = await requireRecord(this.repository, recordId);
-    const space = await requireSpace(this.repository, record.spaceId);
-    const records = await this.repository.listRecords(record.spaceId, Number.MAX_SAFE_INTEGER);
+    return this.reinforceRecords([recordId], options);
+  }
+
+  async reinforceRecords(
+    recordIds: string[],
+    options: ReinforceRecordOptions = {},
+  ): Promise<ReturnType<typeof planReinforcement>> {
+    const uniqueRecordIds = [...new Set(recordIds)];
+
+    if (uniqueRecordIds.length === 0) {
+      return { reinforced: [] };
+    }
+
+    const firstRecord = await requireRecord(this.repository, uniqueRecordIds[0]!);
+    for (const recordId of uniqueRecordIds.slice(1)) {
+      const record = await requireRecord(this.repository, recordId);
+      if (record.spaceId !== firstRecord.spaceId) {
+        throw new Error("Reinforcement targets must belong to the same space.");
+      }
+    }
+
+    const space = await requireSpace(this.repository, firstRecord.spaceId);
+    const records = await this.repository.listRecords(firstRecord.spaceId, Number.MAX_SAFE_INTEGER);
     const plan = planReinforcement(records, space.settings?.reinforcement, {
-      recordIds: [recordId],
+      recordIds: uniqueRecordIds,
       reason: options.reason,
       strength: options.strength,
       now: options.now,
     });
 
-    for (const updatedRecord of applyReinforcementPlan(plan)) {
-      await this.repository.writeRecord(updatedRecord);
-    }
-
-    for (const event of createReinforcementEvents(plan)) {
-      await this.repository.appendEvent(event);
-    }
-
-    const summaryRecord = createReinforcementSummaryRecord(plan);
-    if (summaryRecord) {
-      await this.repository.writeRecord(summaryRecord);
-      for (const link of createReinforcementSummaryLinks(summaryRecord, plan)) {
-        await this.repository.linkRecords(link);
-      }
-    }
-
+    await persistReinforcementPlan(this.repository, plan);
     return plan;
   }
 
@@ -650,4 +678,25 @@ function mergeUpdatedRecords(existing: MemoryRecord[], updates: MemoryRecord[]):
   }
 
   return [...byId.values()];
+}
+
+async function persistReinforcementPlan(
+  repository: MemoryRepository,
+  plan: ReturnType<typeof planReinforcement>,
+): Promise<void> {
+  for (const updatedRecord of applyReinforcementPlan(plan)) {
+    await repository.writeRecord(updatedRecord);
+  }
+
+  for (const event of createReinforcementEvents(plan)) {
+    await repository.appendEvent(event);
+  }
+
+  const summaryRecord = createReinforcementSummaryRecord(plan);
+  if (summaryRecord) {
+    await repository.writeRecord(summaryRecord);
+    for (const link of createReinforcementSummaryLinks(summaryRecord, plan)) {
+      await repository.linkRecords(link);
+    }
+  }
 }

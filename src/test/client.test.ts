@@ -447,3 +447,66 @@ test("GlialNodeClient reinforcement strengthens a durable memory explicitly", as
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient can reinforce successful search results when explicitly requested", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-search-reinforce-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Search Reinforcement Space",
+      settings: {
+        reinforcement: {
+          confidenceBoost: 0.04,
+          freshnessBoost: 0.08,
+          maxConfidence: 0.95,
+          maxFreshness: 0.9,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const record = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "fact",
+      content: "Lexical retrieval remains the preferred default for confirmed search flows.",
+      summary: "Preferred retrieval default",
+      confidence: 0.7,
+      freshness: 0.4,
+      importance: 0.84,
+    });
+
+    const results = await client.searchRecords(
+      {
+        spaceId: space.id,
+        text: "preferred retrieval default",
+        limit: 5,
+      },
+      {
+        reinforce: {
+          enabled: true,
+          strength: 2,
+          limit: 1,
+        },
+      },
+    );
+    assert.equal(results.length, 1);
+
+    const updated = await client.getRecord(record.id);
+    assert.equal(updated.confidence, 0.78);
+    assert.equal(updated.freshness, 0.56);
+
+    const report = await client.getSpaceReport(space.id, 10);
+    assert.match(report.recentLifecycleEvents.map((event) => event.type).join(","), /memory_reinforced/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

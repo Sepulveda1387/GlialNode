@@ -107,6 +107,7 @@ The current design:
 
 - keeps retrieval side-effect free by default
 - strengthens memory through an explicit reinforcement workflow
+- allows host applications to opt into reinforcement after successful retrieval or use
 - raises confidence and freshness within configured ceilings
 - emits a `memory_reinforced` event and a reinforcement summary record
 - allows different spaces to tune how quickly memories regain trust
