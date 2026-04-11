@@ -11,6 +11,7 @@ export function groupByTier(records: MemoryRecord[]): Record<MemoryTier, MemoryR
 export * from "./compact.js";
 export * from "./compaction.js";
 export * from "./conflicts.js";
+export * from "./decay.js";
 export * from "./distillation.js";
 export * from "./promotion.js";
 export * from "./retention.js";

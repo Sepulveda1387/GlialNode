@@ -9,6 +9,7 @@
 - Made normal memory search default to active records unless a status filter is provided.
 - Added query-aware lexical ranking so broad queries can favor distilled memory while narrow queries can still favor specific records.
 - Added contradiction detection for new durable memory with `contradicts` links and confidence penalties on older conflicting records.
+- Added explicit stale-memory decay with configurable confidence and freshness reduction during maintenance.
 
 ## 0.1.0
 

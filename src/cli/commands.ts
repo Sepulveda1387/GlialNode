@@ -17,7 +17,7 @@ import type {
   ScopeRecord,
   ScopeType,
 } from "../core/types.js";
-import type { CompactionPolicy, ConflictPolicy } from "../core/config.js";
+import type { CompactionPolicy, ConflictPolicy, DecayPolicy } from "../core/config.js";
 import {
   applyCompactionPlan,
   createCompactionDistillationLinks,
@@ -29,6 +29,14 @@ import {
   summarizeCompactionPlan,
 } from "../memory/compaction.js";
 import { createConflictEvents, createConflictLinks, detectConflicts } from "../memory/conflicts.js";
+import {
+  applyDecayPlan,
+  createDecayEvents,
+  createDecaySummaryLinks,
+  createDecaySummaryRecord,
+  planDecay,
+  summarizeDecayPlan,
+} from "../memory/decay.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyRetentionPlan,
@@ -108,13 +116,14 @@ export function usageText(): string {
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
     "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--db <path>]",
     "  glialnode memory list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
+    "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory retain --space-id <id> [--apply] [--db <path>]",
     "  glialnode event add --space-id <id> --scope-id <id> --scope-type <type> --actor-type <type> --actor-id <id> --event-type <type> --summary <text> [--payload <json>] [--db <path>]",
     "  glialnode event list --space-id <id> [--limit 10] [--db <path>]",
@@ -205,6 +214,7 @@ async function runSpaceCommand(
       undefined,
       parseCompactionFlags(parsed.flags),
       parseConflictFlags(parsed.flags),
+      parseDecayFlags(parsed.flags),
       parseRetentionFlags(parsed.flags),
     );
     const mergedSettings = mergeSpaceSettings(space.settings, settingsFromJson, settingsFromFlags);
@@ -287,7 +297,31 @@ async function runSpaceCommand(
     const retentionInputRecords = shouldApply
       ? await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)
       : simulatedCompactionRecords;
-    const retentionPlan = planRetention(retentionInputRecords, space.settings?.retentionDays);
+    const decayPlan = planDecay(retentionInputRecords, space.settings?.decay);
+
+    if (shouldApply) {
+      const decayUpdates = applyDecayPlan(decayPlan);
+      for (const record of decayUpdates) {
+        await context.repository.writeRecord(record);
+      }
+      for (const event of createDecayEvents(decayPlan)) {
+        await context.repository.appendEvent(event);
+      }
+      const summaryRecord = createDecaySummaryRecord(decayPlan);
+      if (summaryRecord) {
+        await context.repository.writeRecord(summaryRecord);
+        for (const link of createDecaySummaryLinks(summaryRecord, decayPlan)) {
+          await context.repository.linkRecords(link);
+        }
+      }
+    }
+
+    const retentionPlan = planRetention(
+      shouldApply
+        ? await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)
+        : mergeUpdatedRecords(retentionInputRecords, applyDecayPlan(decayPlan)),
+      space.settings?.retentionDays,
+    );
 
     if (shouldApply) {
       const retentionUpdates = applyRetentionPlan(retentionPlan);
@@ -311,6 +345,8 @@ async function runSpaceCommand(
         shouldApply ? "Maintenance applied." : "Maintenance dry run.",
         "phase=compaction",
         ...summarizeCompactionPlan(compactionPlan),
+        "phase=decay",
+        ...summarizeDecayPlan(decayPlan),
         "phase=retention",
         ...summarizeRetentionPlan(retentionPlan),
       ],
@@ -584,6 +620,39 @@ async function runMemoryCommand(
       lines: [
         shouldApply ? "Retention applied." : "Retention dry run.",
         ...summarizeRetentionPlan(plan),
+      ],
+    };
+  }
+
+  if (action === "decay") {
+    const spaceId = requireFlag(parsed.flags, "space-id");
+    const space = await requireSpace(context.repository, spaceId);
+    const records = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+    const plan = planDecay(records, space.settings?.decay);
+    const shouldApply = parsed.flags.apply === "true";
+
+    if (shouldApply) {
+      for (const record of applyDecayPlan(plan)) {
+        await context.repository.writeRecord(record);
+      }
+
+      for (const event of createDecayEvents(plan)) {
+        await context.repository.appendEvent(event);
+      }
+
+      const summaryRecord = createDecaySummaryRecord(plan);
+      if (summaryRecord) {
+        await context.repository.writeRecord(summaryRecord);
+        for (const link of createDecaySummaryLinks(summaryRecord, plan)) {
+          await context.repository.linkRecords(link);
+        }
+      }
+    }
+
+    return {
+      lines: [
+        shouldApply ? "Decay applied." : "Decay dry run.",
+        ...summarizeDecayPlan(plan),
       ],
     };
   }
@@ -1017,33 +1086,70 @@ function parseConflictFlags(flags: Record<string, string>): MemorySpace["setting
   return { conflict };
 }
 
+function parseDecayFlags(flags: Record<string, string>): MemorySpace["settings"] {
+  const decayEntries: Array<[keyof DecayPolicy, number | boolean | undefined]> = [
+    ["minAgeDays", parseOptionalNumber(flags["decay-min-age-days"])],
+    ["confidenceDecayPerDay", parseOptionalNumber(flags["decay-confidence-per-day"])],
+    ["freshnessDecayPerDay", parseOptionalNumber(flags["decay-freshness-per-day"])],
+    ["minConfidence", parseOptionalNumber(flags["decay-min-confidence"])],
+    ["minFreshness", parseOptionalNumber(flags["decay-min-freshness"])],
+  ];
+
+  const decay = Object.fromEntries(
+    decayEntries.filter(([, value]) => value !== undefined),
+  ) as Partial<DecayPolicy>;
+
+  if (flags["decay-enabled"] !== undefined) {
+    decay.enabled = parseOptionalBoolean(flags["decay-enabled"]);
+  }
+
+  if (Object.keys(decay).length === 0) {
+    return {};
+  }
+
+  return { decay };
+}
+
 function mergeSpaceSettings(
   existing: MemorySpace["settings"] | undefined,
   fromJson: MemorySpace["settings"] | undefined,
   fromFlags: MemorySpace["settings"] | undefined,
   extra: MemorySpace["settings"] | undefined = undefined,
+  extraTwo: MemorySpace["settings"] | undefined = undefined,
 ): MemorySpace["settings"] {
   return {
     ...(existing ?? {}),
     ...(fromJson ?? {}),
     ...(fromFlags ?? {}),
     ...(extra ?? {}),
+    ...(extraTwo ?? {}),
     retentionDays: {
       ...(existing?.retentionDays ?? {}),
       ...(fromJson?.retentionDays ?? {}),
       ...(fromFlags?.retentionDays ?? {}),
       ...(extra?.retentionDays ?? {}),
+      ...(extraTwo?.retentionDays ?? {}),
     },
     compaction: {
       ...(existing?.compaction ?? {}),
       ...(fromJson?.compaction ?? {}),
       ...(fromFlags?.compaction ?? {}),
+      ...(extra?.compaction ?? {}),
+      ...(extraTwo?.compaction ?? {}),
     },
     conflict: {
       ...(existing?.conflict ?? {}),
       ...(fromJson?.conflict ?? {}),
       ...(fromFlags?.conflict ?? {}),
       ...(extra?.conflict ?? {}),
+      ...(extraTwo?.conflict ?? {}),
+    },
+    decay: {
+      ...(existing?.decay ?? {}),
+      ...(fromJson?.decay ?? {}),
+      ...(fromFlags?.decay ?? {}),
+      ...(extra?.decay ?? {}),
+      ...(extraTwo?.decay ?? {}),
     },
   };
 }

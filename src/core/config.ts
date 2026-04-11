@@ -32,6 +32,15 @@ export interface ConflictPolicy {
   confidencePenalty: number;
 }
 
+export interface DecayPolicy {
+  enabled: boolean;
+  minAgeDays: number;
+  confidenceDecayPerDay: number;
+  freshnessDecayPerDay: number;
+  minConfidence: number;
+  minFreshness: number;
+}
+
 export const defaultConfig: GlialNodeConfig = {
   maxWorkingMemoryRecords: 50,
   staleRecordWindowDays: 14,
@@ -62,4 +71,13 @@ export const defaultConflictPolicy: ConflictPolicy = {
   enabled: true,
   minTokenOverlap: 2,
   confidencePenalty: 0.15,
+};
+
+export const defaultDecayPolicy: DecayPolicy = {
+  enabled: true,
+  minAgeDays: 14,
+  confidenceDecayPerDay: 0.01,
+  freshnessDecayPerDay: 0.02,
+  minConfidence: 0.2,
+  minFreshness: 0.15,
 };

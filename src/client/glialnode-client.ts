@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { CompactionPolicy, ConflictPolicy, RetentionPolicy } from "../core/config.js";
+import type { CompactionPolicy, ConflictPolicy, DecayPolicy, RetentionPolicy } from "../core/config.js";
 import { createId } from "../core/ids.js";
 import type {
   ActorType,
@@ -25,6 +25,13 @@ import {
   planCompaction,
 } from "../memory/compaction.js";
 import { createConflictEvents, createConflictLinks, detectConflicts } from "../memory/conflicts.js";
+import {
+  applyDecayPlan,
+  createDecayEvents,
+  createDecaySummaryLinks,
+  createDecaySummaryRecord,
+  planDecay,
+} from "../memory/decay.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyRetentionPlan,
@@ -55,6 +62,7 @@ export interface ConfigureSpaceInput {
   settings?: MemorySpaceSettings;
   compaction?: Partial<CompactionPolicy>;
   conflict?: Partial<ConflictPolicy>;
+  decay?: Partial<DecayPolicy>;
   retentionDays?: Partial<RetentionPolicy>;
 }
 
@@ -94,6 +102,7 @@ export interface SpaceSnapshot {
 
 export interface MaintenanceResult {
   compactionPlan: ReturnType<typeof planCompaction>;
+  decayPlan: ReturnType<typeof planDecay>;
   retentionPlan: ReturnType<typeof planRetention>;
   applied: boolean;
 }
@@ -152,6 +161,7 @@ export class GlialNodeClient {
         input.compaction ? { compaction: input.compaction } : undefined,
         input.retentionDays ? { retentionDays: input.retentionDays } : undefined,
         input.conflict ? { conflict: input.conflict } : undefined,
+        input.decay ? { decay: input.decay } : undefined,
       ),
     );
 
@@ -354,6 +364,32 @@ export class GlialNodeClient {
     return plan;
   }
 
+  async decaySpace(spaceId: string, options: { apply?: boolean; now?: Date } = {}): Promise<ReturnType<typeof planDecay>> {
+    const space = await requireSpace(this.repository, spaceId);
+    const records = await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+    const plan = planDecay(records, space.settings?.decay, options.now);
+
+    if (options.apply) {
+      for (const record of applyDecayPlan(plan)) {
+        await this.repository.writeRecord(record);
+      }
+
+      for (const event of createDecayEvents(plan)) {
+        await this.repository.appendEvent(event);
+      }
+
+      const summaryRecord = createDecaySummaryRecord(plan);
+      if (summaryRecord) {
+        await this.repository.writeRecord(summaryRecord);
+        for (const link of createDecaySummaryLinks(summaryRecord, plan)) {
+          await this.repository.linkRecords(link);
+        }
+      }
+    }
+
+    return plan;
+  }
+
   async maintainSpace(spaceId: string, options: { apply?: boolean } = {}): Promise<MaintenanceResult> {
     const space = await requireSpace(this.repository, spaceId);
     const initialRecords = await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
@@ -387,10 +423,35 @@ export class GlialNodeClient {
       }
     }
 
+    const decayInputRecords = options.apply
+      ? await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)
+      : postCompactionRecords;
+    const decayPlan = planDecay(decayInputRecords, space.settings?.decay);
+
+    if (options.apply) {
+      for (const record of applyDecayPlan(decayPlan)) {
+        await this.repository.writeRecord(record);
+      }
+
+      for (const event of createDecayEvents(decayPlan)) {
+        await this.repository.appendEvent(event);
+      }
+
+      const decaySummary = createDecaySummaryRecord(decayPlan);
+      if (decaySummary) {
+        await this.repository.writeRecord(decaySummary);
+        for (const link of createDecaySummaryLinks(decaySummary, decayPlan)) {
+          await this.repository.linkRecords(link);
+        }
+      }
+    }
+
+    const retentionInputRecords = options.apply
+      ? await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)
+      : mergeUpdatedRecords(decayInputRecords, applyDecayPlan(decayPlan));
+
     const retentionPlan = planRetention(
-      options.apply
-        ? await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)
-        : postCompactionRecords,
+      retentionInputRecords,
       space.settings?.retentionDays,
     );
 
@@ -412,11 +473,7 @@ export class GlialNodeClient {
       }
     }
 
-    return {
-      compactionPlan,
-      retentionPlan,
-      applied: options.apply === true,
-    };
+    return { compactionPlan, decayPlan, retentionPlan, applied: options.apply === true };
   }
 
   async getSpaceReport(spaceId: string, recentEventLimit = 10): Promise<SpaceReport> {
@@ -488,29 +545,41 @@ function mergeSpaceSettings(
   first?: MemorySpaceSettings,
   second?: MemorySpaceSettings,
   third?: MemorySpaceSettings,
+  fourth?: MemorySpaceSettings,
 ): MemorySpaceSettings {
   return {
     ...(existing ?? {}),
     ...(first ?? {}),
     ...(second ?? {}),
     ...(third ?? {}),
+    ...(fourth ?? {}),
     retentionDays: {
       ...(existing?.retentionDays ?? {}),
       ...(first?.retentionDays ?? {}),
       ...(second?.retentionDays ?? {}),
       ...(third?.retentionDays ?? {}),
+      ...(fourth?.retentionDays ?? {}),
     },
     compaction: {
       ...(existing?.compaction ?? {}),
       ...(first?.compaction ?? {}),
       ...(second?.compaction ?? {}),
       ...(third?.compaction ?? {}),
+      ...(fourth?.compaction ?? {}),
     },
     conflict: {
       ...(existing?.conflict ?? {}),
       ...(first?.conflict ?? {}),
       ...(second?.conflict ?? {}),
       ...(third?.conflict ?? {}),
+      ...(fourth?.conflict ?? {}),
+    },
+    decay: {
+      ...(existing?.decay ?? {}),
+      ...(first?.decay ?? {}),
+      ...(second?.decay ?? {}),
+      ...(third?.decay ?? {}),
+      ...(fourth?.decay ?? {}),
     },
   };
 }

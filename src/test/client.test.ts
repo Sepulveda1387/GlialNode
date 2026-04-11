@@ -342,3 +342,55 @@ test("GlialNodeClient detects contradictory durable memory and lowers older conf
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient decay lowers stale durable memory trust", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-decay-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Decay Space",
+      settings: {
+        decay: {
+          minAgeDays: 0,
+          confidenceDecayPerDay: 0.05,
+          freshnessDecayPerDay: 0.1,
+          minConfidence: 0.2,
+          minFreshness: 0.15,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const record = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "fact",
+      content: "Lexical retrieval is the default memory strategy.",
+      summary: "Retrieval default",
+      tags: ["retrieval"],
+      confidence: 0.9,
+      freshness: 0.8,
+      importance: 0.85,
+    });
+
+    const decayPlan = await client.decaySpace(space.id, { apply: true, now: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) });
+    assert.equal(decayPlan.decayed.length, 1);
+
+    const updated = await client.getRecord(record.id);
+    assert.ok(updated.confidence < record.confidence);
+    assert.ok(updated.freshness < record.freshness);
+
+    const report = await client.getSpaceReport(space.id, 10);
+    assert.match(report.recentLifecycleEvents.map((event) => event.type).join(","), /memory_decayed/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

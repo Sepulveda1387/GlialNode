@@ -128,6 +128,7 @@ GlialNode currently includes:
 - compaction history with system events and summary records
 - semantic distillation of related records during compaction
 - automatic contradiction detection with confidence penalties on older conflicting memory
+- time-based confidence and freshness decay for stale durable memory
 - per-space policy settings for configurable memory behavior
 - SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
 - applied SQLite migration tracking and schema-version introspection
@@ -321,6 +322,28 @@ The default conflict policy is:
 
 You can tune or disable this behavior through space settings.
 
+## Memory Decay
+
+GlialNode now includes a decay phase for stale durable memory.
+
+Instead of letting old decisions and facts keep their original trust forever, GlialNode can gradually reduce:
+
+- `confidence` when a durable record goes stale
+- `freshness` as the record ages
+
+Decay is designed to be gradual and bounded. Records never fall below configured floors, and decay runs as an explicit maintenance workflow so the system remains inspectable.
+
+The default decay policy is:
+
+- `enabled=true`
+- `minAgeDays=14`
+- `confidenceDecayPerDay=0.01`
+- `freshnessDecayPerDay=0.02`
+- `minConfidence=0.2`
+- `minFreshness=0.15`
+
+Decay can be run directly or as part of `space maintain`.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -347,10 +370,13 @@ glialnode link add --space-id <space-id> --from-record-id <record-a> --to-record
 glialnode memory show --record-id <record-b>
 glialnode memory compact --space-id <space-id>
 glialnode memory compact --space-id <space-id> --apply
+glialnode memory decay --space-id <space-id>
+glialnode memory decay --space-id <space-id> --apply
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
+glialnode space configure --id <space-id> --decay-enabled true --decay-min-age-days 7 --decay-confidence-per-day 0.02 --decay-freshness-per-day 0.03
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>
 glialnode space maintain --id <space-id>

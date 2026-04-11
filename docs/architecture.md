@@ -87,6 +87,18 @@ The current design:
 - lowers confidence on the older conflicting memory instead of deleting it
 - emits a `memory_conflicted` event so reports can surface contested memory
 
+### Decay Handling
+
+Maintenance can also apply gradual trust decay to stale durable memory.
+
+The current design:
+
+- targets durable memory such as `decision`, `fact`, `preference`, and `summary`
+- waits until the record passes a configurable age threshold
+- lowers confidence and freshness by small configurable daily amounts
+- respects configured floors so decay does not erase trust completely
+- emits a `memory_decayed` event and a decay summary record for observability
+
 ### Client Layer
 
 GlialNode now exposes a typed client API for programmatic use in addition to the CLI.

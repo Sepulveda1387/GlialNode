@@ -1038,3 +1038,90 @@ test("CLI memory add detects contradictory durable memory", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI decay reduces stale durable memory trust and reports it", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-decay-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Decay Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    await runCommand(
+      parseArgs([
+        "space",
+        "configure",
+        "--id", spaceId,
+        "--decay-min-age-days", "0",
+        "--decay-confidence-per-day", "0.05",
+        "--decay-freshness-per-day", "0.1",
+      ]),
+      { repository },
+    );
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const addRecordResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "fact",
+        "--content", "Lexical retrieval is the default memory strategy.",
+        "--summary", "Retrieval default",
+        "--tags", "retrieval",
+        "--confidence", "0.9",
+        "--freshness", "0.8",
+        "--importance", "0.85",
+      ]),
+      { repository },
+    );
+    const recordId = addRecordResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(recordId);
+
+    const staleRecord = await repository.getRecord(recordId);
+    assert.ok(staleRecord);
+    staleRecord.updatedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    await repository.writeRecord(staleRecord);
+
+    const dryRun = await runCommand(
+      parseArgs(["memory", "decay", "--space-id", spaceId]),
+      { repository },
+    );
+    assert.equal(dryRun.lines[0], "Decay dry run.");
+    assert.equal(dryRun.lines[1], "decayed=1");
+
+    const applied = await runCommand(
+      parseArgs(["memory", "decay", "--space-id", spaceId, "--apply"]),
+      { repository },
+    );
+    assert.equal(applied.lines[0], "Decay applied.");
+
+    const show = await runCommand(
+      parseArgs(["memory", "show", "--record-id", recordId]),
+      { repository },
+    );
+    assert.match(show.lines.join("\n"), /links=1|links=2/);
+
+    const report = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId, "--recent-events", "10"]),
+      { repository },
+    );
+    assert.match(report.lines.join("\n"), /memory_decayed/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

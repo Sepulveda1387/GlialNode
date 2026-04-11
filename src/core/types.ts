@@ -46,7 +46,8 @@ export type EventType =
   | "memory_archived"
   | "memory_expired"
   | "memory_superseded"
-  | "memory_conflicted";
+  | "memory_conflicted"
+  | "memory_decayed";
 
 export type MemoryLinkType =
   | "derived_from"
@@ -81,6 +82,14 @@ export interface MemorySpaceSettings {
     enabled?: boolean;
     minTokenOverlap?: number;
     confidencePenalty?: number;
+  };
+  decay?: {
+    enabled?: boolean;
+    minAgeDays?: number;
+    confidenceDecayPerDay?: number;
+    freshnessDecayPerDay?: number;
+    minConfidence?: number;
+    minFreshness?: number;
   };
 }
 
