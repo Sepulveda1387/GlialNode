@@ -106,6 +106,16 @@ export interface MemoryBundle {
   links: MemoryRecordLink[];
 }
 
+export type MemoryBundleProfile = "balanced" | "planner" | "executor" | "reviewer";
+
+export interface BuildMemoryBundleOptions {
+  queryText?: string;
+  profile?: MemoryBundleProfile;
+  maxSupporting?: number;
+  maxContentChars?: number;
+  preferCompact?: boolean;
+}
+
 export interface BuildRecallPackOptions {
   queryText?: string;
   supportLimit?: number;
@@ -198,12 +208,23 @@ export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTr
   };
 }
 
-export function buildMemoryBundle(pack: RecallPack, queryText?: string): MemoryBundle {
+export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOptions = {}): MemoryBundle {
+  const resolved = resolveBundlePolicy(options.profile, options);
+  const supporting = pack.supporting.slice(0, Math.max(resolved.maxSupporting, 0));
+  const relatedIds = new Set([pack.primary.id, ...supporting.map((record) => record.id)]);
+
   return {
-    trace: buildRecallTrace(pack, queryText),
-    primary: toBundleEntry(pack.primary, "primary"),
-    supporting: pack.supporting.map((record) => toBundleEntry(record, "supporting")),
-    links: pack.links,
+    trace: buildRecallTrace(
+      {
+        ...pack,
+        supporting,
+        links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
+      },
+      resolved.queryText,
+    ),
+    primary: toBundleEntry(pack.primary, "primary", resolved),
+    supporting: supporting.map((record) => toBundleEntry(record, "supporting", resolved)),
+    links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
   };
 }
 
@@ -293,7 +314,15 @@ function truncateText(value: string, length: number): string {
   return `${value.slice(0, length - 3)}...`;
 }
 
-function toBundleEntry(record: MemoryRecord, role: "primary" | "supporting"): MemoryBundleEntry {
+function toBundleEntry(
+  record: MemoryRecord,
+  role: "primary" | "supporting",
+  options: Required<Pick<BuildMemoryBundleOptions, "maxContentChars" | "preferCompact">>,
+): MemoryBundleEntry {
+  const content = options.preferCompact && record.compactContent
+    ? truncateText(record.compactContent, options.maxContentChars)
+    : truncateText(record.content, options.maxContentChars);
+
   return {
     recordId: record.id,
     role,
@@ -301,9 +330,54 @@ function toBundleEntry(record: MemoryRecord, role: "primary" | "supporting"): Me
     kind: record.kind,
     status: record.status,
     summary: record.summary,
-    content: record.content,
+    content,
     compactContent: record.compactContent,
     tags: record.tags,
+  };
+}
+
+function resolveBundlePolicy(
+  profile: MemoryBundleProfile | undefined,
+  options: BuildMemoryBundleOptions,
+): {
+  queryText?: string;
+  profile: MemoryBundleProfile;
+  maxSupporting: number;
+  maxContentChars: number;
+  preferCompact: boolean;
+} {
+  const defaultsByProfile: Record<MemoryBundleProfile, Omit<Required<Pick<BuildMemoryBundleOptions, "profile" | "maxSupporting" | "maxContentChars" | "preferCompact">>, "profile">> = {
+    balanced: {
+      maxSupporting: 3,
+      maxContentChars: 240,
+      preferCompact: false,
+    },
+    planner: {
+      maxSupporting: 4,
+      maxContentChars: 320,
+      preferCompact: false,
+    },
+    executor: {
+      maxSupporting: 2,
+      maxContentChars: 160,
+      preferCompact: true,
+    },
+    reviewer: {
+      maxSupporting: 5,
+      maxContentChars: 420,
+      preferCompact: false,
+    },
+  };
+
+  const resolvedProfile = profile ?? "balanced";
+  const base = defaultsByProfile[resolvedProfile];
+
+  return {
+    queryText: options.queryText,
+    profile: resolvedProfile,
+    maxSupporting: options.maxSupporting ?? base.maxSupporting,
+    maxContentChars: options.maxContentChars ?? base.maxContentChars,
+    preferCompact: options.preferCompact ?? base.preferCompact,
   };
 }
 

@@ -132,7 +132,7 @@ export function usageText(): string {
     "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
-    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
+    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--bundle-profile balanced|planner|executor|reviewer] [--bundle-max-supporting 3] [--bundle-max-content-chars 240] [--bundle-prefer-compact true] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
     "  glialnode memory list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
@@ -697,7 +697,15 @@ async function runMemoryCommand(
         queryText: parsed.flags.text,
         supportLimit: parsed.flags["support-limit"] ? Number(parsed.flags["support-limit"]) : 3,
       });
-      bundles.push(buildMemoryBundle(pack, parsed.flags.text));
+      bundles.push(buildMemoryBundle(pack, {
+        queryText: parsed.flags.text,
+        profile: parseBundleProfile(parsed.flags["bundle-profile"]),
+        maxSupporting: parseOptionalNumber(parsed.flags["bundle-max-supporting"]),
+        maxContentChars: parseOptionalNumber(parsed.flags["bundle-max-content-chars"]),
+        preferCompact: parsed.flags["bundle-prefer-compact"] !== undefined
+          ? parseOptionalBoolean(parsed.flags["bundle-prefer-compact"])
+          : undefined,
+      }));
     }
 
     return {
@@ -1268,6 +1276,19 @@ function requireLinkType(value: string | undefined): MemoryRecordLink["type"] {
   }
 
   return value as MemoryRecordLink["type"];
+}
+
+function parseBundleProfile(value: string | undefined): "balanced" | "planner" | "executor" | "reviewer" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const allowed = new Set(["balanced", "planner", "executor", "reviewer"]);
+  if (!allowed.has(value)) {
+    throw new Error(`Invalid bundle profile: ${value}`);
+  }
+
+  return value as "balanced" | "planner" | "executor" | "reviewer";
 }
 
 function parseJsonFlag(value: string): Record<string, unknown> {

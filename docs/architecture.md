@@ -94,6 +94,12 @@ For downstream execution, the retrieval layer should also be able to emit a memo
 - the trace produced from the same recall pack
 - links needed to preserve provenance inside the handoff object
 
+That bundle layer should also support pruning policies so different consumers can receive different shapes of memory:
+
+- planners can tolerate broader context
+- executors should get a tighter handoff with smaller payloads
+- reviewers can keep richer supporting detail
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.

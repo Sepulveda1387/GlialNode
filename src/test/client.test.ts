@@ -718,3 +718,81 @@ test("GlialNodeClient can build reusable memory bundles", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient bundle policies can prune and compact handoff payloads", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-policy-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Bundle Policy Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable search flows and operational debugging.",
+      summary: "Lexical retrieval decision",
+      compactContent: "U:req retrieval=lexical_first",
+      tags: ["retrieval", "search"],
+      importance: 0.92,
+      confidence: 0.85,
+      freshness: 0.8,
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval remains easier to debug than a heavier semantic stack.",
+      summary: "Lexical debugging benefit",
+      compactContent: "F:retrieval debug=easy",
+      tags: ["retrieval", "debugging"],
+      importance: 0.7,
+      confidence: 0.7,
+      freshness: 0.65,
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval uses simpler ranking signals and predictable filters.",
+      summary: "Lexical ranking simplicity",
+      compactContent: "F:retrieval ranking=simple",
+      tags: ["retrieval", "ranking"],
+      importance: 0.68,
+      confidence: 0.69,
+      freshness: 0.64,
+    });
+
+    const bundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      limit: 1,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 4,
+      bundleProfile: "executor",
+      bundleMaxSupporting: 1,
+      bundleMaxContentChars: 18,
+      bundlePreferCompact: true,
+    });
+
+    assert.equal(bundles.length, 1);
+    assert.ok((bundles[0]?.supporting.length ?? 0) <= 1);
+    assert.ok((bundles[0]?.primary.content.length ?? 0) <= 18);
+    assert.match(bundles[0]?.primary.content ?? "", /\.\.\.$/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

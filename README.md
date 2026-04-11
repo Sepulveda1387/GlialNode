@@ -320,6 +320,24 @@ console.log(bundles[0]?.primary.compactContent);
 console.log(bundles[0]?.trace);
 ```
 
+Bundles can also be shaped for the downstream consumer. For example, an executor-oriented handoff can prefer compact memory text and prune the supporting payload:
+
+```ts
+const bundles = await client.bundleRecall(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval",
+    limit: 1,
+  },
+  {
+    bundleProfile: "executor",
+    bundleMaxSupporting: 1,
+    bundleMaxContentChars: 160,
+    bundlePreferCompact: true,
+  },
+);
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -404,6 +422,19 @@ And it can package the whole result as a memory bundle:
 - relevant intra-bundle links
 
 That gives downstream orchestrators and agents a stable object they can consume directly instead of reconstructing context from raw search results.
+
+Bundle policies now make that handoff tunable:
+
+- `balanced`: general-purpose default
+- `planner`: allows a little more supporting context
+- `executor`: prunes harder and prefers compact memory text
+- `reviewer`: allows the richest supporting context
+
+You can also override the profile defaults directly with:
+
+- `bundleMaxSupporting`
+- `bundleMaxContentChars`
+- `bundlePreferCompact`
 
 ## Contradiction Handling
 
@@ -497,6 +528,7 @@ glialnode memory search --space-id <space-id> --text lexical --reinforce --reinf
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory bundle --space-id <space-id> --text lexical --bundle-profile executor --bundle-max-supporting 1 --bundle-max-content-chars 160 --bundle-prefer-compact true
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

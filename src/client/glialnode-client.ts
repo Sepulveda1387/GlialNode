@@ -51,6 +51,7 @@ import {
   buildRecallPack,
   buildRecallTrace,
   type MemoryBundle,
+  type MemoryBundleProfile,
   type RecallPack,
   type RecallTrace,
 } from "../memory/retrieval.js";
@@ -145,6 +146,10 @@ export interface RecallOptions {
   primaryLimit?: number;
   supportLimit?: number;
   includeSameScopeDistilled?: boolean;
+  bundleProfile?: MemoryBundleProfile;
+  bundleMaxSupporting?: number;
+  bundleMaxContentChars?: number;
+  bundlePreferCompact?: boolean;
 }
 
 export class GlialNodeClient {
@@ -338,7 +343,13 @@ export class GlialNodeClient {
     options: RecallOptions = {},
   ): Promise<MemoryBundle[]> {
     const packs = await this.recallRecords(query, options);
-    return packs.map((pack) => buildMemoryBundle(pack, query.text));
+    return packs.map((pack) => buildMemoryBundle(pack, {
+      queryText: query.text,
+      profile: options.bundleProfile,
+      maxSupporting: options.bundleMaxSupporting,
+      maxContentChars: options.bundleMaxContentChars,
+      preferCompact: options.bundlePreferCompact,
+    }));
   }
 
   async promoteRecord(recordId: string): Promise<MemoryRecord> {

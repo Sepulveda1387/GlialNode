@@ -1578,3 +1578,100 @@ test("CLI bundle returns a reusable memory bundle payload", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI bundle policies can prune payload size for executor handoff", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-policy-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Policy Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable search flows and operational debugging.",
+        "--summary", "Lexical retrieval decision",
+        "--compact-content", "U:req retrieval=lexical_first",
+        "--tags", "retrieval,search",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval remains easier to debug than a heavier semantic stack.",
+        "--summary", "Lexical debugging benefit",
+        "--compact-content", "F:retrieval debug=easy",
+        "--tags", "retrieval,debugging",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval uses simpler ranking signals and predictable filters.",
+        "--summary", "Lexical ranking simplicity",
+        "--compact-content", "F:retrieval ranking=simple",
+        "--tags", "retrieval,ranking",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "lexical retrieval",
+        "--limit", "1",
+        "--support-limit", "4",
+        "--bundle-profile", "executor",
+        "--bundle-max-supporting", "1",
+        "--bundle-max-content-chars", "18",
+        "--bundle-prefer-compact", "true",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      primary: { content: string };
+      supporting: Array<{ content: string }>;
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.ok((parsed[0]?.supporting.length ?? 0) <= 1);
+    assert.ok((parsed[0]?.primary.content.length ?? 0) <= 18);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
