@@ -1,4 +1,4 @@
-import type { MemoryRecord } from "../core/types.js";
+import type { MemoryRecord, MemoryRecordLink } from "../core/types.js";
 
 const QUERY_STOP_WORDS = new Set([
   "a",
@@ -65,6 +65,95 @@ export function rankRecordsForRetrieval(
     (left, right) =>
       scoreRecordForRetrieval(right, now, queryText) - scoreRecordForRetrieval(left, now, queryText),
   );
+}
+
+export interface RecallPack {
+  primary: MemoryRecord;
+  supporting: MemoryRecord[];
+  links: MemoryRecordLink[];
+}
+
+export interface BuildRecallPackOptions {
+  queryText?: string;
+  supportLimit?: number;
+  includeSameScopeDistilled?: boolean;
+}
+
+export function buildRecallPack(
+  primary: MemoryRecord,
+  records: MemoryRecord[],
+  links: MemoryRecordLink[],
+  options: BuildRecallPackOptions = {},
+): RecallPack {
+  const supportLimit = options.supportLimit ?? 3;
+  const allRecordsById = new Map(records.map((record) => [record.id, record]));
+  const linkedRecordIds = new Set<string>();
+
+  for (const link of links) {
+    if (link.fromRecordId === primary.id && link.toRecordId !== primary.id) {
+      linkedRecordIds.add(link.toRecordId);
+    }
+
+    if (link.toRecordId === primary.id && link.fromRecordId !== primary.id) {
+      linkedRecordIds.add(link.fromRecordId);
+    }
+  }
+
+  const linkedSupporting = [...linkedRecordIds]
+    .map((recordId) => allRecordsById.get(recordId))
+    .filter((record): record is MemoryRecord => record !== undefined)
+    .filter((record) => record.status === "active" || record.status === "superseded");
+
+  const sameScopeCandidates = records.filter((record) =>
+    record.id !== primary.id &&
+    !linkedRecordIds.has(record.id) &&
+    record.scope.id === primary.scope.id &&
+    record.scope.type === primary.scope.type &&
+    record.status === "active" &&
+    isContextuallyRelated(primary, record, options.queryText),
+  );
+
+  const additionalSupporting = options.includeSameScopeDistilled === false
+    ? sameScopeCandidates.filter((record) => record.kind !== "summary")
+    : sameScopeCandidates;
+
+  const supporting = rankRecordsForRetrieval(
+    [...linkedSupporting, ...additionalSupporting],
+    options.queryText,
+  ).slice(0, Math.max(supportLimit, 0));
+
+  return {
+    primary,
+    supporting,
+    links: links.filter((link) => {
+      const relatedIds = new Set([primary.id, ...supporting.map((record) => record.id)]);
+      return relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId);
+    }),
+  };
+}
+
+function isContextuallyRelated(primary: MemoryRecord, candidate: MemoryRecord, queryText?: string): boolean {
+  const primaryTags = new Set(primary.tags.map((tag) => tag.toLowerCase()));
+  const candidateTags = new Set(candidate.tags.map((tag) => tag.toLowerCase()));
+
+  for (const tag of primaryTags) {
+    if (candidateTags.has(tag)) {
+      return true;
+    }
+  }
+
+  const primaryTokens = new Set(tokenize([primary.summary ?? "", primary.content, primary.compactContent ?? ""].join(" ")));
+  const candidateTokens = new Set(tokenize([candidate.summary ?? "", candidate.content, candidate.compactContent ?? ""].join(" ")));
+  if (overlapRatio(primaryTokens, candidateTokens) >= 0.2) {
+    return true;
+  }
+
+  if (!queryText) {
+    return false;
+  }
+
+  const queryTokens = new Set(tokenize(queryText));
+  return overlapRatio(queryTokens, candidateTokens) >= 0.2;
 }
 
 function scoreQueryAlignment(record: MemoryRecord, queryText: string): number {

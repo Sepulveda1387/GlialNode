@@ -263,6 +263,25 @@ const matches = await client.searchRecords(
 );
 ```
 
+GlialNode can also build recall packs so a primary match comes back with nearby supporting memory:
+
+```ts
+const packs = await client.recallRecords(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval",
+    limit: 3,
+  },
+  {
+    primaryLimit: 1,
+    supportLimit: 3,
+  },
+);
+
+console.log(packs[0]?.primary.summary);
+console.log(packs[0]?.supporting.map((record) => record.summary ?? record.content));
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -322,6 +341,14 @@ When records match a query, retrieval now balances:
 - a modest preference for specific decisions, facts, or summaries when the query wording clearly asks for them
 
 That means a distilled durable summary can lead for broad recall, while a more specific raw decision can still win when the query is narrow and intent-heavy.
+
+On top of plain ranked search, GlialNode can now assemble recall packs:
+
+- one primary matched record
+- linked supporting records like `supports`, `derived_from`, `references`, or `supersedes`
+- nearby same-scope distilled summaries when they add helpful context
+
+This gives host systems a more usable retrieval shape for answers, planning, and tool decisions.
 
 ## Contradiction Handling
 
@@ -412,6 +439,7 @@ glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type ag
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
 glialnode memory search --space-id <space-id> --text lexical
 glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
+glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

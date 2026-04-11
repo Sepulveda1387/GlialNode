@@ -46,6 +46,7 @@ import {
   createReinforcementSummaryRecord,
   planReinforcement,
 } from "../memory/reinforcement.js";
+import { buildRecallPack, type RecallPack } from "../memory/retrieval.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -130,6 +131,13 @@ export interface ReinforceRecordOptions {
 export interface SearchReinforcementOptions extends ReinforceRecordOptions {
   enabled?: boolean;
   limit?: number;
+}
+
+export interface RecallOptions {
+  reinforce?: SearchReinforcementOptions;
+  primaryLimit?: number;
+  supportLimit?: number;
+  includeSameScopeDistilled?: boolean;
 }
 
 export class GlialNodeClient {
@@ -277,6 +285,37 @@ export class GlialNodeClient {
     }
 
     return results;
+  }
+
+  async recallRecords(
+    query: Parameters<MemoryRepository["searchRecords"]>[0],
+    options: RecallOptions = {},
+  ): Promise<RecallPack[]> {
+    await requireSpace(this.repository, query.spaceId);
+    const results = await this.searchRecords(query, {
+      reinforce: options.reinforce,
+    });
+    const primaryRecords = results.slice(0, Math.max(options.primaryLimit ?? results.length, 0));
+
+    if (primaryRecords.length === 0) {
+      return [];
+    }
+
+    const allRecords = await this.repository.listRecords(query.spaceId, Number.MAX_SAFE_INTEGER);
+    const packs: RecallPack[] = [];
+
+    for (const primary of primaryRecords) {
+      const links = await this.repository.listLinksForRecord(primary.id);
+      packs.push(
+        buildRecallPack(primary, allRecords, links, {
+          queryText: query.text,
+          supportLimit: options.supportLimit,
+          includeSameScopeDistilled: options.includeSameScopeDistilled,
+        }),
+      );
+    }
+
+    return packs;
   }
 
   async promoteRecord(recordId: string): Promise<MemoryRecord> {

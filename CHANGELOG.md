@@ -12,6 +12,7 @@
 - Added explicit stale-memory decay with configurable confidence and freshness reduction during maintenance.
 - Added explicit memory reinforcement with configurable confidence and freshness boosts for revalidated records.
 - Added opt-in reinforcement for successful search results in the client and CLI without changing default search behavior.
+- Added recall-pack retrieval so client and CLI can return primary matches with linked supporting memory.
 
 ## 0.1.0
 

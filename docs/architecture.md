@@ -75,6 +75,12 @@ Ranking should combine:
 - a small preference for distilled durable summaries during broad recall
 - a small preference for more specific kinds when the query wording signals intent
 
+The retrieval layer should also be able to assemble a recall pack:
+
+- a primary matched memory
+- directly linked supporting memory
+- nearby distilled summaries in the same scope when they improve context
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.

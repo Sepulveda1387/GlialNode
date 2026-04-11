@@ -510,3 +510,82 @@ test("GlialNodeClient can reinforce successful search results when explicitly re
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient can build recall packs with supporting memory", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-recall-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Recall Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable search flows.",
+      summary: "Lexical retrieval decision",
+      tags: ["retrieval", "search"],
+      confidence: 0.84,
+      freshness: 0.78,
+      importance: 0.88,
+    });
+
+    const supporting = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval is easier to debug than a heavier semantic stack.",
+      summary: "Lexical debugging benefit",
+      tags: ["retrieval", "debugging"],
+      confidence: 0.8,
+      freshness: 0.7,
+      importance: 0.76,
+    });
+
+    const distilled = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "summary",
+      content: "Distilled retrieval memory for lexical-first search defaults.",
+      summary: "Distilled retrieval memory",
+      tags: ["retrieval", "distilled"],
+      confidence: 0.86,
+      freshness: 0.74,
+      importance: 0.83,
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: primary.id,
+      toRecordId: supporting.id,
+      type: "supports",
+    });
+
+    const packs = await client.recallRecords({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      limit: 3,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 3,
+    });
+
+    assert.equal(packs.length, 1);
+    assert.equal(packs[0]?.primary.id, primary.id);
+    assert.ok(packs[0]?.supporting.some((record) => record.id === supporting.id));
+    assert.ok(packs[0]?.supporting.some((record) => record.id === distilled.id));
+    assert.ok((packs[0]?.links.length ?? 0) >= 1);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

@@ -1280,3 +1280,114 @@ test("CLI can reinforce successful search matches when explicitly requested", as
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI recall returns a primary memory with supporting context", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-recall-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Recall Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const primaryResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable search flows.",
+        "--summary", "Lexical retrieval decision",
+        "--tags", "retrieval,search",
+        "--confidence", "0.84",
+        "--freshness", "0.78",
+        "--importance", "0.88",
+      ]),
+      { repository },
+    );
+    const primaryId = primaryResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(primaryId);
+
+    const supportResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval is easier to debug than a heavier semantic stack.",
+        "--summary", "Lexical debugging benefit",
+        "--tags", "retrieval,debugging",
+        "--importance", "0.45",
+        "--confidence", "0.55",
+        "--freshness", "0.45",
+      ]),
+      { repository },
+    );
+    const supportId = supportResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(supportId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", primaryId,
+        "--to-record-id", supportId,
+        "--type", "supports",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "summary",
+        "--content", "Distilled retrieval memory for lexical-first search defaults.",
+        "--summary", "Distilled retrieval memory",
+        "--tags", "retrieval,distilled",
+        "--importance", "0.6",
+        "--confidence", "0.65",
+        "--freshness", "0.55",
+      ]),
+      { repository },
+    );
+
+    const recall = await runCommand(
+      parseArgs([
+        "memory", "recall",
+        "--space-id", spaceId,
+        "--text", "lexical retrieval",
+        "--limit", "1",
+        "--support-limit", "3",
+      ]),
+      { repository },
+    );
+
+    const output = recall.lines.join("\n");
+    assert.match(output, /^packs=1/m);
+    assert.match(output, /(primary|support)=.*Lexical retrieval decision/);
+    assert.match(output, /(primary|support)=.*Lexical debugging benefit/);
+    assert.match(output, /(primary|support)=.*Distilled retrieval memory/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
