@@ -277,8 +277,14 @@ The default distillation policy is conservative:
 
 - `distillMinClusterSize=2`
 - `distillMinTokenOverlap=2`
+- `distillSupersedeSources=true`
+- `distillSupersedeMinConfidence=0.8`
 
-Both values can be tuned through space policy settings if you want distillation to be stricter or more aggressive.
+When a distilled summary is strong enough, GlialNode can also mark the contributing mid-term durable records as `superseded`. This keeps the active set smaller without deleting source provenance.
+
+Normal search now defaults to `active` records unless you explicitly request another status such as `superseded`, `archived`, or `expired`.
+
+These values can be tuned through space policy settings if you want distillation to be stricter or more aggressive.
 
 ## Packaging Notes
 
@@ -308,6 +314,7 @@ glialnode memory compact --space-id <space-id>
 glialnode memory compact --space-id <space-id> --apply
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
+glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>
 glialnode space maintain --id <space-id>

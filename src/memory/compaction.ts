@@ -20,6 +20,7 @@ export interface CompactionPlan {
   archived: CompactionAction[];
   refreshed: CompactionAction[];
   distilled: DistillationAction[];
+  superseded: CompactionAction[];
 }
 
 export function planCompaction(
@@ -34,6 +35,14 @@ export function planCompaction(
   const archived: CompactionAction[] = [];
   const refreshed: CompactionAction[] = [];
   const distilled = planDistillation(records, resolvedPolicy);
+  const superseded = distilled.flatMap<CompactionAction>((action) =>
+    action.supersededRecords.map((record) => ({
+      type: "refresh",
+      reason: "distilled-into-durable-summary",
+      before: action.sourceRecords.find((source) => source.id === record.id) ?? record,
+      after: record,
+    })),
+  );
 
   for (const record of records) {
     if (record.status !== "active") {
@@ -70,7 +79,7 @@ export function planCompaction(
     }
   }
 
-  return { promoted, archived, refreshed, distilled };
+  return { promoted, archived, refreshed, distilled, superseded };
 }
 
 export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
@@ -79,6 +88,7 @@ export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
     `archives=${plan.archived.length}`,
     `refreshed=${plan.refreshed.length}`,
     `distilled=${plan.distilled.length}`,
+    `superseded=${plan.superseded.length}`,
   ];
 
   for (const action of plan.promoted) {
@@ -101,6 +111,10 @@ export function summarizeCompactionPlan(plan: CompactionPlan): string[] {
     lines.push(
       `distill ${action.sourceRecords.map((record) => record.id).join(",")} -> ${action.distilledRecord.id} ${action.reason}`,
     );
+  }
+
+  for (const action of plan.superseded) {
+    lines.push(`supersede ${action.before.id} -> ${action.after.status} ${action.reason}`);
   }
 
   return lines;
@@ -158,11 +172,12 @@ export function applyCompactionPlan(plan: CompactionPlan): MemoryRecord[] {
     ...plan.promoted.map((action) => action.after),
     ...plan.archived.map((action) => action.after),
     ...plan.refreshed.map((action) => action.after),
+    ...plan.superseded.map((action) => action.after),
   ];
 }
 
 export function createCompactionEvents(plan: CompactionPlan): MemoryEvent[] {
-  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
+  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed, ...plan.superseded];
   const lifecycleEvents: MemoryEvent[] = actions.map((action) => ({
     id: createId("evt"),
     spaceId: action.after.spaceId,
@@ -174,13 +189,17 @@ export function createCompactionEvents(plan: CompactionPlan): MemoryEvent[] {
         ? "memory_promoted"
         : action.type === "archive"
           ? "memory_archived"
-          : "memory_written",
+          : action.after.status === "superseded"
+            ? "memory_superseded"
+            : "memory_written",
     summary:
       action.type === "promote"
         ? `Compaction promoted ${action.before.id} from ${action.before.tier} to ${action.after.tier}.`
         : action.type === "archive"
           ? `Compaction archived ${action.before.id}.`
-          : `Compaction refreshed compact memory for ${action.before.id}.`,
+          : action.after.status === "superseded"
+            ? `Compaction superseded ${action.before.id} after distillation.`
+            : `Compaction refreshed compact memory for ${action.before.id}.`,
     payload: {
       reason: action.reason,
       recordId: action.before.id,
@@ -213,7 +232,7 @@ export function createCompactionEvents(plan: CompactionPlan): MemoryEvent[] {
 }
 
 export function createCompactionSummaryRecord(plan: CompactionPlan): MemoryRecord | null {
-  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
+  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed, ...plan.superseded];
 
   if (actions.length === 0 && plan.distilled.length === 0) {
     return null;
@@ -224,11 +243,13 @@ export function createCompactionSummaryRecord(plan: CompactionPlan): MemoryRecor
   const archivedIds = plan.archived.map((action) => action.before.id);
   const refreshedIds = plan.refreshed.map((action) => action.before.id);
   const distilledIds = plan.distilled.map((action) => action.distilledRecord.id);
+  const supersededIds = plan.superseded.map((action) => action.before.id);
   const summaryParts = [
     `promoted ${promotedIds.length} record(s)`,
     `archived ${archivedIds.length} record(s)`,
     `refreshed ${refreshedIds.length} compact encoding(s)`,
     `distilled ${distilledIds.length} summary record(s)`,
+    `superseded ${supersededIds.length} source record(s)`,
   ];
 
   return createMemoryRecord({
@@ -247,7 +268,7 @@ export function createCompactionSummaryRecord(plan: CompactionPlan): MemoryRecor
 }
 
 export function createCompactionSummaryLinks(summaryRecord: MemoryRecord, plan: CompactionPlan): MemoryRecordLink[] {
-  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed];
+  const actions = [...plan.promoted, ...plan.archived, ...plan.refreshed, ...plan.superseded];
   const links: MemoryRecordLink[] = actions.map((action) => ({
     id: createId("link"),
     spaceId: summaryRecord.spaceId,
@@ -278,13 +299,28 @@ export function createCompactionDistilledRecords(plan: CompactionPlan): MemoryRe
 
 export function createCompactionDistillationLinks(plan: CompactionPlan): MemoryRecordLink[] {
   return plan.distilled.flatMap<MemoryRecordLink>((action) =>
-    action.sourceRecords.map((record) => ({
+    action.sourceRecords.flatMap((record) => {
+      const links: MemoryRecordLink[] = [{
       id: createId("link"),
       spaceId: action.distilledRecord.spaceId,
       fromRecordId: action.distilledRecord.id,
       toRecordId: record.id,
       type: "derived_from",
       createdAt: action.distilledRecord.createdAt,
-    })),
+      }];
+
+      if (action.supersededRecords.some((superseded) => superseded.id === record.id)) {
+        links.push({
+          id: createId("link"),
+          spaceId: action.distilledRecord.spaceId,
+          fromRecordId: action.distilledRecord.id,
+          toRecordId: record.id,
+          type: "supersedes",
+          createdAt: action.distilledRecord.createdAt,
+        });
+      }
+
+      return links;
+    }),
   );
 }

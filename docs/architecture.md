@@ -137,6 +137,7 @@ The current CLI now supports:
 - running dry-run or applied memory compaction by simple policy
 - recording compaction outcomes as system events and summary records
 - distilling related active memories into higher-value summary records with provenance links
+- optionally superseding source records once a strong distilled summary exists
 - storing per-space policy settings that can tune compaction behavior
 - enforcing per-space retention windows through sweepable expiration policy
 - surfacing space-level observability for counts and recent lifecycle actions
@@ -164,6 +165,7 @@ The current SQLite boundary now exposes:
 - applied migration tracking inside the database
 - storage and indexing for compact memory text
 - non-recursive semantic distillation that avoids re-distilling system-generated maintenance summaries
+- default active-only search behavior so superseded memory does not dominate normal recall
 - lock timeout behavior that is exercised under contention in tests
 
 That boundary is still intentionally narrow so a future driver swap can happen without changing the memory model.

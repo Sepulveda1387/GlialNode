@@ -107,7 +107,7 @@ export function usageText(): string {
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -939,11 +939,16 @@ function parseCompactionFlags(flags: Record<string, string>): MemorySpace["setti
     ["archiveFreshnessMax", parseOptionalNumber(flags["archive-freshness-max"])],
     ["distillMinClusterSize", parseOptionalNumber(flags["distill-min-cluster-size"])],
     ["distillMinTokenOverlap", parseOptionalNumber(flags["distill-min-token-overlap"])],
+    ["distillSupersedeMinConfidence", parseOptionalNumber(flags["distill-supersede-min-confidence"])],
   ];
 
   const compaction = Object.fromEntries(
     compactionEntries.filter(([, value]) => value !== undefined),
   ) as Partial<CompactionPolicy>;
+
+  if (flags["distill-supersede-sources"] !== undefined) {
+    compaction.distillSupersedeSources = parseOptionalBoolean(flags["distill-supersede-sources"]);
+  }
 
   if (Object.keys(compaction).length === 0) {
     return {};
@@ -1004,6 +1009,18 @@ function parseOptionalNumber(value: string | undefined): number | undefined {
   }
 
   return parsed;
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean {
+  if (value === "true") {
+    return true;
+  }
+
+  if (value === "false") {
+    return false;
+  }
+
+  throw new Error(`Invalid boolean value: ${value ?? "undefined"}`);
 }
 
 async function requireRecord(

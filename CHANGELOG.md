@@ -5,6 +5,8 @@
 - Added semantic memory distillation during compaction.
 - Added provenance links from distilled summary records back to their source records.
 - Added compaction policy knobs for `distillMinClusterSize` and `distillMinTokenOverlap`.
+- Added controlled source-record supersession for strong distilled summaries.
+- Made normal memory search default to active records unless a status filter is provided.
 
 ## 0.1.0
 

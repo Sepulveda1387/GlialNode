@@ -909,6 +909,7 @@ test("CLI compaction distills related records into a summary record with provena
       { repository },
     );
     assert.equal(dryRun.lines[4], "distilled=1");
+    assert.equal(dryRun.lines[5], "superseded=2");
 
     const apply = await runCommand(
       parseArgs(["memory", "compact", "--space-id", spaceId, "--apply"]),
@@ -929,8 +930,27 @@ test("CLI compaction distills related records into a summary record with provena
       parseArgs(["memory", "show", "--record-id", distilledRecordId]),
       { repository },
     );
-    assert.equal(show.lines.find((line) => line.startsWith("links=")), "links=3");
+    assert.equal(show.lines.find((line) => line.startsWith("links=")), "links=5");
     assert.match(show.lines.join("\n"), /derived_from/);
+    assert.match(show.lines.join("\n"), /supersedes/);
+
+    const defaultSearch = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--text", "lexical retrieval"]),
+      { repository },
+    );
+    assert.equal(defaultSearch.lines[0], "records=1");
+
+    const supersededSearch = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--status", "superseded", "--text", "lexical retrieval"]),
+      { repository },
+    );
+    assert.equal(supersededSearch.lines[0], "records=2");
+
+    const report = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId, "--recent-events", "10"]),
+      { repository },
+    );
+    assert.match(report.lines.join("\n"), /memory_superseded/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

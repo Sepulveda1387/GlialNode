@@ -35,6 +35,7 @@ export interface DistillationAction {
   reason: string;
   sourceRecords: MemoryRecord[];
   distilledRecord: MemoryRecord;
+  supersededRecords: MemoryRecord[];
 }
 
 export function planDistillation(
@@ -75,6 +76,7 @@ export function planDistillation(
         reason: "related-memory-cluster",
         sourceRecords: component,
         distilledRecord: candidate,
+        supersededRecords: planSupersededRecords(component, candidate, policy),
       });
     }
   }
@@ -85,6 +87,34 @@ export function planDistillation(
 function isDistillableRecord(record: MemoryRecord): boolean {
   const lowerTags = new Set(record.tags.map((tag) => tag.toLowerCase()));
   return !lowerTags.has("distilled") && !lowerTags.has("compaction") && !lowerTags.has("retention");
+}
+
+function planSupersededRecords(
+  sourceRecords: MemoryRecord[],
+  distilledRecord: MemoryRecord,
+  policy: CompactionPolicy,
+): MemoryRecord[] {
+  if (!policy.distillSupersedeSources) {
+    return [];
+  }
+
+  if (distilledRecord.confidence < policy.distillSupersedeMinConfidence) {
+    return [];
+  }
+
+  if (distilledRecord.tier !== "long") {
+    return [];
+  }
+
+  if (!sourceRecords.every(isSupersedableRecord)) {
+    return [];
+  }
+
+  return sourceRecords.map((record) => ({
+    ...record,
+    status: "superseded",
+    updatedAt: distilledRecord.createdAt,
+  }));
 }
 
 function findRelatedComponents(records: MemoryRecord[], minTokenOverlap: number): MemoryRecord[][] {
@@ -253,6 +283,14 @@ function chooseDistilledTier(records: MemoryRecord[]): MemoryRecord["tier"] {
   }
 
   return "mid";
+}
+
+function isSupersedableRecord(record: MemoryRecord): boolean {
+  return (
+    record.status === "active" &&
+    record.tier === "mid" &&
+    (record.kind === "decision" || record.kind === "preference" || record.kind === "fact" || record.kind === "summary")
+  );
 }
 
 function chooseVisibility(records: MemoryRecord[]): MemoryVisibility {

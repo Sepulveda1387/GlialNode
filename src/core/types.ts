@@ -73,6 +73,8 @@ export interface MemorySpaceSettings {
     archiveFreshnessMax?: number;
     distillMinClusterSize?: number;
     distillMinTokenOverlap?: number;
+    distillSupersedeSources?: boolean;
+    distillSupersedeMinConfidence?: number;
   };
 }
 

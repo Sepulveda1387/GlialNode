@@ -265,8 +265,25 @@ test("GlialNodeClient compaction distills related records into a summary with pr
     assert.match(stored.summary ?? "", /Distilled retrieval memory/);
 
     const links = await client.listLinksForRecord(distilled.id);
-    assert.equal(links.length, 3);
+    assert.equal(links.length, 5);
     assert.equal(links.filter((link) => link.type === "derived_from").length, 2);
+    assert.equal(links.filter((link) => link.type === "supersedes").length, 2);
+
+    const visibleResults = await client.searchRecords({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      limit: 10,
+    });
+    assert.equal(visibleResults.length, 1);
+    assert.equal(visibleResults[0]?.id, distilled.id);
+
+    const supersededResults = await client.searchRecords({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      statuses: ["superseded"],
+      limit: 10,
+    });
+    assert.equal(supersededResults.length, 2);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

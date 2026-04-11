@@ -9,12 +9,15 @@ function recencyWeight(timestamp: string, now: Date): number {
 }
 
 export function scoreRecordForRetrieval(record: MemoryRecord, now: Date = new Date()): number {
+  const statusWeight =
+    record.status === "active" ? 1 : record.status === "superseded" ? 0.45 : 0.2;
+
   return (
     record.importance * 0.35 +
     record.confidence * 0.25 +
     record.freshness * 0.2 +
     recencyWeight(record.updatedAt, now) * 0.2
-  );
+  ) * statusWeight;
 }
 
 export function rankRecordsForRetrieval(

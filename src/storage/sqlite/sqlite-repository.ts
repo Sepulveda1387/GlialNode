@@ -374,6 +374,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
   async searchRecords(query: MemorySearchQuery): Promise<MemoryRecord[]> {
     const clauses: string[] = ["mr.space_id = ?"];
     const params: Array<string | number> = [query.spaceId];
+    const statuses = query.statuses?.length ? query.statuses : ["active"];
 
     if (query.scopeIds?.length) {
       clauses.push(`mr.scope_id IN (${placeholders(query.scopeIds.length)})`);
@@ -395,10 +396,8 @@ export class SqliteMemoryRepository implements MemoryRepository {
       params.push(...query.visibility);
     }
 
-    if (query.statuses?.length) {
-      clauses.push(`mr.status IN (${placeholders(query.statuses.length)})`);
-      params.push(...query.statuses);
-    }
+    clauses.push(`mr.status IN (${placeholders(statuses.length)})`);
+    params.push(...statuses);
 
     let sql = `
       SELECT
@@ -497,7 +496,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
     const recentLifecycleEvents = await this.listEventsByType(
       spaceId,
-      ["memory_promoted", "memory_archived", "memory_expired"],
+      ["memory_promoted", "memory_archived", "memory_expired", "memory_superseded"],
       recentEventLimit,
     );
 
