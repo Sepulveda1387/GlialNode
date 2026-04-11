@@ -72,6 +72,7 @@ flowchart TD
 - search memory with query-aware lexical retrieval and structured filters
 - promote, archive, compact, and expire records through explicit policy workflows
 - distill related active records into durable summary memory with provenance links
+- detect contradictory durable memory and preserve it as contested state
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
@@ -126,6 +127,7 @@ GlialNode currently includes:
 - record provenance and link management
 - compaction history with system events and summary records
 - semantic distillation of related records during compaction
+- automatic contradiction detection with confidence penalties on older conflicting memory
 - per-space policy settings for configurable memory behavior
 - SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
 - applied SQLite migration tracking and schema-version introspection
@@ -299,6 +301,26 @@ When records match a query, retrieval now balances:
 
 That means a distilled durable summary can lead for broad recall, while a more specific raw decision can still win when the query is narrow and intent-heavy.
 
+## Contradiction Handling
+
+GlialNode can now detect likely contradictions when a new durable record is written into the same scope as older durable memory.
+
+When the new record overlaps strongly enough with older `decision`, `fact`, or `preference` records and the language points in an opposing direction, GlialNode can:
+
+- add a `contradicts` provenance link from the new record to the older one
+- emit a `memory_conflicted` event for observability
+- reduce confidence on the older conflicting record instead of deleting it
+
+This keeps contested knowledge visible without treating every conflicting update as a hard overwrite.
+
+The default conflict policy is:
+
+- `enabled=true`
+- `minTokenOverlap=2`
+- `confidencePenalty=0.15`
+
+You can tune or disable this behavior through space settings.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -328,6 +350,7 @@ glialnode memory compact --space-id <space-id> --apply
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --distill-supersede-sources false
+glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>
 glialnode space maintain --id <space-id>

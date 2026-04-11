@@ -496,7 +496,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
     const recentLifecycleEvents = await this.listEventsByType(
       spaceId,
-      ["memory_promoted", "memory_archived", "memory_expired", "memory_superseded"],
+      ["memory_promoted", "memory_archived", "memory_expired", "memory_superseded", "memory_conflicted"],
       recentEventLimit,
     );
 

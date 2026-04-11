@@ -289,3 +289,56 @@ test("GlialNodeClient compaction distills related records into a summary with pr
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient detects contradictory durable memory and lowers older confidence", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-conflict-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Conflict Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const first = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for search flows.",
+      summary: "Prefer lexical retrieval",
+      tags: ["retrieval", "search"],
+      confidence: 0.9,
+      freshness: 0.8,
+      importance: 0.85,
+    });
+
+    const second = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Avoid lexical retrieval first for search flows.",
+      summary: "Avoid lexical retrieval",
+      tags: ["retrieval", "search"],
+      confidence: 0.88,
+      freshness: 0.78,
+      importance: 0.84,
+    });
+
+    const updatedFirst = await client.getRecord(first.id);
+    assert.ok(updatedFirst.confidence < first.confidence);
+
+    const links = await client.listLinksForRecord(second.id);
+    assert.equal(links.filter((link) => link.type === "contradicts").length, 1);
+
+    const report = await client.getSpaceReport(space.id, 10);
+    assert.match(report.recentLifecycleEvents.map((event) => event.type).join(","), /memory_conflicted/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

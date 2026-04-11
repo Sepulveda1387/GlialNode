@@ -956,3 +956,85 @@ test("CLI compaction distills related records into a summary record with provena
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI memory add detects contradictory durable memory", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-conflict-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Conflict Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const firstResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for search flows.",
+        "--summary", "Prefer lexical retrieval",
+        "--tags", "retrieval,search",
+        "--confidence", "0.9",
+        "--freshness", "0.8",
+        "--importance", "0.85",
+      ]),
+      { repository },
+    );
+    const firstId = firstResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(firstId);
+
+    const secondResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Avoid lexical retrieval first for search flows.",
+        "--summary", "Avoid lexical retrieval",
+        "--tags", "retrieval,search",
+        "--confidence", "0.88",
+        "--freshness", "0.78",
+        "--importance", "0.84",
+      ]),
+      { repository },
+    );
+    assert.equal(secondResult.lines.at(-1), "conflicts=1");
+
+    const firstShow = await runCommand(
+      parseArgs(["memory", "show", "--record-id", firstId]),
+      { repository },
+    );
+    assert.match(firstShow.lines.join("\n"), /links=1|links=2/);
+
+    const linkList = await runCommand(
+      parseArgs(["link", "list", "--record-id", secondResult.lines.find((line) => line.startsWith("id="))?.slice(3) ?? ""]),
+      { repository },
+    );
+    assert.match(linkList.lines.join("\n"), /contradicts/);
+
+    const report = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId, "--recent-events", "10"]),
+      { repository },
+    );
+    assert.match(report.lines.join("\n"), /memory_conflicted/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

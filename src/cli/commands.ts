@@ -17,7 +17,7 @@ import type {
   ScopeRecord,
   ScopeType,
 } from "../core/types.js";
-import type { CompactionPolicy } from "../core/config.js";
+import type { CompactionPolicy, ConflictPolicy } from "../core/config.js";
 import {
   applyCompactionPlan,
   createCompactionDistillationLinks,
@@ -28,6 +28,7 @@ import {
   planCompaction,
   summarizeCompactionPlan,
 } from "../memory/compaction.js";
+import { createConflictEvents, createConflictLinks, detectConflicts } from "../memory/conflicts.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyRetentionPlan,
@@ -107,7 +108,7 @@ export function usageText(): string {
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -203,6 +204,7 @@ async function runSpaceCommand(
     const settingsFromFlags = mergeSpaceSettings(
       undefined,
       parseCompactionFlags(parsed.flags),
+      parseConflictFlags(parsed.flags),
       parseRetentionFlags(parsed.flags),
     );
     const mergedSettings = mergeSpaceSettings(space.settings, settingsFromJson, settingsFromFlags);
@@ -376,9 +378,25 @@ async function runMemoryCommand(
 ): Promise<CommandResult> {
   if (action === "add") {
     const input = createMemoryInput(parsed);
+    const space = await requireSpace(context.repository, input.spaceId);
     const record = createMemoryRecord(input);
 
     await context.repository.writeRecord(record);
+
+    const existingRecords = await context.repository.listRecords(input.spaceId, Number.MAX_SAFE_INTEGER);
+    const conflicts = detectConflicts(record, existingRecords, space.settings?.conflict);
+
+    for (const action of conflicts) {
+      await context.repository.writeRecord(action.updatedConflictingRecord);
+    }
+
+    for (const link of createConflictLinks(conflicts)) {
+      await context.repository.linkRecords(link);
+    }
+
+    for (const event of createConflictEvents(conflicts)) {
+      await context.repository.appendEvent(event);
+    }
 
     return {
       lines: [
@@ -386,6 +404,7 @@ async function runMemoryCommand(
         `id=${record.id}`,
         `tier=${record.tier}`,
         `kind=${record.kind}`,
+        `conflicts=${conflicts.length}`,
       ],
     };
   }
@@ -882,6 +901,8 @@ function requireEventType(value: string | undefined): EventType {
     "memory_promoted",
     "memory_archived",
     "memory_expired",
+    "memory_conflicted",
+    "memory_superseded",
   ];
 
   if (!value || !allowed.includes(value as EventType)) {
@@ -975,24 +996,54 @@ function parseRetentionFlags(flags: Record<string, string>): MemorySpace["settin
   return { retentionDays: filtered };
 }
 
+function parseConflictFlags(flags: Record<string, string>): MemorySpace["settings"] {
+  const conflictEntries: Array<[keyof ConflictPolicy, number | boolean | undefined]> = [
+    ["minTokenOverlap", parseOptionalNumber(flags["conflict-min-token-overlap"])],
+    ["confidencePenalty", parseOptionalNumber(flags["conflict-confidence-penalty"])],
+  ];
+
+  const conflict = Object.fromEntries(
+    conflictEntries.filter(([, value]) => value !== undefined),
+  ) as Partial<ConflictPolicy>;
+
+  if (flags["conflict-enabled"] !== undefined) {
+    conflict.enabled = parseOptionalBoolean(flags["conflict-enabled"]);
+  }
+
+  if (Object.keys(conflict).length === 0) {
+    return {};
+  }
+
+  return { conflict };
+}
+
 function mergeSpaceSettings(
   existing: MemorySpace["settings"] | undefined,
   fromJson: MemorySpace["settings"] | undefined,
   fromFlags: MemorySpace["settings"] | undefined,
+  extra: MemorySpace["settings"] | undefined = undefined,
 ): MemorySpace["settings"] {
   return {
     ...(existing ?? {}),
     ...(fromJson ?? {}),
     ...(fromFlags ?? {}),
+    ...(extra ?? {}),
     retentionDays: {
       ...(existing?.retentionDays ?? {}),
       ...(fromJson?.retentionDays ?? {}),
       ...(fromFlags?.retentionDays ?? {}),
+      ...(extra?.retentionDays ?? {}),
     },
     compaction: {
       ...(existing?.compaction ?? {}),
       ...(fromJson?.compaction ?? {}),
       ...(fromFlags?.compaction ?? {}),
+    },
+    conflict: {
+      ...(existing?.conflict ?? {}),
+      ...(fromJson?.conflict ?? {}),
+      ...(fromFlags?.conflict ?? {}),
+      ...(extra?.conflict ?? {}),
     },
   };
 }

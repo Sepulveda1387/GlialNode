@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { CompactionPolicy, RetentionPolicy } from "../core/config.js";
+import type { CompactionPolicy, ConflictPolicy, RetentionPolicy } from "../core/config.js";
 import { createId } from "../core/ids.js";
 import type {
   ActorType,
@@ -24,6 +24,7 @@ import {
   createCompactionSummaryRecord,
   planCompaction,
 } from "../memory/compaction.js";
+import { createConflictEvents, createConflictLinks, detectConflicts } from "../memory/conflicts.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyRetentionPlan,
@@ -53,6 +54,7 @@ export interface ConfigureSpaceInput {
   spaceId: string;
   settings?: MemorySpaceSettings;
   compaction?: Partial<CompactionPolicy>;
+  conflict?: Partial<ConflictPolicy>;
   retentionDays?: Partial<RetentionPolicy>;
 }
 
@@ -145,7 +147,12 @@ export class GlialNodeClient {
     const settings = mergeSpaceSettings(
       space.settings,
       input.settings,
-      mergeSpaceSettings(undefined, input.compaction ? { compaction: input.compaction } : undefined, input.retentionDays ? { retentionDays: input.retentionDays } : undefined),
+      mergeSpaceSettings(
+        undefined,
+        input.compaction ? { compaction: input.compaction } : undefined,
+        input.retentionDays ? { retentionDays: input.retentionDays } : undefined,
+        input.conflict ? { conflict: input.conflict } : undefined,
+      ),
     );
 
     const updatedSpace: MemorySpace = {
@@ -182,9 +189,25 @@ export class GlialNodeClient {
   }
 
   async addRecord(input: CreateMemoryRecordInput): Promise<MemoryRecord> {
-    await requireSpace(this.repository, input.spaceId);
+    const space = await requireSpace(this.repository, input.spaceId);
     const record = createMemoryRecord(input);
     await this.repository.writeRecord(record);
+
+    const existingRecords = await this.repository.listRecords(input.spaceId, Number.MAX_SAFE_INTEGER);
+    const conflicts = detectConflicts(record, existingRecords, space.settings?.conflict);
+
+    for (const action of conflicts) {
+      await this.repository.writeRecord(action.updatedConflictingRecord);
+    }
+
+    for (const link of createConflictLinks(conflicts)) {
+      await this.repository.linkRecords(link);
+    }
+
+    for (const event of createConflictEvents(conflicts)) {
+      await this.repository.appendEvent(event);
+    }
+
     return record;
   }
 
@@ -464,20 +487,30 @@ function mergeSpaceSettings(
   existing?: MemorySpaceSettings,
   first?: MemorySpaceSettings,
   second?: MemorySpaceSettings,
+  third?: MemorySpaceSettings,
 ): MemorySpaceSettings {
   return {
     ...(existing ?? {}),
     ...(first ?? {}),
     ...(second ?? {}),
+    ...(third ?? {}),
     retentionDays: {
       ...(existing?.retentionDays ?? {}),
       ...(first?.retentionDays ?? {}),
       ...(second?.retentionDays ?? {}),
+      ...(third?.retentionDays ?? {}),
     },
     compaction: {
       ...(existing?.compaction ?? {}),
       ...(first?.compaction ?? {}),
       ...(second?.compaction ?? {}),
+      ...(third?.compaction ?? {}),
+    },
+    conflict: {
+      ...(existing?.conflict ?? {}),
+      ...(first?.conflict ?? {}),
+      ...(second?.conflict ?? {}),
+      ...(third?.conflict ?? {}),
     },
   };
 }

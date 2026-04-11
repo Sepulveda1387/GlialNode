@@ -26,6 +26,12 @@ export interface RetentionPolicy {
   long?: number;
 }
 
+export interface ConflictPolicy {
+  enabled: boolean;
+  minTokenOverlap: number;
+  confidencePenalty: number;
+}
+
 export const defaultConfig: GlialNodeConfig = {
   maxWorkingMemoryRecords: 50,
   staleRecordWindowDays: 14,
@@ -50,4 +56,10 @@ export const defaultCompactionPolicy: CompactionPolicy = {
 export const defaultRetentionPolicy: RetentionPolicy = {
   short: 7,
   mid: 30,
+};
+
+export const defaultConflictPolicy: ConflictPolicy = {
+  enabled: true,
+  minTokenOverlap: 2,
+  confidencePenalty: 0.15,
 };

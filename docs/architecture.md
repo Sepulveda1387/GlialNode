@@ -75,6 +75,18 @@ Ranking should combine:
 - a small preference for distilled durable summaries during broad recall
 - a small preference for more specific kinds when the query wording signals intent
 
+### Conflict Handling
+
+New durable memory can also trigger contradiction detection against older durable memory in the same scope.
+
+The current design:
+
+- looks for meaningful signal-token overlap
+- checks for opposing language like `prefer` vs `avoid` or positive vs negative framing
+- links the new record to the older one with `contradicts`
+- lowers confidence on the older conflicting memory instead of deleting it
+- emits a `memory_conflicted` event so reports can surface contested memory
+
 ### Client Layer
 
 GlialNode now exposes a typed client API for programmatic use in addition to the CLI.
