@@ -30,6 +30,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
+    "demo:client": "node scripts/client-demo.mjs",
     "demo": "node scripts/demo.mjs",
     "demo:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo.ps1",
     "pack:check": "npm run build && node scripts/check-pack.mjs",

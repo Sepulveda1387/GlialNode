@@ -153,10 +153,14 @@ npm install
 npm run check
 npm run test
 npm run demo
+npm run demo:client
 npm run pack:check
 ```
 
-The main demo path is Node-based and intended to run on Windows, Linux, and macOS. It builds the project, creates a local demo space, runs maintenance, prints a report, and exports the resulting snapshot.
+The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
+
+- `npm run demo` exercises the CLI workflow
+- `npm run demo:client` exercises the typed client API directly
 
 ## Example Report
 
@@ -187,6 +191,8 @@ The demo flow exercises the main operational loop:
 6. export the final snapshot
 
 That makes it a good first check for whether the current project shape matches your use case.
+
+The client demo follows the same lifecycle through `GlialNodeClient`, which makes it a better fit if you plan to embed GlialNode into another Node application.
 
 ## Library Example
 
@@ -283,6 +289,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `npm run check`
 - `npm run test`
 - `npm run demo`
+- `npm run demo:client`
 - `npm run pack:check`
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
 - review `docs/launch-checklist.md`
@@ -300,4 +307,5 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `.github/workflows/ci.yml`: GitHub Actions verification workflow
 - `docs/publish-guide.md`: first-publish handoff steps
 - `scripts/demo.mjs`: cross-platform end-to-end demo flow for Windows, Linux, and macOS
+- `scripts/client-demo.mjs`: cross-platform end-to-end client API demo flow
 - `scripts/demo.ps1`: end-to-end local demo flow
