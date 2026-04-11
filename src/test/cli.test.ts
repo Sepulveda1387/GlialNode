@@ -66,6 +66,69 @@ test("CLI commands create and query persisted memory", async () => {
   }
 });
 
+test("CLI supports compact memory content for retrieval and inspection", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Compact Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "writer"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const addRecordResult = await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id",
+        spaceId,
+        "--scope-id",
+        scopeId,
+        "--scope-type",
+        "agent",
+        "--tier",
+        "mid",
+        "--kind",
+        "decision",
+        "--content",
+        "Prefer lexical retrieval first for normal user-facing search.",
+        "--summary",
+        "Lexical retrieval decision",
+        "--compact-content",
+        "U:req retrieval=lexical_first;keep mobile",
+      ]),
+      { repository },
+    );
+    const recordId = addRecordResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(recordId);
+
+    const searchResult = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--text", "lexical_first"]),
+      { repository },
+    );
+    assert.equal(searchResult.lines[0], "records=1");
+
+    const showResult = await runCommand(
+      parseArgs(["memory", "show", "--record-id", recordId]),
+      { repository },
+    );
+    assert.match(showResult.lines.join("\n"), /compactContent=U:req retrieval=lexical_first;keep mobile/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("Retention sweep expires records according to per-space policy", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-retention-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

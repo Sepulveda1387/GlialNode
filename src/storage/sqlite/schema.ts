@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 1;
+export const SQLITE_SCHEMA_VERSION = 2;
 
 export const sqliteBootstrapSql = `
 CREATE TABLE IF NOT EXISTS memory_spaces (
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS memory_records (
   kind TEXT NOT NULL,
   content TEXT NOT NULL,
   summary TEXT,
+  compact_content TEXT,
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'shared', 'space')),
   status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'superseded', 'expired')),
   tags_json TEXT NOT NULL,
@@ -73,14 +74,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_records_fts USING fts5(
   record_id UNINDEXED,
   content,
   summary,
+  compact_content,
   tokenize = 'porter unicode61'
 );
 
 CREATE TRIGGER IF NOT EXISTS memory_records_ai
 AFTER INSERT ON memory_records
 BEGIN
-  INSERT INTO memory_records_fts(record_id, content, summary)
-  VALUES (new.id, new.content, coalesce(new.summary, ''));
+  INSERT INTO memory_records_fts(record_id, content, summary, compact_content)
+  VALUES (new.id, new.content, coalesce(new.summary, ''), coalesce(new.compact_content, ''));
 END;
 
 CREATE TRIGGER IF NOT EXISTS memory_records_au
@@ -88,7 +90,8 @@ AFTER UPDATE ON memory_records
 BEGIN
   UPDATE memory_records_fts
   SET content = new.content,
-      summary = coalesce(new.summary, '')
+      summary = coalesce(new.summary, ''),
+      compact_content = coalesce(new.compact_content, '')
   WHERE record_id = new.id;
 END;
 

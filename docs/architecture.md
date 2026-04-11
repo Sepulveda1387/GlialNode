@@ -36,6 +36,11 @@ The memory store captures what should be remembered:
 
 Each record will include a tier, scope, source, confidence, and freshness signal.
 
+Each record can also carry two representations at once:
+
+- a human-readable memory body
+- a compact symbolic memory body for lower-token internal recall
+
 ### Link Store
 
 Memory records may reference other records so GlialNode can keep provenance and resolve changing truth over time.
@@ -151,6 +156,7 @@ The current SQLite boundary now exposes:
 - a resolved connection policy for file-backed databases
 - runtime settings inspection for status and tests
 - applied migration tracking inside the database
+- storage and indexing for compact memory text
 - lock timeout behavior that is exercised under contention in tests
 
 That boundary is still intentionally narrow so a future driver swap can happen without changing the memory model.

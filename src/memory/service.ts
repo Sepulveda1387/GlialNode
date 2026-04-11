@@ -1,6 +1,7 @@
 import { createId } from "../core/ids.js";
 import type { CreateMemoryRecordInput, MemoryRecord, RecordStatus } from "../core/types.js";
 import { ValidationError } from "../core/errors.js";
+import { ensureCompactMemoryText } from "./compact.js";
 
 export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord {
   const timestamp = new Date().toISOString();
@@ -16,6 +17,7 @@ export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord
     kind: input.kind,
     content: input.content,
     summary: input.summary,
+    compactContent: ensureCompactMemoryText(input),
     scope: input.scope,
     visibility: input.visibility ?? "space",
     status: input.status ?? "active",

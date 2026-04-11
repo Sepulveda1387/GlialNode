@@ -97,6 +97,7 @@ export interface MemoryRecord {
   kind: MemoryKind;
   content: string;
   summary?: string;
+  compactContent?: string;
   scope: MemoryScope;
   visibility: MemoryVisibility;
   status: RecordStatus;
@@ -137,6 +138,7 @@ export interface CreateMemoryRecordInput {
   kind: MemoryKind;
   content: string;
   summary?: string;
+  compactContent?: string;
   scope: MemoryScope;
   visibility?: MemoryVisibility;
   status?: RecordStatus;

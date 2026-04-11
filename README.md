@@ -68,6 +68,7 @@ flowchart TD
 - create isolated memory spaces
 - scope memory to agents, subagents, sessions, tasks, and projects
 - store curated records, raw events, and provenance links
+- store both human-readable memory text and compact internal memory text
 - search memory with lexical retrieval and structured filters
 - promote, archive, compact, and expire records through explicit policy workflows
 - configure compaction and retention policy per space
@@ -117,6 +118,7 @@ GlialNode currently includes:
 - a SQLite bootstrap schema with FTS5 indexing and sync triggers
 - a working SQLite repository implementation
 - a typed `GlialNodeClient` for programmatic use
+- compact memory encoding for lower-token internal recall
 - retrieval ranking and record promotion helpers
 - a functional CLI for spaces, scopes, and memory records
 - import/export and memory lifecycle commands
@@ -145,6 +147,8 @@ File-backed SQLite connections now default to:
 These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
 
 GlialNode also records applied SQLite migrations inside the database so bootstrap stays idempotent and the runtime can report the actual schema version that has been applied.
+
+Memory records now support a compact internal form as well. GlialNode keeps the readable `content` and `summary`, but it can also store a denser symbolic representation in `compactContent` for memory compression and retrieval.
 
 ## Quick Start
 
@@ -233,6 +237,25 @@ client.close();
 
 The client also accepts SQLite connection policy overrides when you need to tune lock handling or journaling for a local deployment.
 
+## Compact Memory
+
+GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
+
+It does not replace readable text. Instead, each record can keep:
+
+- `content`: human-readable source text
+- `summary`: short readable form
+- `compactContent`: symbolic compressed form for internal memory use
+
+Example:
+
+```text
+content: "Fix the login bug first and keep mobile support intact."
+compactContent: "tr=s;k=tsk;sc=agt:planner-1;st=act;sm=login_bug_first;ct=fix_login_bug_first_keep_mobile_support_intact"
+```
+
+If you do not provide `compactContent`, GlialNode generates one automatically when the record is created. If you already have your own compact language, you can store it explicitly and GlialNode will preserve and index it.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -250,6 +273,7 @@ glialnode space create --name "Team Memory"
 glialnode status
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
+glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
 glialnode memory search --space-id <space-id> --text lexical
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
