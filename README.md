@@ -136,6 +136,7 @@ npm install
 npm run check
 npm run test
 npm run demo
+npm run pack:check
 ```
 
 The main demo path is Node-based and intended to run on Windows, Linux, and macOS. It builds the project, creates a local demo space, runs maintenance, prints a report, and exports the resulting snapshot.
@@ -169,6 +170,16 @@ The demo flow exercises the main operational loop:
 6. export the final snapshot
 
 That makes it a good first check for whether the current project shape matches your use case.
+
+## Packaging Notes
+
+GlialNode is packaged as both a library and a CLI:
+
+- the library entrypoint is exposed through the package root export
+- the CLI entrypoint is exposed through the `glialnode` bin and `./cli` export
+- the compiled CLI keeps a Unix shebang so installed package binaries work cleanly across Windows, Linux, and macOS tooling
+
+`npm run pack:check` rebuilds the project, runs `npm pack --dry-run --json`, and validates that the tarball includes the public build artifacts without bundling compiled tests.
 
 ## CLI Examples
 
@@ -215,6 +226,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `npm run check`
 - `npm run test`
 - `npm run demo`
+- `npm run pack:check`
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
 - review `docs/launch-checklist.md`
 - follow `docs/publish-guide.md` for the first push

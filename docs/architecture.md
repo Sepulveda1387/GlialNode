@@ -111,3 +111,12 @@ The current CLI now supports:
 - adding and listing events
 - linking records and inspecting record provenance
 - exporting and importing a full space snapshot
+
+## Packaging Direction
+
+GlialNode is currently being hardened as a portable Node package:
+
+- the package root export is intended for library consumers
+- the CLI is exposed through a package bin plus a dedicated `./cli` export
+- the compiled CLI keeps a shebang so package-manager-installed binaries work cleanly across Unix-like environments while still remaining Windows-compatible
+- package verification should include a dry-run pack step before any real publish

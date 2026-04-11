@@ -5,8 +5,26 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cli": {
+      "default": "./dist/cli/index.js"
+    }
+  },
   "bin": {
     "glialnode": "dist/cli/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "!dist/test/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
@@ -14,6 +32,7 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "demo": "node scripts/demo.mjs",
     "demo:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "pack:check": "npm run build && node scripts/check-pack.mjs",
     "start": "node dist/cli/index.js",
     "test": "npm run build && node --test dist/test/*.test.js"
   },
