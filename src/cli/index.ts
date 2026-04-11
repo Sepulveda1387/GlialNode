@@ -15,7 +15,8 @@ async function main(): Promise<void> {
     const result = await runCommand(parsed, { repository });
     console.log("GlialNode CLI");
     console.log(`storage=${sqliteAdapter.name}`);
-    console.log(`schemaVersion=${sqliteAdapter.schemaVersion}`);
+    console.log(`schemaVersion=${repository.getSchemaVersion()}`);
+    console.log(`schemaLatest=${sqliteAdapter.schemaVersion}`);
     console.log(`database=${databasePath}`);
 
     for (const line of result.lines) {
@@ -26,7 +27,8 @@ async function main(): Promise<void> {
 
     console.error("GlialNode CLI");
     console.error(`storage=${sqliteAdapter.name}`);
-    console.error(`schemaVersion=${sqliteAdapter.schemaVersion}`);
+    console.error(`schemaVersion=${repository.getSchemaVersion()}`);
+    console.error(`schemaLatest=${sqliteAdapter.schemaVersion}`);
     console.error(`error=${message}`);
     console.error(usageText());
     process.exitCode = 1;

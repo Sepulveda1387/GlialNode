@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   createId,
   createMemoryRecord,
+  listAppliedSqliteMigrations,
   SqliteMemoryRepository,
   type MemoryEvent,
   type MemorySpace,
@@ -189,6 +190,33 @@ test("SqliteMemoryRepository honors busy timeout during write contention", async
     }
 
     firstRepository.close();
+    secondRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("SqliteMemoryRepository tracks applied schema migrations", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-sqlite-migrations-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const firstRepository = new SqliteMemoryRepository({ filename: databasePath });
+
+  try {
+    assert.equal(firstRepository.getSchemaVersion(), 1);
+    const firstPass = listAppliedSqliteMigrations(firstRepository.db);
+    assert.equal(firstPass.length, 1);
+    assert.equal(firstPass[0]?.version, 1);
+  } finally {
+    firstRepository.close();
+  }
+
+  const secondRepository = new SqliteMemoryRepository({ filename: databasePath });
+
+  try {
+    assert.equal(secondRepository.getSchemaVersion(), 1);
+    const secondPass = listAppliedSqliteMigrations(secondRepository.db);
+    assert.equal(secondPass.length, 1);
+    assert.equal(secondPass[0]?.version, 1);
+  } finally {
     secondRepository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }

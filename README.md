@@ -72,6 +72,7 @@ flowchart TD
 - promote, archive, compact, and expire records through explicit policy workflows
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
+- track applied SQLite schema versions inside the database
 - inspect memory health through reporting and maintenance commands
 - import and export full space snapshots
 
@@ -123,6 +124,7 @@ GlialNode currently includes:
 - compaction history with system events and summary records
 - per-space policy settings for configurable memory behavior
 - SQLite connection hardening with WAL, busy timeout, foreign keys, and runtime inspection
+- applied SQLite migration tracking and schema-version introspection
 - active retention sweeps with expiration events and summaries
 - space-level reporting for memory and lifecycle observability
 - unified maintenance workflow for operational upkeep
@@ -141,6 +143,8 @@ File-backed SQLite connections now default to:
 - defensive mode enabled when the runtime supports it
 
 These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
+
+GlialNode also records applied SQLite migrations inside the database so bootstrap stays idempotent and the runtime can report the actual schema version that has been applied.
 
 ## Quick Start
 

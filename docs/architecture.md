@@ -150,6 +150,7 @@ The current SQLite boundary now exposes:
 
 - a resolved connection policy for file-backed databases
 - runtime settings inspection for status and tests
+- applied migration tracking inside the database
 - lock timeout behavior that is exercised under contention in tests
 
 That boundary is still intentionally narrow so a future driver swap can happen without changing the memory model.

@@ -10,13 +10,13 @@ import type {
 } from "../../core/types.js";
 import { rankRecordsForRetrieval } from "../../memory/retrieval.js";
 import type { MemoryRepository, SpaceReport } from "../repository.js";
-import { sqliteBootstrapSql } from "./schema.js";
 import {
   applySqliteConnectionPolicy,
   createSqliteDatabaseOptions,
   type SqliteConnectionPolicy,
   type SqliteRuntimeSettings,
 } from "./connection.js";
+import { applySqliteMigrations, getSqliteSchemaVersion } from "./migrations.js";
 
 export interface SqliteRepositoryOptions {
   filename?: string;
@@ -76,6 +76,7 @@ interface MemoryRecordLinkRow {
 export class SqliteMemoryRepository implements MemoryRepository {
   readonly db: DatabaseSync;
   readonly runtimeSettings: SqliteRuntimeSettings;
+  private schemaVersion: number;
 
   constructor(options: SqliteRepositoryOptions = {}) {
     this.db = new DatabaseSync(
@@ -83,6 +84,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
       createSqliteDatabaseOptions(options.connection),
     );
     this.runtimeSettings = applySqliteConnectionPolicy(this.db, options.connection);
+    this.schemaVersion = getSqliteSchemaVersion(this.db);
 
     if (options.bootstrap ?? true) {
       this.bootstrap();
@@ -90,7 +92,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
   }
 
   bootstrap(): void {
-    this.db.exec(sqliteBootstrapSql);
+    this.schemaVersion = applySqliteMigrations(this.db);
   }
 
   async createSpace(space: MemorySpace): Promise<void> {
@@ -601,6 +603,10 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
   getRuntimeSettings(): SqliteRuntimeSettings {
     return this.runtimeSettings;
+  }
+
+  getSchemaVersion(): number {
+    return this.schemaVersion;
   }
 
   private async listEventsByType(
