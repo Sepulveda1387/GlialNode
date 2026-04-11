@@ -589,3 +589,67 @@ test("GlialNodeClient can build recall packs with supporting memory", async () =
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient can build structured recall traces with citations", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-trace-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Trace Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable search flows.",
+      summary: "Lexical retrieval decision",
+      tags: ["retrieval", "search"],
+      confidence: 0.84,
+      freshness: 0.78,
+      importance: 0.88,
+    });
+
+    const support = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval is easier to debug than a heavier semantic stack.",
+      summary: "Lexical debugging benefit",
+      tags: ["retrieval", "debugging"],
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: primary.id,
+      toRecordId: support.id,
+      type: "supports",
+    });
+
+    const traces = await client.traceRecall({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      limit: 1,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 3,
+    });
+
+    assert.equal(traces.length, 1);
+    assert.match(traces[0]?.summary ?? "", /Recalled/);
+    assert.ok(traces[0]?.citations.some((citation) => citation.recordId === primary.id));
+    assert.ok(traces[0]?.citations.some((citation) => citation.role === "primary"));
+    assert.ok(traces[0]?.citations.some((citation) => citation.recordId === support.id));
+    assert.ok(traces[0]?.citations.some((citation) => citation.relation === "supports"));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

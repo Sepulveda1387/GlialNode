@@ -282,6 +282,25 @@ console.log(packs[0]?.primary.summary);
 console.log(packs[0]?.supporting.map((record) => record.summary ?? record.content));
 ```
 
+And it can build a structured recall trace for downstream agents or UI citation surfaces:
+
+```ts
+const traces = await client.traceRecall(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval",
+    limit: 1,
+  },
+  {
+    primaryLimit: 1,
+    supportLimit: 3,
+  },
+);
+
+console.log(traces[0]?.summary);
+console.log(traces[0]?.citations);
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -349,6 +368,14 @@ On top of plain ranked search, GlialNode can now assemble recall packs:
 - nearby same-scope distilled summaries when they add helpful context
 
 This gives host systems a more usable retrieval shape for answers, planning, and tool decisions.
+
+It can also emit recall traces:
+
+- a short trace summary
+- explicit citations for the primary and supporting records
+- reasons such as direct query match, distilled scope memory, or linked provenance like `supports`
+
+That makes it easier for downstream agents to answer with evidence instead of opaque recall.
 
 ## Contradiction Handling
 
@@ -440,6 +467,7 @@ glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type ag
 glialnode memory search --space-id <space-id> --text lexical
 glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

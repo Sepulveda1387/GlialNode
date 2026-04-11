@@ -81,6 +81,12 @@ The retrieval layer should also be able to assemble a recall pack:
 - directly linked supporting memory
 - nearby distilled summaries in the same scope when they improve context
 
+And it should be able to turn that recall pack into an answer trace:
+
+- a short explanation of why the memory was recalled
+- citations for primary and supporting records
+- provenance-aware reasons such as query match, distilled memory, or explicit record links
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.

@@ -1391,3 +1391,91 @@ test("CLI recall returns a primary memory with supporting context", async () => 
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI trace returns structured recall citations", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-trace-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Trace Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const primaryResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable search flows.",
+        "--summary", "Lexical retrieval decision",
+        "--tags", "retrieval,search",
+      ]),
+      { repository },
+    );
+    const primaryId = primaryResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(primaryId);
+
+    const supportResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval is easier to debug than a heavier semantic stack.",
+        "--summary", "Lexical debugging benefit",
+        "--tags", "retrieval,debugging",
+      ]),
+      { repository },
+    );
+    const supportId = supportResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(supportId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", primaryId,
+        "--to-record-id", supportId,
+        "--type", "supports",
+      ]),
+      { repository },
+    );
+
+    const trace = await runCommand(
+      parseArgs([
+        "memory", "trace",
+        "--space-id", spaceId,
+        "--text", "lexical retrieval",
+        "--limit", "1",
+        "--support-limit", "3",
+      ]),
+      { repository },
+    );
+
+    const output = trace.lines.join("\n");
+    assert.match(output, /^traces=1/m);
+    assert.match(output, /^summary=Recalled/m);
+    assert.match(output, new RegExp(`cite=(primary|supporting):${primaryId}`));
+    assert.match(output, new RegExp(`cite=(primary|supporting):${supportId}(?::supports)?`));
+    assert.match(output, /supports/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

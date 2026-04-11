@@ -73,6 +73,20 @@ export interface RecallPack {
   links: MemoryRecordLink[];
 }
 
+export interface RecallCitation {
+  recordId: string;
+  role: "primary" | "supporting";
+  relation?: MemoryRecordLink["type"];
+  reason: string;
+  excerpt: string;
+}
+
+export interface RecallTrace {
+  queryText?: string;
+  summary: string;
+  citations: RecallCitation[];
+}
+
 export interface BuildRecallPackOptions {
   queryText?: string;
   supportLimit?: number;
@@ -132,6 +146,39 @@ export function buildRecallPack(
   };
 }
 
+export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTrace {
+  const citations: RecallCitation[] = [
+    {
+      recordId: pack.primary.id,
+      role: "primary",
+      reason: describePrimaryReason(pack.primary, queryText),
+      excerpt: pack.primary.summary ?? pack.primary.content,
+    },
+    ...pack.supporting.map((record) => {
+      const relation = findRelation(pack.primary.id, record.id, pack.links);
+      return {
+        recordId: record.id,
+        role: "supporting" as const,
+        relation,
+        reason: describeSupportingReason(record, relation, queryText),
+        excerpt: record.summary ?? record.content,
+      };
+    }),
+  ];
+
+  const primarySummary = pack.primary.summary ?? truncateText(pack.primary.content, 80);
+  const supportCount = pack.supporting.length;
+
+  return {
+    queryText,
+    summary:
+      supportCount === 0
+        ? `Recalled ${primarySummary} as the strongest direct match.`
+        : `Recalled ${primarySummary} with ${supportCount} supporting memory item(s).`,
+    citations,
+  };
+}
+
 function isContextuallyRelated(primary: MemoryRecord, candidate: MemoryRecord, queryText?: string): boolean {
   const primaryTags = new Set(primary.tags.map((tag) => tag.toLowerCase()));
   const candidateTags = new Set(candidate.tags.map((tag) => tag.toLowerCase()));
@@ -154,6 +201,68 @@ function isContextuallyRelated(primary: MemoryRecord, candidate: MemoryRecord, q
 
   const queryTokens = new Set(tokenize(queryText));
   return overlapRatio(queryTokens, candidateTokens) >= 0.2;
+}
+
+function describePrimaryReason(record: MemoryRecord, queryText?: string): string {
+  const reasons: string[] = [];
+
+  if (queryText && scoreQueryAlignment(record, queryText) > 0) {
+    reasons.push("matched the query strongly");
+  }
+
+  if (record.tags.some((tag) => tag.toLowerCase() === "distilled")) {
+    reasons.push("captures distilled memory for the scope");
+  }
+
+  if (record.kind === "decision" || record.kind === "preference") {
+    reasons.push("carries a durable decision signal");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("ranked highest by memory quality and recency");
+  }
+
+  return reasons.join("; ");
+}
+
+function describeSupportingReason(
+  record: MemoryRecord,
+  relation: MemoryRecordLink["type"] | undefined,
+  queryText?: string,
+): string {
+  if (relation) {
+    return `linked through ${relation}`;
+  }
+
+  if (record.tags.some((tag) => tag.toLowerCase() === "distilled")) {
+    return "same-scope distilled context";
+  }
+
+  if (queryText && scoreQueryAlignment(record, queryText) > 0) {
+    return "same-scope contextual match";
+  }
+
+  return "same-scope supporting context";
+}
+
+function findRelation(
+  primaryId: string,
+  relatedId: string,
+  links: MemoryRecordLink[],
+): MemoryRecordLink["type"] | undefined {
+  return links.find(
+    (link) =>
+      (link.fromRecordId === primaryId && link.toRecordId === relatedId) ||
+      (link.toRecordId === primaryId && link.fromRecordId === relatedId),
+  )?.type;
+}
+
+function truncateText(value: string, length: number): string {
+  if (value.length <= length) {
+    return value;
+  }
+
+  return `${value.slice(0, length - 3)}...`;
 }
 
 function scoreQueryAlignment(record: MemoryRecord, queryText: string): number {
