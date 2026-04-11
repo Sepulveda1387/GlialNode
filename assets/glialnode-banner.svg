@@ -1,0 +1,36 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" rx="32" fill="#0A141C"/>
+  <rect x="32" y="32" width="1216" height="576" rx="28" fill="url(#bg)"/>
+  <g opacity="0.45">
+    <circle cx="223" cy="177" r="10" fill="#F1B24A"/>
+    <circle cx="345" cy="124" r="10" fill="#F1B24A"/>
+    <circle cx="446" cy="220" r="10" fill="#F1B24A"/>
+    <circle cx="854" cy="148" r="10" fill="#F1B24A"/>
+    <circle cx="1013" cy="213" r="10" fill="#F1B24A"/>
+    <circle cx="931" cy="315" r="10" fill="#F1B24A"/>
+    <path d="M223 177L345 124L446 220" stroke="#57C785" stroke-width="5" stroke-linecap="round"/>
+    <path d="M854 148L1013 213L931 315" stroke="#57C785" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <g>
+    <rect x="124" y="142" width="164" height="164" rx="32" fill="#0E1A24"/>
+    <path d="M206 174C179.49 174 158 195.49 158 222C158 243.15 171.68 261.1 190.66 267.5V306H221.34V267.5C240.32 261.1 254 243.15 254 222C254 195.49 232.51 174 206 174Z" fill="#D7F6E6"/>
+    <path d="M206 196C191.641 196 180 207.641 180 222C180 236.359 191.641 248 206 248C220.359 248 232 236.359 232 222C232 207.641 220.359 196 206 196Z" fill="#57C785"/>
+    <circle cx="206" cy="222" r="11" fill="#0E1A24"/>
+  </g>
+  <text x="352" y="236" fill="#F5FBF7" font-family="Segoe UI, Arial, sans-serif" font-size="92" font-weight="700">GlialNode</text>
+  <text x="354" y="294" fill="#A8C6B6" font-family="Segoe UI, Arial, sans-serif" font-size="28">Tiered memory infrastructure for orchestrators, agents, and subagents</text>
+  <g>
+    <rect x="356" y="356" width="168" height="72" rx="20" fill="#10222F"/>
+    <text x="390" y="402" fill="#D7F6E6" font-family="Consolas, monospace" font-size="28">short / mid / long</text>
+    <rect x="548" y="356" width="164" height="72" rx="20" fill="#10222F"/>
+    <text x="594" y="402" fill="#D7F6E6" font-family="Consolas, monospace" font-size="28">SQLite + FTS5</text>
+    <rect x="736" y="356" width="184" height="72" rx="20" fill="#10222F"/>
+    <text x="774" y="402" fill="#D7F6E6" font-family="Consolas, monospace" font-size="28">policy workflows</text>
+  </g>
+  <defs>
+    <linearGradient id="bg" x1="78" y1="83" x2="1154" y2="594" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#112330"/>
+      <stop offset="1" stop-color="#0C1822"/>
+    </linearGradient>
+  </defs>
+</svg>

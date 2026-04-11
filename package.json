@@ -1,0 +1,33 @@
+{
+  "name": "glialnode",
+  "version": "0.1.0",
+  "description": "Tiered memory infrastructure for orchestrators, agents, and subagents.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "glialnode": "dist/cli/index.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "demo": "node scripts/demo.mjs",
+    "demo:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "start": "node dist/cli/index.js",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "keywords": [
+    "memory",
+    "agents",
+    "orchestrators",
+    "sqlite",
+    "fts5"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.8.1",
+    "typescript": "^5.9.3"
+  }
+}
