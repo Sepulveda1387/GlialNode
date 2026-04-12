@@ -185,11 +185,27 @@ export interface PresetChannelState {
 }
 
 export interface PresetBundle {
+  metadata: PresetBundleMetadata;
   exportedAt: string;
   preset: SpacePresetDefinition;
   history: SpacePresetDefinition[];
   channels: PresetChannelState;
 }
+
+export interface PresetBundleMetadata {
+  bundleFormatVersion: number;
+  glialnodeVersion: string;
+  nodeEngine: string;
+}
+
+export interface PresetBundleValidation {
+  metadata: PresetBundleMetadata;
+  warnings: string[];
+}
+
+const PRESET_BUNDLE_FORMAT_VERSION = 1;
+const GLIALNODE_VERSION = "0.1.0";
+const GLIALNODE_NODE_ENGINE = ">=24";
 
 export class GlialNodeClient {
   private readonly repository: MemoryRepository;
@@ -399,6 +415,11 @@ export class GlialNodeClient {
   exportPresetBundle(name: string, outputPath: string, directory?: string): PresetBundle {
     const resolvedDirectory = resolve(directory ?? this.presetDirectory);
     const bundle: PresetBundle = {
+      metadata: {
+        bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
+        glialnodeVersion: GLIALNODE_VERSION,
+        nodeEngine: GLIALNODE_NODE_ENGINE,
+      },
       exportedAt: new Date().toISOString(),
       preset: this.getRegisteredPreset(name, resolvedDirectory),
       history: this.listRegisteredPresetHistory(name, resolvedDirectory),
@@ -412,6 +433,7 @@ export class GlialNodeClient {
 
   importPresetBundle(inputPath: string, options: { directory?: string; name?: string } = {}): PresetBundle {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
+    validatePresetBundle(bundle);
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
     const nextName = options.name ?? bundle.preset.name;
     const history = bundle.history.map((preset) => ({
@@ -440,6 +462,11 @@ export class GlialNodeClient {
       history,
       channels,
     };
+  }
+
+  validatePresetBundle(inputPath: string): PresetBundleValidation {
+    const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
+    return validatePresetBundle(bundle);
   }
 
   promotePresetChannel(
@@ -1108,12 +1135,48 @@ function parsePresetChannelState(value: string): PresetChannelState {
 function parsePresetBundle(value: string): PresetBundle {
   const parsed = JSON.parse(value) as Partial<PresetBundle>;
   return {
+    metadata: parsePresetBundleMetadata(JSON.stringify(parsed.metadata ?? {})),
     exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : new Date().toISOString(),
     preset: parseSpacePresetDefinition(JSON.stringify(parsed.preset ?? {})),
     history: Array.isArray(parsed.history)
       ? parsed.history.map((entry) => parseSpacePresetDefinition(JSON.stringify(entry)))
       : [],
     channels: parsePresetChannelState(JSON.stringify(parsed.channels ?? {})),
+  };
+}
+
+function parsePresetBundleMetadata(value: string): PresetBundleMetadata {
+  const parsed = JSON.parse(value) as Partial<PresetBundleMetadata>;
+  return {
+    bundleFormatVersion: typeof parsed.bundleFormatVersion === "number" ? parsed.bundleFormatVersion : PRESET_BUNDLE_FORMAT_VERSION,
+    glialnodeVersion: typeof parsed.glialnodeVersion === "string" ? parsed.glialnodeVersion : GLIALNODE_VERSION,
+    nodeEngine: typeof parsed.nodeEngine === "string" ? parsed.nodeEngine : GLIALNODE_NODE_ENGINE,
+  };
+}
+
+function validatePresetBundle(bundle: PresetBundle): PresetBundleValidation {
+  if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
+    throw new Error(
+      `Unsupported preset bundle format: ${bundle.metadata.bundleFormatVersion}. Expected ${PRESET_BUNDLE_FORMAT_VERSION}.`,
+    );
+  }
+
+  const warnings: string[] = [];
+  if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
+    warnings.push(
+      `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
+    );
+  }
+
+  if (bundle.metadata.nodeEngine !== GLIALNODE_NODE_ENGINE) {
+    warnings.push(
+      `Bundle targets Node ${bundle.metadata.nodeEngine}; current package requires ${GLIALNODE_NODE_ENGINE}.`,
+    );
+  }
+
+  return {
+    metadata: bundle.metadata,
+    warnings,
   };
 }
 

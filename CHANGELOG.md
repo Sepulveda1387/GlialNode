@@ -32,6 +32,7 @@
 - Added default preset channels so local preset consumers can resolve a recommended lane without specifying it every time.
 - Added preset channel export/import so channel manifests can move between machines or repos.
 - Added full preset bundle export/import so active presets, history, and channel state can travel together.
+- Added preset bundle compatibility metadata and validation, plus bundle inspection via `preset bundle-show`.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

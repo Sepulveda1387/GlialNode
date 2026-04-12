@@ -77,6 +77,10 @@ export interface CommandContext {
   repository: SqliteMemoryRepository;
 }
 
+const PRESET_BUNDLE_FORMAT_VERSION = 1;
+const GLIALNODE_VERSION = "0.1.0";
+const GLIALNODE_NODE_ENGINE = ">=24";
+
 export function createRepository(databasePath: string): SqliteMemoryRepository {
   const resolvedPath = resolve(databasePath);
   mkdirSync(dirname(resolvedPath), { recursive: true });
@@ -151,6 +155,7 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>]",
+    "  glialnode preset bundle-show --input <path>",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -693,6 +698,11 @@ async function runPresetCommand(
     const name = requireFlag(parsed.flags, "name");
     const directory = resolvePresetDirectory(parsed.flags.directory);
     const bundle = {
+      metadata: {
+        bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
+        glialnodeVersion: GLIALNODE_VERSION,
+        nodeEngine: GLIALNODE_NODE_ENGINE,
+      },
       exportedAt: new Date().toISOString(),
       preset: loadRegisteredPreset(name, directory),
       history: listRegisteredPresetHistory(name, directory),
@@ -715,6 +725,7 @@ async function runPresetCommand(
   if (action === "bundle-import") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const imported = parsePresetBundle(readTextFile(inputPath));
+    const validation = validatePresetBundle(imported);
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
 
@@ -740,6 +751,26 @@ async function runPresetCommand(
         `name=${name}`,
         `versions=${imported.history.length}`,
         `defaultChannel=${imported.channels.defaultChannel ?? ""}`,
+        ...validation.warnings.map((warning) => `warning=${warning}`),
+      ],
+    };
+  }
+
+  if (action === "bundle-show") {
+    const inputPath = resolve(requireFlag(parsed.flags, "input"));
+    const bundle = parsePresetBundle(readTextFile(inputPath));
+    const validation = validatePresetBundle(bundle);
+
+    return {
+      lines: [
+        `name=${bundle.preset.name}`,
+        `bundleFormatVersion=${bundle.metadata.bundleFormatVersion}`,
+        `glialnodeVersion=${bundle.metadata.glialnodeVersion}`,
+        `nodeEngine=${bundle.metadata.nodeEngine}`,
+        `versions=${bundle.history.length}`,
+        `defaultChannel=${bundle.channels.defaultChannel ?? ""}`,
+        `warnings=${validation.warnings.length}`,
+        ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
     };
   }
@@ -2159,12 +2190,18 @@ function parsePresetChannelState(value: string): { name: string; channels: Recor
 }
 
 function parsePresetBundle(value: string): {
+  metadata: {
+    bundleFormatVersion: number;
+    glialnodeVersion: string;
+    nodeEngine: string;
+  };
   exportedAt: string;
   preset: ReturnType<typeof parseSpacePresetDefinition>;
   history: Array<ReturnType<typeof parseSpacePresetDefinition>>;
   channels: ReturnType<typeof parsePresetChannelState>;
 } {
   const parsed = JSON.parse(value) as {
+    metadata?: unknown;
     exportedAt?: unknown;
     preset?: unknown;
     history?: unknown;
@@ -2172,12 +2209,63 @@ function parsePresetBundle(value: string): {
   };
 
   return {
+    metadata: parsePresetBundleMetadata(JSON.stringify(parsed.metadata ?? {})),
     exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : new Date().toISOString(),
     preset: parseSpacePresetDefinition(JSON.stringify(parsed.preset ?? {})),
     history: Array.isArray(parsed.history)
       ? parsed.history.map((entry) => parseSpacePresetDefinition(JSON.stringify(entry)))
       : [],
     channels: parsePresetChannelState(JSON.stringify(parsed.channels ?? {})),
+  };
+}
+
+function parsePresetBundleMetadata(value: string): {
+  bundleFormatVersion: number;
+  glialnodeVersion: string;
+  nodeEngine: string;
+} {
+  const parsed = JSON.parse(value) as {
+    bundleFormatVersion?: unknown;
+    glialnodeVersion?: unknown;
+    nodeEngine?: unknown;
+  };
+
+  return {
+    bundleFormatVersion: typeof parsed.bundleFormatVersion === "number"
+      ? parsed.bundleFormatVersion
+      : PRESET_BUNDLE_FORMAT_VERSION,
+    glialnodeVersion: typeof parsed.glialnodeVersion === "string"
+      ? parsed.glialnodeVersion
+      : GLIALNODE_VERSION,
+    nodeEngine: typeof parsed.nodeEngine === "string"
+      ? parsed.nodeEngine
+      : GLIALNODE_NODE_ENGINE,
+  };
+}
+
+function validatePresetBundle(bundle: ReturnType<typeof parsePresetBundle>) {
+  if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
+    throw new Error(
+      `Unsupported preset bundle format: ${bundle.metadata.bundleFormatVersion}. Expected ${PRESET_BUNDLE_FORMAT_VERSION}.`,
+    );
+  }
+
+  const warnings: string[] = [];
+  if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
+    warnings.push(
+      `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
+    );
+  }
+
+  if (bundle.metadata.nodeEngine !== GLIALNODE_NODE_ENGINE) {
+    warnings.push(
+      `Bundle targets Node ${bundle.metadata.nodeEngine}; current package requires ${GLIALNODE_NODE_ENGINE}.`,
+    );
+  }
+
+  return {
+    metadata: bundle.metadata,
+    warnings,
   };
 }
 

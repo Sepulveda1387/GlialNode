@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -480,6 +480,50 @@ test("GlialNodeClient can export and import full preset bundles", async () => {
   } finally {
     sourceClient.close();
     targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient validates preset bundle metadata and rejects unsupported formats", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-validation-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+
+    const bundle = client.exportPresetBundle("team-executor", bundlePath);
+    const validation = client.validatePresetBundle(bundlePath);
+    assert.equal(validation.metadata.bundleFormatVersion, 1);
+    assert.equal(validation.warnings.length, 0);
+
+    const invalidBundle = {
+      ...bundle,
+      metadata: {
+        ...bundle.metadata,
+        bundleFormatVersion: 999,
+      },
+    };
+    writeFileSync(invalidBundlePath, JSON.stringify(invalidBundle, null, 2), "utf8");
+
+    assert.throws(
+      () => client.validatePresetBundle(invalidBundlePath),
+      /Unsupported preset bundle format: 999/,
+    );
+    assert.throws(
+      () => client.importPresetBundle(invalidBundlePath),
+      /Unsupported preset bundle format: 999/,
+    );
+  } finally {
+    client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });

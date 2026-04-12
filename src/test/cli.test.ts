@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -810,6 +810,69 @@ test("CLI can export and import full preset bundles", async () => {
     );
     assert.match(channels.lines.join("\n"), /stable=2.1.0/);
     assert.match(channels.lines.join("\n"), /candidate=2.2.0/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI validates preset bundle metadata and rejects unsupported formats", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-bundle-validation-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
+  const presetDirectory = join(tempDirectory, "source-presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const exported = await runCommand(
+      parseArgs([
+        "preset", "bundle-export",
+        "--name", "team-executor",
+        "--output", bundlePath,
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(exported.lines[0], "Preset bundle exported.");
+
+    const shown = await runCommand(
+      parseArgs(["preset", "bundle-show", "--input", bundlePath]),
+      { repository },
+    );
+    assert.match(shown.lines.join("\n"), /bundleFormatVersion=1/);
+    assert.match(shown.lines.join("\n"), /warnings=0/);
+
+    const bundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
+      metadata: { bundleFormatVersion: number };
+    };
+    bundle.metadata.bundleFormatVersion = 999;
+    writeFileSync(invalidBundlePath, JSON.stringify(bundle, null, 2), "utf8");
+
+    await assert.rejects(
+      () => runCommand(parseArgs(["preset", "bundle-show", "--input", invalidBundlePath]), { repository }),
+      /Unsupported preset bundle format: 999/,
+    );
+    await assert.rejects(
+      () => runCommand(parseArgs(["preset", "bundle-import", "--input", invalidBundlePath]), { repository }),
+      /Unsupported preset bundle format: 999/,
+    );
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
