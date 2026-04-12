@@ -733,6 +733,28 @@ export class GlialNodeClient {
     };
   }
 
+  async importPresetBundleForSpace(
+    inputPath: string,
+    options: {
+      spaceId: string;
+      directory?: string;
+      name?: string;
+      trustPolicy?: PresetBundleTrustPolicy;
+      trustProfile?: PresetBundleTrustProfileName;
+    },
+  ): Promise<PresetBundle> {
+    const space = await requireSpace(this.repository, options.spaceId);
+    const provenanceSettings = space.settings?.provenance;
+    const trustProfile = options.trustProfile ?? provenanceSettings?.trustProfile ?? "permissive";
+
+    return this.importPresetBundle(inputPath, {
+      directory: options.directory,
+      name: options.name,
+      trustPolicy: mergePresetBundleTrustPolicyFromSettings(options.trustPolicy, provenanceSettings),
+      trustProfile,
+    });
+  }
+
   validatePresetBundle(
     inputPath: string,
     trustPolicy?: PresetBundleTrustPolicy,
@@ -744,6 +766,25 @@ export class GlialNodeClient {
       bundle,
       resolvePresetBundleTrustPolicy(trustPolicy, resolvedDirectory, trustProfile),
       trustProfile ?? "permissive",
+    );
+  }
+
+  async validatePresetBundleForSpace(
+    inputPath: string,
+    options: {
+      spaceId: string;
+      trustPolicy?: PresetBundleTrustPolicy;
+      trustProfile?: PresetBundleTrustProfileName;
+    },
+  ): Promise<PresetBundleValidation> {
+    const space = await requireSpace(this.repository, options.spaceId);
+    const provenanceSettings = space.settings?.provenance;
+    const trustProfile = options.trustProfile ?? provenanceSettings?.trustProfile ?? "permissive";
+
+    return this.validatePresetBundle(
+      inputPath,
+      mergePresetBundleTrustPolicyFromSettings(options.trustPolicy, provenanceSettings),
+      trustProfile,
     );
   }
 
@@ -1736,6 +1777,23 @@ function resolvePresetBundleTrustPolicy(
   return {
     ...basePolicy,
     allowedSignerKeyIds: Array.from(new Set(allowedSignerKeyIds)),
+  };
+}
+
+function mergePresetBundleTrustPolicyFromSettings(
+  trustPolicy: PresetBundleTrustPolicy | undefined,
+  provenanceSettings: NonNullable<MemorySpace["settings"]>["provenance"] | undefined,
+): PresetBundleTrustPolicy | undefined {
+  if (!trustPolicy && !provenanceSettings) {
+    return undefined;
+  }
+
+  return {
+    ...trustPolicy,
+    allowedOrigins: mergeStringArrays(provenanceSettings?.allowedOrigins, trustPolicy?.allowedOrigins),
+    allowedSigners: mergeStringArrays(provenanceSettings?.allowedSigners, trustPolicy?.allowedSigners),
+    allowedSignerKeyIds: mergeStringArrays(provenanceSettings?.allowedSignerKeyIds, trustPolicy?.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringArrays(provenanceSettings?.trustedSignerNames, trustPolicy?.trustedSignerNames),
   };
 }
 

@@ -123,6 +123,7 @@ GlialNode currently includes:
 - a SQLite bootstrap schema with FTS5 indexing and sync triggers
 - a working SQLite repository implementation
 - a typed `GlialNodeClient` for programmatic use
+- space-aware bundle validation/import helpers in `GlialNodeClient`
 - compact memory encoding for lower-token internal recall
 - query-aware retrieval ranking and record promotion helpers
 - a functional CLI for spaces, scopes, and memory records
@@ -288,6 +289,12 @@ client.registerPreset("./execution-first.json", {
 const space = await client.createSpace({
   name: "Team Memory",
   preset: "planning-heavy",
+  settings: {
+    provenance: {
+      trustProfile: "anchored",
+      trustedSignerNames: ["team-anchor"],
+    },
+  },
 });
 const scope = await client.addScope({
   spaceId: space.id,
@@ -310,7 +317,12 @@ const matches = await client.searchRecords({
   limit: 5,
 });
 
+const bundleReview = await client.validatePresetBundleForSpace("./team-executor.bundle.json", {
+  spaceId: space.id,
+});
+
 console.log(matches.map((record) => record.summary ?? record.content));
+console.log(bundleReview.report.trustProfile);
 client.close();
 ```
 

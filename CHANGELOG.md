@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added space-aware preset bundle validation and import helpers to `GlialNodeClient`.
 - Added semantic memory distillation during compaction.
 - Added provenance links from distilled summary records back to their source records.
 - Added compaction policy knobs for `distillMinClusterSize` and `distillMinTokenOverlap`.

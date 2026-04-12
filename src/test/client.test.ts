@@ -661,6 +661,28 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.equal(trustedByName.trusted, true);
     assert.deepEqual(trustedByName.report.matchedTrustedSignerNames, ["team-anchor"]);
 
+    const provenanceSpace = await client.createSpace({
+      name: "Trusted Bundle Review",
+      settings: {
+        provenance: {
+          trustProfile: "anchored",
+          trustedSignerNames: ["team-anchor"],
+        },
+      },
+    });
+    const spaceValidation = await client.validatePresetBundleForSpace(bundlePath, {
+      spaceId: provenanceSpace.id,
+    });
+    assert.equal(spaceValidation.trusted, true);
+    assert.equal(spaceValidation.report.trustProfile, "anchored");
+    assert.deepEqual(spaceValidation.report.matchedTrustedSignerNames, ["team-anchor"]);
+
+    const importedBySpace = await client.importPresetBundleForSpace(bundlePath, {
+      spaceId: provenanceSpace.id,
+      name: "team-executor-imported",
+    });
+    assert.equal(importedBySpace.preset.name, "team-executor-imported");
+
     const signedProfile = client.validatePresetBundle(bundlePath, undefined, "signed");
     assert.equal(signedProfile.trusted, true);
     assert.equal(signedProfile.report.trustProfile, "signed");
