@@ -144,8 +144,9 @@ export function usageText(): string {
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
-    "  glialnode preset channel-show --name <name> --channel <name> [--directory <path>]",
+    "  glialnode preset channel-show --name <name> [--channel <name>] [--directory <path>]",
     "  glialnode preset channel-list --name <name> [--directory <path>]",
+    "  glialnode preset channel-default --name <name> --channel <name> [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -209,7 +210,10 @@ async function runSpaceCommand(
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
-    const channelPreset = parsed.flags["preset-local"] && parsed.flags["preset-channel"]
+    const channelPreset = parsed.flags["preset-local"] && (
+      parsed.flags["preset-channel"] ||
+      readPresetChannels(resolvePresetDirectory(parsed.flags["preset-directory"]), parsed.flags["preset-local"]).defaultChannel
+    )
       ? resolvePresetChannel(parsed.flags["preset-local"], parsed.flags["preset-channel"], parsed.flags["preset-directory"])
       : undefined;
 
@@ -271,7 +275,10 @@ async function runSpaceCommand(
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
-    const channelPreset = parsed.flags["preset-local"] && parsed.flags["preset-channel"]
+    const channelPreset = parsed.flags["preset-local"] && (
+      parsed.flags["preset-channel"] ||
+      readPresetChannels(resolvePresetDirectory(parsed.flags["preset-directory"]), parsed.flags["preset-local"]).defaultChannel
+    )
       ? resolvePresetChannel(parsed.flags["preset-local"], parsed.flags["preset-channel"], parsed.flags["preset-directory"])
       : undefined;
     const settingsFromJson = parsed.flags.settings ? parseSettingsFlag(parsed.flags.settings) : {};
@@ -617,11 +624,35 @@ async function runPresetCommand(
     };
   }
 
+  if (action === "channel-default") {
+    const name = requireFlag(parsed.flags, "name");
+    const channel = requireFlag(parsed.flags, "channel");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const current = readPresetChannels(directory, name);
+    if (!current.channels[channel]) {
+      throw new Error(`Unknown preset channel for ${name}: ${channel}`);
+    }
+    const next = {
+      ...current,
+      defaultChannel: channel,
+    };
+    writePresetChannels(directory, next);
+
+    return {
+      lines: [
+        "Preset default channel set.",
+        `name=${name}`,
+        `defaultChannel=${channel}`,
+      ],
+    };
+  }
+
   if (action === "channel-list") {
     const state = readPresetChannels(resolvePresetDirectory(parsed.flags.directory), requireFlag(parsed.flags, "name"));
     return {
       lines: [
         `channels=${Object.keys(state.channels).length}`,
+        `defaultChannel=${state.defaultChannel ?? ""}`,
         ...Object.entries(state.channels)
           .sort(([left], [right]) => left.localeCompare(right))
           .map(([channel, version]) => `${channel}=${version}`),
@@ -631,19 +662,23 @@ async function runPresetCommand(
 
   if (action === "channel-show") {
     const name = requireFlag(parsed.flags, "name");
-    const channel = requireFlag(parsed.flags, "channel");
+    const channel = parsed.flags.channel;
     const directory = resolvePresetDirectory(parsed.flags.directory);
     const state = readPresetChannels(directory, name);
-    const version = state.channels[channel];
+    const resolvedChannel = channel ?? state.defaultChannel;
+    if (!resolvedChannel) {
+      throw new Error(`No preset channel selected for ${name}.`);
+    }
+    const version = state.channels[resolvedChannel];
     if (!version) {
-      throw new Error(`Unknown preset channel for ${name}: ${channel}`);
+      throw new Error(`Unknown preset channel for ${name}: ${resolvedChannel}`);
     }
     const preset = requirePresetHistoryVersion(listRegisteredPresetHistory(name, directory), name, version);
 
     return {
       lines: [
         `name=${preset.name}`,
-        `channel=${channel}`,
+        `channel=${resolvedChannel}`,
         `version=${preset.version ?? ""}`,
         `author=${preset.author ?? ""}`,
         `source=${preset.source ?? ""}`,
@@ -1929,12 +1964,16 @@ function loadRegisteredPreset(name: string, directory: string | undefined) {
   return preset;
 }
 
-function resolvePresetChannel(name: string, channel: string, directory: string | undefined) {
+function resolvePresetChannel(name: string, channel: string | undefined, directory: string | undefined) {
   const resolvedDirectory = resolvePresetDirectory(directory);
   const state = readPresetChannels(resolvedDirectory, name);
-  const version = state.channels[channel];
+  const resolvedChannel = channel ?? state.defaultChannel;
+  if (!resolvedChannel) {
+    throw new Error(`No preset channel selected for ${name}.`);
+  }
+  const version = state.channels[resolvedChannel];
   if (!version) {
-    throw new Error(`Unknown preset channel for ${name}: ${channel}`);
+    throw new Error(`Unknown preset channel for ${name}: ${resolvedChannel}`);
   }
 
   return requirePresetHistoryVersion(listRegisteredPresetHistory(name, resolvedDirectory), name, version);
@@ -1966,7 +2005,7 @@ function requirePresetHistoryVersion(
   return match;
 }
 
-function readPresetChannels(directory: string, name: string): { name: string; channels: Record<string, string> } {
+function readPresetChannels(directory: string, name: string): { name: string; channels: Record<string, string>; defaultChannel?: string } {
   const channelsPath = join(directory, ".channels", `${toPresetFileName(name)}.json`);
   if (!existsSync(channelsPath)) {
     return {
@@ -1979,10 +2018,13 @@ function readPresetChannels(directory: string, name: string): { name: string; ch
   return {
     name,
     channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
+    defaultChannel: "defaultChannel" in parsed && typeof (parsed as { defaultChannel?: unknown }).defaultChannel === "string"
+      ? (parsed as { defaultChannel?: string }).defaultChannel
+      : undefined,
   };
 }
 
-function writePresetChannels(directory: string, state: { name: string; channels: Record<string, string> }) {
+function writePresetChannels(directory: string, state: { name: string; channels: Record<string, string>; defaultChannel?: string }) {
   const channelsDirectory = join(directory, ".channels");
   mkdirSync(channelsDirectory, { recursive: true });
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);

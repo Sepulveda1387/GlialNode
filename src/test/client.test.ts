@@ -341,6 +341,43 @@ test("GlialNodeClient can create and configure spaces from preset channels", asy
   }
 });
 
+test("GlialNodeClient can use a preset default channel for space setup", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-default-channel-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+    client.promotePresetChannel("team-executor", {
+      channel: "stable",
+      version: "2.1.0",
+    });
+    const channelState = client.setDefaultPresetChannel("team-executor", {
+      channel: "stable",
+    });
+    assert.equal(channelState.defaultChannel, "stable");
+
+    const resolved = client.resolvePresetChannel("team-executor", {});
+    assert.equal(resolved.version, "2.1.0");
+
+    const space = await client.createSpace({
+      name: "Default Channel Space",
+      presetLocalName: "team-executor",
+    });
+    assert.ok(space.settings);
+    assert.equal(space.settings.routing?.preferPlannerOnDistilled, false);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");

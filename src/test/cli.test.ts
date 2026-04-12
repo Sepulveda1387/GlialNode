@@ -541,6 +541,85 @@ test("CLI can create and configure spaces from preset channels", async () => {
   }
 });
 
+test("CLI can use a preset default channel for space setup", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-default-channel-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const defaultResult = await runCommand(
+      parseArgs([
+        "preset", "channel-default",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(defaultResult.lines[0], "Preset default channel set.");
+
+    const channelList = await runCommand(
+      parseArgs(["preset", "channel-list", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(channelList.lines.join("\n"), /defaultChannel=stable/);
+
+    const channelShow = await runCommand(
+      parseArgs(["preset", "channel-show", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(channelShow.lines.join("\n"), /channel=stable/);
+
+    const createSpaceResult = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Default Channel Space",
+        "--preset-local", "team-executor",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const createdSpace = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId]),
+      { repository },
+    );
+    assert.match(createdSpace.lines.join("\n"), /"preferPlannerOnDistilled":false/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

@@ -181,6 +181,7 @@ export interface RecallOptions {
 export interface PresetChannelState {
   name: string;
   channels: Record<string, string>;
+  defaultChannel?: string;
 }
 
 export class GlialNodeClient {
@@ -209,13 +210,15 @@ export class GlialNodeClient {
 
   async createSpace(input: CreateSpaceInput): Promise<MemorySpace> {
     const timestamp = new Date().toISOString();
-    const channelPreset =
-      input.presetLocalName && input.presetChannel
-        ? this.resolvePresetChannel(input.presetLocalName, {
-            channel: input.presetChannel,
-            directory: input.presetDirectory,
-          })
-        : undefined;
+    const channelPreset = input.presetLocalName && (input.presetChannel || this.listPresetChannels(
+      input.presetLocalName,
+      input.presetDirectory,
+    ).defaultChannel)
+      ? this.resolvePresetChannel(input.presetLocalName, {
+          channel: input.presetChannel,
+          directory: input.presetDirectory,
+        })
+      : undefined;
     const settings = mergeSpaceSettings(
       input.preset ? getSpacePreset(input.preset) : undefined,
       channelPreset?.settings,
@@ -348,6 +351,24 @@ export class GlialNodeClient {
     return readPresetChannels(resolvedDirectory, name);
   }
 
+  setDefaultPresetChannel(
+    name: string,
+    options: { channel: string; directory?: string },
+  ): PresetChannelState {
+    const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    const current = readPresetChannels(resolvedDirectory, name);
+    if (!current.channels[options.channel]) {
+      throw new Error(`Unknown preset channel for ${name}: ${options.channel}`);
+    }
+
+    const next: PresetChannelState = {
+      ...current,
+      defaultChannel: options.channel,
+    };
+    writePresetChannels(resolvedDirectory, next);
+    return next;
+  }
+
   promotePresetChannel(
     name: string,
     options: { channel: string; version: string; directory?: string },
@@ -361,6 +382,7 @@ export class GlialNodeClient {
         ...current.channels,
         [options.channel]: options.version,
       },
+      defaultChannel: current.defaultChannel,
     };
     writePresetChannels(resolvedDirectory, next);
     return next;
@@ -368,13 +390,17 @@ export class GlialNodeClient {
 
   resolvePresetChannel(
     name: string,
-    options: { channel: string; directory?: string },
+    options: { channel?: string; directory?: string },
   ): SpacePresetDefinition {
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
     const state = readPresetChannels(resolvedDirectory, name);
-    const version = state.channels[options.channel];
+    const channel = options.channel ?? state.defaultChannel;
+    if (!channel) {
+      throw new Error(`No preset channel selected for ${name}.`);
+    }
+    const version = state.channels[channel];
     if (!version) {
-      throw new Error(`Unknown preset channel for ${name}: ${options.channel}`);
+      throw new Error(`Unknown preset channel for ${name}: ${channel}`);
     }
 
     return requirePresetHistoryVersion(
@@ -390,13 +416,15 @@ export class GlialNodeClient {
 
   async configureSpace(input: ConfigureSpaceInput): Promise<MemorySpace> {
     const space = await requireSpace(this.repository, input.spaceId);
-    const channelPreset =
-      input.presetLocalName && input.presetChannel
-        ? this.resolvePresetChannel(input.presetLocalName, {
-            channel: input.presetChannel,
-            directory: input.presetDirectory,
-          })
-        : undefined;
+    const channelPreset = input.presetLocalName && (input.presetChannel || this.listPresetChannels(
+      input.presetLocalName,
+      input.presetDirectory,
+    ).defaultChannel)
+      ? this.resolvePresetChannel(input.presetLocalName, {
+          channel: input.presetChannel,
+          directory: input.presetDirectory,
+        })
+      : undefined;
     const settings = mergeSpaceSettings(
       space.settings,
       input.preset ? getSpacePreset(input.preset) : undefined,
@@ -981,6 +1009,7 @@ function readPresetChannels(directory: string, name: string): PresetChannelState
   return {
     name,
     channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
+    defaultChannel: typeof parsed.defaultChannel === "string" ? parsed.defaultChannel : undefined,
   };
 }
 
