@@ -603,6 +603,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.equal(validation.metadata.bundleFormatVersion, 1);
     assert.equal(validation.warnings.length, 0);
     assert.equal(validation.trusted, true);
+    assert.equal(validation.report.trustProfile, "permissive");
     assert.equal(validation.metadata.origin, "local-dev");
     assert.equal(validation.metadata.signer, "GlialNode Test");
     assert.equal(validation.metadata.signatureAlgorithm, "ed25519");
@@ -610,6 +611,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.equal(validation.metadata.signerPublicKey, publicKeyPem);
     assert.ok(validation.metadata.signature);
     assert.equal(validation.trustWarnings.length, 0);
+    assert.equal(validation.report.signerKeyId, signerKeyId);
 
     const strictValidation = client.validatePresetBundle(bundlePath, {
       requireSigner: true,
@@ -619,6 +621,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       allowedSignerKeyIds: [signerKeyId],
     });
     assert.equal(strictValidation.trusted, true);
+    assert.equal(strictValidation.report.effectivePolicy.requireSignature, true);
 
     writeFileSync(signerPublicKeyPath, bundle.metadata.signerPublicKey ?? publicKeyPem, "utf8");
     client.registerTrustedSignerFromPublicKey(signerPublicKeyPath, {
@@ -631,9 +634,11 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       trustedSignerNames: ["team-anchor"],
     });
     assert.equal(trustedByName.trusted, true);
+    assert.deepEqual(trustedByName.report.matchedTrustedSignerNames, ["team-anchor"]);
 
     const signedProfile = client.validatePresetBundle(bundlePath, undefined, "signed");
     assert.equal(signedProfile.trusted, true);
+    assert.equal(signedProfile.report.trustProfile, "signed");
 
     const anchoredProfile = client.validatePresetBundle(bundlePath, {
       trustedSignerNames: ["team-anchor"],

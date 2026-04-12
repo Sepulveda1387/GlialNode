@@ -1018,6 +1018,8 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     assert.match(shown.lines.join("\n"), new RegExp(`signerKeyId=${signerKeyId}`));
     assert.match(shown.lines.join("\n"), /signed=true/);
     assert.match(shown.lines.join("\n"), /trusted=true/);
+    assert.match(shown.lines.join("\n"), /trustProfile=signed/);
+    assert.match(shown.lines.join("\n"), new RegExp(`reportSignerKeyId=${signerKeyId}`));
 
     const bundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
       metadata: { bundleFormatVersion: number };
@@ -1094,6 +1096,8 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       { repository },
     );
     assert.match(trustedByName.lines.join("\n"), /trusted=true/);
+    assert.match(trustedByName.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
+    assert.match(trustedByName.lines.join("\n"), /effectivePolicy=/);
 
     await assert.rejects(
       () => runCommand(parseArgs([

@@ -1013,6 +1013,7 @@ async function runPresetCommand(
         directory,
         parseTrustProfileFlag(parsed.flags["trust-profile"]),
       ),
+      parseTrustProfileFlag(parsed.flags["trust-profile"]),
     );
 
     for (const preset of imported.history) {
@@ -1054,6 +1055,7 @@ async function runPresetCommand(
         directory,
         parseTrustProfileFlag(parsed.flags["trust-profile"]),
       ),
+      parseTrustProfileFlag(parsed.flags["trust-profile"]),
     );
 
     return {
@@ -1072,6 +1074,11 @@ async function runPresetCommand(
         `versions=${bundle.history.length}`,
         `defaultChannel=${bundle.channels.defaultChannel ?? ""}`,
         `trusted=${validation.trusted}`,
+        `trustProfile=${validation.report.trustProfile}`,
+        `reportSignerKeyId=${validation.report.signerKeyId ?? ""}`,
+        `matchedTrustedSigners=${validation.report.matchedTrustedSignerNames.join(",")}`,
+        `revokedTrustedSigners=${validation.report.revokedTrustedSignerNames.join(",")}`,
+        `effectivePolicy=${JSON.stringify(validation.report.effectivePolicy)}`,
         `warnings=${validation.warnings.length}`,
         ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
@@ -2824,6 +2831,7 @@ function validatePresetBundle(
     allowedSignerKeyIds?: string[];
     trustedSignerNames?: string[];
   } = {},
+  trustProfile: "permissive" | "signed" | "anchored" = "permissive",
 ) {
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
     throw new Error(
@@ -2833,6 +2841,8 @@ function validatePresetBundle(
 
   const warnings: string[] = [];
   const trustWarnings: string[] = [];
+  const matchedTrustedSignerNames: string[] = [];
+  const revokedTrustedSignerNames: string[] = [];
   if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
     warnings.push(
       `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
@@ -2895,6 +2905,10 @@ function validatePresetBundle(
     if (trustPolicy.allowedSignerKeyIds?.length && !trustPolicy.allowedSignerKeyIds.includes(signerKeyId)) {
       trustWarnings.push(`Preset bundle signer key id is not allowed: ${signerKeyId}`);
     }
+
+    if (trustPolicy.trustedSignerNames?.length && trustPolicy.allowedSignerKeyIds?.includes(signerKeyId)) {
+      matchedTrustedSignerNames.push(...trustPolicy.trustedSignerNames);
+    }
   } else if (trustPolicy.allowedSignerKeyIds?.length) {
     trustWarnings.push("Preset bundle signer key id is missing.");
   }
@@ -2908,6 +2922,15 @@ function validatePresetBundle(
     warnings,
     trustWarnings,
     trusted: true,
+    report: {
+      trustProfile,
+      effectivePolicy: trustPolicy,
+      signerKeyId: bundle.metadata.signerKeyId
+        ?? (bundle.metadata.signerPublicKey ? computeSignerKeyId(bundle.metadata.signerPublicKey) : undefined),
+      matchedTrustedSignerNames,
+      revokedTrustedSignerNames,
+      signed: Boolean(bundle.metadata.signature),
+    },
   };
 }
 

@@ -219,6 +219,8 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
+
+`bundle-show` now reports the selected trust profile, effective policy, signer key id, and matched trusted signers so provenance decisions are inspectable instead of opaque.
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
 
