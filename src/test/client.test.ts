@@ -878,3 +878,72 @@ test("GlialNodeClient bundle annotations flag stale and contested memory", async
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient can auto-route bundles toward reviewer context when memory is risky", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-routing-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Bundle Routing Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "summary",
+      content: "Distilled retrieval memory that now needs review before reuse.",
+      summary: "Distilled retrieval memory",
+      tags: ["retrieval", "distilled"],
+      confidence: 0.3,
+      freshness: 0.28,
+      importance: 0.72,
+    });
+
+    const contested = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Legacy retrieval decision that has been superseded.",
+      summary: "Legacy retrieval decision",
+      status: "superseded",
+      tags: ["retrieval"],
+      confidence: 0.58,
+      freshness: 0.42,
+      importance: 0.67,
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: primary.id,
+      toRecordId: contested.id,
+      type: "references",
+    });
+
+    const bundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "retrieval",
+      limit: 1,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 4,
+      bundleConsumer: "auto",
+    });
+
+    assert.equal(bundles.length, 1);
+    assert.equal(bundles[0]?.route.resolvedConsumer, "reviewer");
+    assert.equal(bundles[0]?.route.profileUsed, "reviewer");
+    assert.equal(bundles[0]?.route.source, "auto");
+    assert.ok(bundles[0]?.route.warnings.includes("contains_stale_memory"));
+    assert.ok(bundles[0]?.route.warnings.includes("contains_superseded_memory"));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

@@ -51,6 +51,7 @@ import {
   buildRecallPack,
   buildRecallTrace,
   type MemoryBundle,
+  type MemoryBundleConsumer,
   type MemoryBundleProfile,
   type RecallPack,
   type RecallTrace,
@@ -147,6 +148,7 @@ export interface RecallOptions {
   supportLimit?: number;
   includeSameScopeDistilled?: boolean;
   bundleProfile?: MemoryBundleProfile;
+  bundleConsumer?: MemoryBundleConsumer;
   bundleMaxSupporting?: number;
   bundleMaxContentChars?: number;
   bundlePreferCompact?: boolean;
@@ -346,6 +348,7 @@ export class GlialNodeClient {
     return packs.map((pack) => buildMemoryBundle(pack, {
       queryText: query.text,
       profile: options.bundleProfile,
+      consumer: options.bundleConsumer,
       maxSupporting: options.bundleMaxSupporting,
       maxContentChars: options.bundleMaxContentChars,
       preferCompact: options.bundlePreferCompact,

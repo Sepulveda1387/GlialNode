@@ -339,6 +339,23 @@ const bundles = await client.bundleRecall(
 );
 ```
 
+If you want GlialNode to choose the best downstream consumer automatically, you can also enable bundle intent routing:
+
+```ts
+const bundles = await client.bundleRecall(
+  {
+    spaceId: space.id,
+    text: "retrieval",
+    limit: 1,
+  },
+  {
+    bundleConsumer: "auto",
+  },
+);
+
+console.log(bundles[0]?.route);
+```
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.
@@ -439,6 +456,20 @@ You can also override the profile defaults directly with:
 - `bundleMaxContentChars`
 - `bundlePreferCompact`
 
+And if you want adaptive routing instead of a fixed profile, GlialNode can also choose a consumer automatically:
+
+- `auto`: routes toward `executor` when the primary memory is actionable
+- `auto`: routes toward `reviewer` when the bundle contains stale or contested memory
+- `auto`: routes toward `planner` when distilled summary memory is leading the handoff
+
+Each bundle now includes a `route` object with:
+
+- the requested consumer
+- the resolved consumer
+- the shaping profile actually used
+- the routing reason
+- warnings derived from risky bundle hints
+
 ## Contradiction Handling
 
 GlialNode can now detect likely contradictions when a new durable record is written into the same scope as older durable memory.
@@ -532,6 +563,7 @@ glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory bundle --space-id <space-id> --text lexical --bundle-profile executor --bundle-max-supporting 1 --bundle-max-content-chars 160 --bundle-prefer-compact true
+glialnode memory bundle --space-id <space-id> --text lexical --bundle-consumer auto
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
 glialnode memory archive --record-id <record-id>

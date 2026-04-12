@@ -17,6 +17,7 @@
 - Added reusable memory bundles for downstream agent and orchestrator handoff.
 - Added bundle profiles and pruning controls for tighter downstream handoff payloads.
 - Added bundle annotations and consumer hints so handoff bundles can flag actionable, stale, distilled, and contested memory explicitly.
+- Added bundle intent routing so GlialNode can auto-shape handoff payloads for planner, executor, or reviewer consumers.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

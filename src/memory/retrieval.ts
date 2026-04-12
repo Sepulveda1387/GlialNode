@@ -115,6 +115,7 @@ export interface MemoryBundle {
   supporting: MemoryBundleEntry[];
   links: MemoryRecordLink[];
   hints: MemoryBundleHint[];
+  route: MemoryBundleRoute;
 }
 
 export type MemoryBundleHint =
@@ -125,10 +126,22 @@ export type MemoryBundleHint =
   | "contains_superseded_memory";
 
 export type MemoryBundleProfile = "balanced" | "planner" | "executor" | "reviewer";
+export type MemoryBundleConsumer = MemoryBundleProfile | "auto";
+
+export interface MemoryBundleRoute {
+  requestedConsumer: MemoryBundleConsumer;
+  resolvedConsumer: MemoryBundleProfile;
+  profileUsed: MemoryBundleProfile;
+  source: "default" | "explicit" | "auto";
+  emphasis: "general" | "planning" | "execution" | "review";
+  reason: string;
+  warnings: MemoryBundleHint[];
+}
 
 export interface BuildMemoryBundleOptions {
   queryText?: string;
   profile?: MemoryBundleProfile;
+  consumer?: MemoryBundleConsumer;
   maxSupporting?: number;
   maxContentChars?: number;
   preferCompact?: boolean;
@@ -227,8 +240,10 @@ export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTr
 }
 
 export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOptions = {}): MemoryBundle {
-  const resolved = resolveBundlePolicy(options.profile, options);
-  const supporting = pack.supporting.slice(0, Math.max(resolved.maxSupporting, 0));
+  const hints = buildBundleHints(pack.primary, pack.supporting, pack.links);
+  const route = resolveBundleRoute(pack.primary, pack.supporting, hints, options);
+  const resolved = resolveBundlePolicy(route.profileUsed, options);
+  const supporting = rankSupportingForBundle(pack.supporting, route.profileUsed).slice(0, Math.max(resolved.maxSupporting, 0));
   const relatedIds = new Set([pack.primary.id, ...supporting.map((record) => record.id)]);
 
   return {
@@ -244,6 +259,7 @@ export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOp
     supporting: supporting.map((record) => toBundleEntry(record, "supporting", resolved)),
     links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
     hints: buildBundleHints(pack.primary, supporting, pack.links),
+    route,
   };
 }
 
@@ -418,6 +434,167 @@ function buildBundleHints(
   }
 
   return [...hints];
+}
+
+function resolveBundleRoute(
+  primary: MemoryRecord,
+  supporting: MemoryRecord[],
+  hints: MemoryBundleHint[],
+  options: BuildMemoryBundleOptions,
+): MemoryBundleRoute {
+  const requestedConsumer = options.consumer ?? (options.profile ?? "balanced");
+
+  if (requestedConsumer !== "auto") {
+    return {
+      requestedConsumer,
+      resolvedConsumer: requestedConsumer,
+      profileUsed: options.profile ?? requestedConsumer,
+      source: options.profile || options.consumer ? "explicit" : "default",
+      emphasis: consumerEmphasis(requestedConsumer),
+      reason: routeReasonForConsumer(requestedConsumer, hints),
+      warnings: extractRouteWarnings(hints),
+    };
+  }
+
+  const resolvedConsumer = autoResolveConsumer(primary, supporting, hints);
+  return {
+    requestedConsumer,
+    resolvedConsumer,
+    profileUsed: options.profile ?? resolvedConsumer,
+    source: "auto",
+    emphasis: consumerEmphasis(resolvedConsumer),
+    reason: autoRouteReason(primary, supporting, hints, resolvedConsumer),
+    warnings: extractRouteWarnings(hints),
+  };
+}
+
+function autoResolveConsumer(
+  primary: MemoryRecord,
+  supporting: MemoryRecord[],
+  hints: MemoryBundleHint[],
+): MemoryBundleProfile {
+  if (hints.includes("contains_contested_memory") || hints.includes("contains_stale_memory")) {
+    return "reviewer";
+  }
+
+  if (primary.kind === "decision" || primary.kind === "task" || primary.kind === "blocker") {
+    return "executor";
+  }
+
+  if (
+    hints.includes("contains_distilled_memory") ||
+    [primary, ...supporting].some((record) => record.kind === "summary")
+  ) {
+    return "planner";
+  }
+
+  return "balanced";
+}
+
+function consumerEmphasis(consumer: MemoryBundleProfile): MemoryBundleRoute["emphasis"] {
+  if (consumer === "planner") {
+    return "planning";
+  }
+
+  if (consumer === "executor") {
+    return "execution";
+  }
+
+  if (consumer === "reviewer") {
+    return "review";
+  }
+
+  return "general";
+}
+
+function routeReasonForConsumer(
+  consumer: MemoryBundleProfile,
+  hints: MemoryBundleHint[],
+): string {
+  if (consumer === "reviewer" && extractRouteWarnings(hints).length > 0) {
+    return "Explicit reviewer routing keeps contested or stale memory visible.";
+  }
+
+  if (consumer === "executor") {
+    return "Explicit executor routing prioritizes actionable handoff memory.";
+  }
+
+  if (consumer === "planner") {
+    return "Explicit planner routing preserves broader context for planning.";
+  }
+
+  return "Using balanced routing for general downstream consumption.";
+}
+
+function autoRouteReason(
+  primary: MemoryRecord,
+  supporting: MemoryRecord[],
+  hints: MemoryBundleHint[],
+  consumer: MemoryBundleProfile,
+): string {
+  if (consumer === "reviewer") {
+    return "Auto-routed to reviewer because the bundle contains stale or contested memory that should be checked before acting.";
+  }
+
+  if (consumer === "executor") {
+    return "Auto-routed to executor because the primary memory is directly actionable.";
+  }
+
+  if (consumer === "planner") {
+    return "Auto-routed to planner because distilled or summary memory is leading the handoff.";
+  }
+
+  const supportingCount = supporting.length;
+  return supportingCount > 0
+    ? "Auto-routed to balanced because the bundle mixes direct recall with light supporting context."
+    : `Auto-routed to balanced because ${primary.kind} memory did not signal a stronger consumer intent.`;
+}
+
+function extractRouteWarnings(hints: MemoryBundleHint[]): MemoryBundleHint[] {
+  return hints.filter((hint) =>
+    hint === "contains_contested_memory" ||
+    hint === "contains_stale_memory" ||
+    hint === "contains_superseded_memory",
+  );
+}
+
+function rankSupportingForBundle(
+  supporting: MemoryRecord[],
+  profile: MemoryBundleProfile,
+): MemoryRecord[] {
+  return [...supporting].sort(
+    (left, right) => scoreSupportingForProfile(right, profile) - scoreSupportingForProfile(left, profile),
+  );
+}
+
+function scoreSupportingForProfile(record: MemoryRecord, profile: MemoryBundleProfile): number {
+  const annotations = new Set(buildEntryAnnotations(record));
+  const baseScore = record.importance * 0.35 + record.confidence * 0.35 + record.freshness * 0.3;
+
+  if (profile === "executor") {
+    return baseScore +
+      (annotations.has("actionable") ? 0.35 : 0) +
+      (annotations.has("high_confidence") ? 0.18 : 0) +
+      (annotations.has("stale") ? -0.25 : 0) +
+      (annotations.has("contested") ? -0.2 : 0);
+  }
+
+  if (profile === "planner") {
+    return baseScore +
+      (annotations.has("distilled") ? 0.28 : 0) +
+      (record.kind === "summary" ? 0.18 : 0) +
+      (annotations.has("high_confidence") ? 0.12 : 0);
+  }
+
+  if (profile === "reviewer") {
+    return baseScore +
+      (annotations.has("contested") ? 0.3 : 0) +
+      (annotations.has("stale") ? 0.24 : 0) +
+      (annotations.has("superseded") ? 0.18 : 0) +
+      (annotations.has("distilled") ? 0.08 : 0);
+  }
+
+  return baseScore;
 }
 
 function resolveBundlePolicy(

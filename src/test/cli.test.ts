@@ -1788,3 +1788,74 @@ test("CLI bundle annotations expose stale and contested hints", async () => {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI bundle can auto-route actionable memory toward executor handoff", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-routing-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Routing Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable execution-time search.",
+        "--summary", "Execution retrieval decision",
+        "--tags", "retrieval,search",
+        "--confidence", "0.86",
+        "--freshness", "0.82",
+        "--importance", "0.9",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "execution retrieval",
+        "--limit", "1",
+        "--bundle-consumer", "auto",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      route: {
+        resolvedConsumer: string;
+        profileUsed: string;
+        source: string;
+        emphasis: string;
+      };
+      hints: string[];
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.route.resolvedConsumer, "executor");
+    assert.equal(parsed[0]?.route.profileUsed, "executor");
+    assert.equal(parsed[0]?.route.source, "auto");
+    assert.equal(parsed[0]?.route.emphasis, "execution");
+    assert.ok(parsed[0]?.hints.includes("actionable_primary"));
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

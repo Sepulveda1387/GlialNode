@@ -102,6 +102,13 @@ That bundle layer should also support pruning policies so different consumers ca
 - executors should get a tighter handoff with smaller payloads
 - reviewers can keep richer supporting detail
 
+The bundle layer should also support intent routing:
+
+- explicit consumer routing when the caller already knows whether the bundle is for planning, execution, or review
+- auto-routing when the memory condition itself signals the right downstream consumer
+- route metadata that explains why a bundle was routed toward planner, executor, reviewer, or balanced handling
+- route warnings derived from stale, superseded, or contested memory hints
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.
