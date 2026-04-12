@@ -106,6 +106,7 @@ export type MemoryBundleAnnotation =
   | "contested"
   | "stale"
   | "distilled"
+  | "provenance"
   | "superseded"
   | "expired"
   | "high_confidence";
@@ -124,6 +125,7 @@ export type MemoryBundleHint =
   | "contains_contested_memory"
   | "contains_stale_memory"
   | "contains_distilled_memory"
+  | "contains_provenance_memory"
   | "contains_superseded_memory";
 
 export type MemoryBundleProfile = "balanced" | "planner" | "executor" | "reviewer";
@@ -301,6 +303,10 @@ function describePrimaryReason(record: MemoryRecord, queryText?: string): string
     reasons.push("captures distilled memory for the scope");
   }
 
+  if (isProvenanceRecord(record)) {
+    reasons.push("captures bundle provenance audit memory");
+  }
+
   if (record.kind === "decision" || record.kind === "preference") {
     reasons.push("carries a durable decision signal");
   }
@@ -323,6 +329,10 @@ function describeSupportingReason(
 
   if (record.tags.some((tag) => tag.toLowerCase() === "distilled")) {
     return "same-scope distilled context";
+  }
+
+  if (isProvenanceRecord(record)) {
+    return "same-scope provenance audit context";
   }
 
   if (queryText && scoreQueryAlignment(record, queryText) > 0) {
@@ -406,6 +416,10 @@ function buildEntryAnnotations(record: MemoryRecord, routingPolicy: RoutingPolic
     annotations.add("distilled");
   }
 
+  if (isProvenanceRecord(record)) {
+    annotations.add("provenance");
+  }
+
   return [...annotations];
 }
 
@@ -424,6 +438,10 @@ function buildBundleHints(
 
   if (records.some((record) => record.tags.some((tag) => tag.toLowerCase() === "distilled"))) {
     hints.add("contains_distilled_memory");
+  }
+
+  if (records.some((record) => isProvenanceRecord(record))) {
+    hints.add("contains_provenance_memory");
   }
 
   if (records.some((record) => record.status === "superseded") || links.some((link) => link.type === "contradicts")) {
@@ -603,6 +621,7 @@ function scoreSupportingForProfile(record: MemoryRecord, profile: MemoryBundlePr
       (annotations.has("contested") ? 0.3 : 0) +
       (annotations.has("stale") ? 0.24 : 0) +
       (annotations.has("superseded") ? 0.18 : 0) +
+      (annotations.has("provenance") ? 0.14 : 0) +
       (annotations.has("distilled") ? 0.08 : 0);
   }
 
@@ -614,6 +633,11 @@ function resolveRoutingPolicy(policy: Partial<RoutingPolicy> | undefined): Routi
     ...defaultRoutingPolicy,
     ...(policy ?? {}),
   };
+}
+
+function isProvenanceRecord(record: MemoryRecord): boolean {
+  const lowerTags = new Set(record.tags.map((tag) => tag.toLowerCase()));
+  return lowerTags.has("provenance") || (lowerTags.has("bundle") && lowerTags.has("audit"));
 }
 
 function resolveBundlePolicy(

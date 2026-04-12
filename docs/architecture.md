@@ -93,7 +93,7 @@ For downstream execution, the retrieval layer should also be able to emit a memo
 - readable and compact memory text together
 - the trace produced from the same recall pack
 - links needed to preserve provenance inside the handoff object
-- per-entry annotations that flag actionable, stale, distilled, superseded, expired, or high-confidence memory
+- per-entry annotations that flag actionable, stale, distilled, provenance-aware, superseded, expired, or high-confidence memory
 - bundle-level hints that help consumers quickly detect contested or risky handoff state
 
 That bundle layer should also support pruning policies so different consumers can receive different shapes of memory:

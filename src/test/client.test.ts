@@ -694,6 +694,19 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     });
     assert.match(auditRecords.map((record) => record.summary ?? record.content).join(","), /Bundle import audit/);
 
+    const provenanceBundles = await client.bundleRecall({
+      spaceId: provenanceSpace.id,
+      text: "Bundle import audit",
+      limit: 3,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 3,
+      bundleConsumer: "reviewer",
+    });
+    assert.ok(provenanceBundles[0]?.primary.annotations.includes("provenance"));
+    assert.ok(provenanceBundles[0]?.hints.includes("contains_provenance_memory"));
+    assert.match(provenanceBundles[0]?.trace.citations.map((citation) => citation.reason).join(" "), /provenance audit/i);
+
     const signedProfile = client.validatePresetBundle(bundlePath, undefined, "signed");
     assert.equal(signedProfile.trusted, true);
     assert.equal(signedProfile.report.trustProfile, "signed");
