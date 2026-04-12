@@ -559,6 +559,7 @@ Auto-routing can also be tuned per space through routing settings:
 
 - `routing.preferReviewerOnContested`
 - `routing.preferReviewerOnStale`
+- `routing.preferReviewerOnProvenance`
 - `routing.staleThreshold`
 - `routing.preferExecutorOnActionable`
 - `routing.preferPlannerOnDistilled`
@@ -713,7 +714,7 @@ glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
 glialnode space configure --id <space-id> --decay-enabled true --decay-min-age-days 7 --decay-confidence-per-day 0.02 --decay-freshness-per-day 0.03
-glialnode space configure --id <space-id> --routing-prefer-reviewer-on-contested false --routing-prefer-reviewer-on-stale false --routing-prefer-planner-on-distilled true
+glialnode space configure --id <space-id> --routing-prefer-reviewer-on-contested false --routing-prefer-reviewer-on-stale false --routing-prefer-reviewer-on-provenance false --routing-prefer-planner-on-distilled true
 glialnode space configure --id <space-id> --reinforcement-enabled true --reinforcement-confidence-boost 0.05 --reinforcement-freshness-boost 0.1
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>

@@ -52,6 +52,7 @@ export interface ReinforcementPolicy {
 export interface RoutingPolicy {
   preferReviewerOnContested: boolean;
   preferReviewerOnStale: boolean;
+  preferReviewerOnProvenance: boolean;
   staleThreshold: number;
   preferExecutorOnActionable: boolean;
   preferPlannerOnDistilled: boolean;
@@ -109,6 +110,7 @@ export const defaultReinforcementPolicy: ReinforcementPolicy = {
 export const defaultRoutingPolicy: RoutingPolicy = {
   preferReviewerOnContested: true,
   preferReviewerOnStale: true,
+  preferReviewerOnProvenance: true,
   staleThreshold: 0.35,
   preferExecutorOnActionable: true,
   preferPlannerOnDistilled: true,

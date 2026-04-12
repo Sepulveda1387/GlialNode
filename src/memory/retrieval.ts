@@ -500,7 +500,8 @@ function autoResolveConsumer(
 ): MemoryBundleProfile {
   if (
     (routingPolicy.preferReviewerOnContested && hints.includes("contains_contested_memory")) ||
-    (routingPolicy.preferReviewerOnStale && hints.includes("contains_stale_memory"))
+    (routingPolicy.preferReviewerOnStale && hints.includes("contains_stale_memory")) ||
+    (routingPolicy.preferReviewerOnProvenance && hints.includes("contains_provenance_memory"))
   ) {
     return "reviewer";
   }
@@ -563,6 +564,10 @@ function autoRouteReason(
   consumer: MemoryBundleProfile,
 ): string {
   if (consumer === "reviewer") {
+    if (hints.includes("contains_provenance_memory")) {
+      return "Auto-routed to reviewer because the bundle includes provenance audit memory that should stay visible during review.";
+    }
+
     return "Auto-routed to reviewer because the bundle contains stale or contested memory that should be checked before acting.";
   }
 
@@ -584,7 +589,8 @@ function extractRouteWarnings(hints: MemoryBundleHint[]): MemoryBundleHint[] {
   return hints.filter((hint) =>
     hint === "contains_contested_memory" ||
     hint === "contains_stale_memory" ||
-    hint === "contains_superseded_memory",
+    hint === "contains_superseded_memory" ||
+    hint === "contains_provenance_memory",
   );
 }
 

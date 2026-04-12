@@ -3069,6 +3069,75 @@ test("CLI bundle can auto-route actionable memory toward executor handoff", asyn
   }
 });
 
+test("CLI bundle can auto-route provenance memory toward reviewer handoff", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-routing-provenance-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Provenance Routing Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "summary",
+        "--content", "Bundle import audit for retrieval policy bundle review.",
+        "--summary", "Bundle import audit",
+        "--tags", "provenance,bundle,audit",
+        "--confidence", "0.88",
+        "--freshness", "0.82",
+        "--importance", "0.72",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "Bundle import audit",
+        "--limit", "1",
+        "--bundle-consumer", "auto",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      route: {
+        resolvedConsumer: string;
+        profileUsed: string;
+        source: string;
+        warnings: string[];
+      };
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.route.resolvedConsumer, "reviewer");
+    assert.equal(parsed[0]?.route.profileUsed, "reviewer");
+    assert.equal(parsed[0]?.route.source, "auto");
+    assert.ok(parsed[0]?.route.warnings.includes("contains_provenance_memory"));
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI space routing policy can override auto-routing defaults", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-routing-policy-cli-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -3088,6 +3157,7 @@ test("CLI space routing policy can override auto-routing defaults", async () => 
         "--id", spaceId,
         "--routing-prefer-reviewer-on-contested", "false",
         "--routing-prefer-reviewer-on-stale", "false",
+        "--routing-prefer-reviewer-on-provenance", "false",
         "--routing-prefer-planner-on-distilled", "true",
       ]),
       { repository },
@@ -3136,6 +3206,24 @@ test("CLI space routing policy can override auto-routing defaults", async () => 
     );
     const contestedId = contestedResult.lines.find((line) => line.startsWith("id="))?.slice(3);
     assert.ok(contestedId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "summary",
+        "--content", "Bundle import audit for retrieval policy review.",
+        "--summary", "Bundle import audit",
+        "--tags", "provenance,bundle,audit",
+        "--confidence", "0.9",
+        "--freshness", "0.88",
+        "--importance", "0.63",
+      ]),
+      { repository },
+    );
 
     await runCommand(
       parseArgs([

@@ -107,7 +107,7 @@ The bundle layer should also support intent routing:
 - explicit consumer routing when the caller already knows whether the bundle is for planning, execution, or review
 - auto-routing when the memory condition itself signals the right downstream consumer
 - route metadata that explains why a bundle was routed toward planner, executor, reviewer, or balanced handling
-- route warnings derived from stale, superseded, or contested memory hints
+- route warnings derived from stale, superseded, contested, or provenance memory hints
 - per-space routing policy so different memory spaces can adjust how aggressively they favor review, planning, or execution
 
 ### Conflict Handling

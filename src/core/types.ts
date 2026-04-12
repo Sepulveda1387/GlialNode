@@ -111,6 +111,7 @@ export interface MemorySpaceSettings {
   routing?: {
     preferReviewerOnContested?: boolean;
     preferReviewerOnStale?: boolean;
+    preferReviewerOnProvenance?: boolean;
     staleThreshold?: number;
     preferExecutorOnActionable?: boolean;
     preferPlannerOnDistilled?: boolean;

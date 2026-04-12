@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added provenance-aware reviewer routing policy for auto-routed bundles.
 - Added provenance-aware recall annotations and bundle hints for bundle trust summaries.
 - Added provenance audit events for space-scoped preset bundle review and import.
 - Added searchable audit summary records for space-scoped preset bundle review and import.

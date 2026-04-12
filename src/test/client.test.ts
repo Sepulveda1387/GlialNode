@@ -1668,6 +1668,53 @@ test("GlialNodeClient can auto-route bundles toward reviewer context when memory
   }
 });
 
+test("GlialNodeClient can auto-route bundles toward reviewer context when provenance memory is present", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-routing-provenance-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Bundle Provenance Routing Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "summary",
+      content: "Bundle import audit for retrieval policy bundle review.",
+      summary: "Bundle import audit",
+      tags: ["provenance", "bundle", "audit"],
+      confidence: 0.88,
+      freshness: 0.82,
+      importance: 0.72,
+    });
+
+    const bundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "Bundle import audit",
+      limit: 1,
+    }, {
+      bundleConsumer: "auto",
+      primaryLimit: 1,
+      supportLimit: 3,
+    });
+
+    assert.equal(bundles.length, 1);
+    assert.equal(bundles[0]?.route.resolvedConsumer, "reviewer");
+    assert.equal(bundles[0]?.route.profileUsed, "reviewer");
+    assert.equal(bundles[0]?.route.source, "auto");
+    assert.ok(bundles[0]?.route.warnings.includes("contains_provenance_memory"));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient space routing policy can override auto-routing defaults", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-routing-policy-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -1680,6 +1727,7 @@ test("GlialNodeClient space routing policy can override auto-routing defaults", 
         routing: {
           preferReviewerOnContested: false,
           preferReviewerOnStale: false,
+          preferReviewerOnProvenance: false,
           preferPlannerOnDistilled: true,
         },
       },
@@ -1715,6 +1763,19 @@ test("GlialNodeClient space routing policy can override auto-routing defaults", 
       confidence: 0.58,
       freshness: 0.42,
       importance: 0.67,
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "summary",
+      content: "Bundle import audit for retrieval policy review.",
+      summary: "Bundle import audit",
+      tags: ["provenance", "bundle", "audit"],
+      confidence: 0.9,
+      freshness: 0.88,
+      importance: 0.63,
     });
 
     await client.addLink({
