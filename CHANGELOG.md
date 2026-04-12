@@ -33,6 +33,7 @@
 - Added a local signing-key registry with generation, inspection, public-key export, and named-key bundle signing workflows.
 - Added a local trusted-signer registry so bundle validation can resolve named trust anchors into signer key ids.
 - Added trusted-signer revocation and rotation so trust anchors can be retired or replaced explicitly.
+- Added built-in trust policy profiles for reusable bundle provenance enforcement modes.
 - Added channel-based space creation and configuration so spaces can consume a named preset lane directly.
 - Added default preset channels so local preset consumers can resolve a recommended lane without specifying it every time.
 - Added preset channel export/import so channel manifests can move between machines or repos.

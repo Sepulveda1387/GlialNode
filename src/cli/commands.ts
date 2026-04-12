@@ -156,6 +156,7 @@ export function usageText(): string {
     "  glialnode preset trust-show --name <name> [--directory <path>]",
     "  glialnode preset trust-revoke --name <name> [--replaced-by <name>] [--directory <path>]",
     "  glialnode preset trust-rotate --name <name> --input <path> --next-name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
+    "  glialnode preset trust-profile-list",
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
@@ -166,8 +167,8 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
-    "  glialnode preset bundle-show --input <path> [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode preset bundle-show --input <path> [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -746,6 +747,17 @@ async function runPresetCommand(
     };
   }
 
+  if (action === "trust-profile-list") {
+    return {
+      lines: [
+        "profiles=3",
+        "permissive requireSigner=false requireSignature=false anchorsOptional=true",
+        "signed requireSigner=true requireSignature=true anchorsOptional=true",
+        "anchored requireSigner=true requireSignature=true anchorsOptional=false",
+      ],
+    };
+  }
+
   if (action === "trust-revoke") {
     const directory = resolvePresetDirectory(parsed.flags.directory);
     const name = requireFlag(parsed.flags, "name");
@@ -994,7 +1006,14 @@ async function runPresetCommand(
     const imported = parsePresetBundle(readTextFile(inputPath));
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
-    const validation = validatePresetBundle(imported, resolvePresetTrustPolicy(parsePresetTrustPolicy(parsed.flags), directory));
+    const validation = validatePresetBundle(
+      imported,
+      resolvePresetTrustPolicy(
+        parsePresetTrustPolicy(parsed.flags),
+        directory,
+        parseTrustProfileFlag(parsed.flags["trust-profile"]),
+      ),
+    );
 
     for (const preset of imported.history) {
       writePresetHistoryFile(directory, {
@@ -1028,7 +1047,14 @@ async function runPresetCommand(
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const directory = resolvePresetDirectory(parsed.flags.directory);
     const bundle = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(bundle, resolvePresetTrustPolicy(parsePresetTrustPolicy(parsed.flags), directory));
+    const validation = validatePresetBundle(
+      bundle,
+      resolvePresetTrustPolicy(
+        parsePresetTrustPolicy(parsed.flags),
+        directory,
+        parseTrustProfileFlag(parsed.flags["trust-profile"]),
+      ),
+    );
 
     return {
       lines: [
@@ -1906,6 +1932,14 @@ function parsePresetTrustPolicy(flags: Record<string, string>) {
     allowedSignerKeyIds: parseCsvFlag(flags["allow-key-id"]),
     trustedSignerNames: parseCsvFlag(flags["trust-signer"]),
   };
+}
+
+function parseTrustProfileFlag(value: string | undefined): "permissive" | "signed" | "anchored" {
+  if (!value || value === "permissive" || value === "signed" || value === "anchored") {
+    return (value ?? "permissive") as "permissive" | "signed" | "anchored";
+  }
+
+  throw new Error(`Invalid trust profile: ${value}`);
 }
 
 function requireScopeType(value: string | undefined): ScopeType {
@@ -2880,12 +2914,26 @@ function validatePresetBundle(
 function resolvePresetTrustPolicy(
   trustPolicy: ReturnType<typeof parsePresetTrustPolicy>,
   directory: string,
+  trustProfile: "permissive" | "signed" | "anchored" = "permissive",
 ) {
-  if (!trustPolicy.trustedSignerNames?.length) {
-    return trustPolicy;
+  const profilePolicy = getPresetTrustProfile(trustProfile);
+  const basePolicy = {
+    ...profilePolicy,
+    ...trustPolicy,
+    allowedOrigins: mergeStringLists(profilePolicy.allowedOrigins, trustPolicy.allowedOrigins),
+    allowedSigners: mergeStringLists(profilePolicy.allowedSigners, trustPolicy.allowedSigners),
+    allowedSignerKeyIds: mergeStringLists(profilePolicy.allowedSignerKeyIds, trustPolicy.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringLists(profilePolicy.trustedSignerNames, trustPolicy.trustedSignerNames),
+  };
+
+  if (!basePolicy.trustedSignerNames?.length) {
+    if (trustProfile === "anchored" && !basePolicy.allowedSignerKeyIds?.length) {
+      throw new Error("Trust profile 'anchored' requires trusted signers or allowed signer key ids.");
+    }
+    return basePolicy;
   }
 
-  const trustedKeyIds = trustPolicy.trustedSignerNames
+  const trustedKeyIds = basePolicy.trustedSignerNames
     .map((name) => {
       const record = readTrustedSignerRecord(directory, name);
       if (record.revokedAt) {
@@ -2895,12 +2943,41 @@ function resolvePresetTrustPolicy(
     });
 
   return {
-    ...trustPolicy,
+    ...basePolicy,
     allowedSignerKeyIds: Array.from(new Set([
-      ...(trustPolicy.allowedSignerKeyIds ?? []),
+      ...(basePolicy.allowedSignerKeyIds ?? []),
       ...trustedKeyIds,
     ])),
   };
+}
+
+function getPresetTrustProfile(profile: "permissive" | "signed" | "anchored"): {
+  requireSigner?: boolean;
+  requireSignature?: boolean;
+  allowedOrigins?: string[];
+  allowedSigners?: string[];
+  allowedSignerKeyIds?: string[];
+  trustedSignerNames?: string[];
+} {
+  switch (profile) {
+    case "permissive":
+      return {};
+    case "signed":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+    case "anchored":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+  }
+}
+
+function mergeStringLists(left?: string[], right?: string[]): string[] | undefined {
+  const merged = [...(left ?? []), ...(right ?? [])];
+  return merged.length > 0 ? Array.from(new Set(merged)) : undefined;
 }
 
 function computePresetBundleChecksum(bundle: ReturnType<typeof parsePresetBundle>): string {

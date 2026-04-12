@@ -406,6 +406,26 @@ test("CLI can manage trusted signers", async () => {
   }
 });
 
+test("CLI lists trust profiles", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-trust-profiles-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const result = await runCommand(
+      parseArgs(["preset", "trust-profile-list"]),
+      { repository },
+    );
+    assert.match(result.lines.join("\n"), /profiles=3/);
+    assert.match(result.lines.join("\n"), /permissive/);
+    assert.match(result.lines.join("\n"), /signed/);
+    assert.match(result.lines.join("\n"), /anchored/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI can roll back a local preset to an earlier version", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-rollback-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -986,7 +1006,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     assert.match(exported.lines.join("\n"), /checksum=/);
 
     const shown = await runCommand(
-      parseArgs(["preset", "bundle-show", "--input", bundlePath]),
+      parseArgs(["preset", "bundle-show", "--input", bundlePath, "--trust-profile", "signed"]),
       { repository },
     );
     assert.match(shown.lines.join("\n"), /bundleFormatVersion=1/);
@@ -1066,6 +1086,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       parseArgs([
         "preset", "bundle-show",
         "--input", bundlePath,
+        "--trust-profile", "anchored",
         "--require-signature",
         "--trust-signer", "team-anchor",
         "--directory", presetDirectory,
@@ -1073,6 +1094,16 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       { repository },
     );
     assert.match(trustedByName.lines.join("\n"), /trusted=true/);
+
+    await assert.rejects(
+      () => runCommand(parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--trust-profile", "anchored",
+        "--directory", presetDirectory,
+      ]), { repository }),
+      /Trust profile 'anchored' requires trusted signers or allowed signer key ids\./,
+    );
 
     await runCommand(
       parseArgs([

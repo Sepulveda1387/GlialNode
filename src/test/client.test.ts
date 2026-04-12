@@ -632,6 +632,14 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     });
     assert.equal(trustedByName.trusted, true);
 
+    const signedProfile = client.validatePresetBundle(bundlePath, undefined, "signed");
+    assert.equal(signedProfile.trusted, true);
+
+    const anchoredProfile = client.validatePresetBundle(bundlePath, {
+      trustedSignerNames: ["team-anchor"],
+    }, "anchored");
+    assert.equal(anchoredProfile.trusted, true);
+
     client.revokeTrustedSigner("team-anchor");
     assert.throws(
       () => client.validatePresetBundle(bundlePath, {
@@ -639,6 +647,10 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
         trustedSignerNames: ["team-anchor"],
       }),
       /Trusted signer is revoked: team-anchor/,
+    );
+    assert.throws(
+      () => client.validatePresetBundle(bundlePath, undefined, "anchored"),
+      /Trust profile 'anchored' requires trusted signers or allowed signer key ids\./,
     );
 
     assert.throws(

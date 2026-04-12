@@ -268,6 +268,8 @@ export interface PresetBundleTrustPolicy {
   trustedSignerNames?: string[];
 }
 
+export type PresetBundleTrustProfileName = "permissive" | "signed" | "anchored";
+
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
 const GLIALNODE_VERSION = "0.1.0";
 const GLIALNODE_NODE_ENGINE = ">=24";
@@ -481,6 +483,10 @@ export class GlialNodeClient {
     return listTrustedSignerRecords(resolvedDirectory).map((record) => toTrustedSignerSummary(record));
   }
 
+  listPresetBundleTrustProfiles(): PresetBundleTrustProfileName[] {
+    return ["permissive", "signed", "anchored"];
+  }
+
   getTrustedSigner(name: string, directory?: string): TrustedSignerRecord {
     return readTrustedSignerRecord(resolve(directory ?? this.presetDirectory), name);
   }
@@ -676,11 +682,19 @@ export class GlialNodeClient {
 
   importPresetBundle(
     inputPath: string,
-    options: { directory?: string; name?: string; trustPolicy?: PresetBundleTrustPolicy } = {},
+    options: {
+      directory?: string;
+      name?: string;
+      trustPolicy?: PresetBundleTrustPolicy;
+      trustProfile?: PresetBundleTrustProfileName;
+    } = {},
   ): PresetBundle {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
-    validatePresetBundle(bundle, resolvePresetBundleTrustPolicy(options.trustPolicy, resolvedDirectory));
+    validatePresetBundle(
+      bundle,
+      resolvePresetBundleTrustPolicy(options.trustPolicy, resolvedDirectory, options.trustProfile),
+    );
     const nextName = options.name ?? bundle.preset.name;
     const history = bundle.history.map((preset) => ({
       ...preset,
@@ -710,10 +724,14 @@ export class GlialNodeClient {
     };
   }
 
-  validatePresetBundle(inputPath: string, trustPolicy?: PresetBundleTrustPolicy): PresetBundleValidation {
+  validatePresetBundle(
+    inputPath: string,
+    trustPolicy?: PresetBundleTrustPolicy,
+    trustProfile?: PresetBundleTrustProfileName,
+  ): PresetBundleValidation {
     const resolvedDirectory = resolve(this.presetDirectory);
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
-    return validatePresetBundle(bundle, resolvePresetBundleTrustPolicy(trustPolicy, resolvedDirectory));
+    return validatePresetBundle(bundle, resolvePresetBundleTrustPolicy(trustPolicy, resolvedDirectory, trustProfile));
   }
 
   promotePresetChannel(
@@ -1654,12 +1672,26 @@ function validatePresetBundle(
 function resolvePresetBundleTrustPolicy(
   trustPolicy: PresetBundleTrustPolicy | undefined,
   directory: string,
+  trustProfile: PresetBundleTrustProfileName = "permissive",
 ): PresetBundleTrustPolicy {
-  if (!trustPolicy?.trustedSignerNames?.length) {
-    return trustPolicy ?? {};
+  const profilePolicy = getPresetBundleTrustProfile(trustProfile);
+  const basePolicy: PresetBundleTrustPolicy = {
+    ...profilePolicy,
+    ...trustPolicy,
+    allowedOrigins: mergeStringArrays(profilePolicy.allowedOrigins, trustPolicy?.allowedOrigins),
+    allowedSigners: mergeStringArrays(profilePolicy.allowedSigners, trustPolicy?.allowedSigners),
+    allowedSignerKeyIds: mergeStringArrays(profilePolicy.allowedSignerKeyIds, trustPolicy?.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringArrays(profilePolicy.trustedSignerNames, trustPolicy?.trustedSignerNames),
+  };
+
+  if (!basePolicy.trustedSignerNames?.length) {
+    if (trustProfile === "anchored" && !basePolicy.allowedSignerKeyIds?.length) {
+      throw new Error("Trust profile 'anchored' requires trusted signers or allowed signer key ids.");
+    }
+    return basePolicy;
   }
 
-  const trustedKeyIds = trustPolicy.trustedSignerNames
+  const trustedKeyIds = basePolicy.trustedSignerNames
     .map((name) => {
       const record = readTrustedSignerRecord(directory, name);
       if (record.revokedAt) {
@@ -1668,14 +1700,41 @@ function resolvePresetBundleTrustPolicy(
       return record.keyId;
     });
   const allowedSignerKeyIds = [
-    ...(trustPolicy.allowedSignerKeyIds ?? []),
+    ...(basePolicy.allowedSignerKeyIds ?? []),
     ...trustedKeyIds,
   ];
 
   return {
-    ...trustPolicy,
+    ...basePolicy,
     allowedSignerKeyIds: Array.from(new Set(allowedSignerKeyIds)),
   };
+}
+
+function getPresetBundleTrustProfile(profile: PresetBundleTrustProfileName): PresetBundleTrustPolicy {
+  switch (profile) {
+    case "permissive":
+      return {};
+    case "signed":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+    case "anchored":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+    default:
+      return {};
+  }
+}
+
+function mergeStringArrays(
+  left: string[] | undefined,
+  right: string[] | undefined,
+): string[] | undefined {
+  const merged = [...(left ?? []), ...(right ?? [])];
+  return merged.length > 0 ? Array.from(new Set(merged)) : undefined;
 }
 
 function computePresetBundleChecksum(bundle: PresetBundle): string {
