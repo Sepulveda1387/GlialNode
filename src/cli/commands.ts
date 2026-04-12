@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 
 import { createId } from "../core/ids.js";
 import {
@@ -154,6 +155,7 @@ export function usageText(): string {
     "  glialnode preset channel-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
+    "    [--origin <text>] [--signer <text>]",
     "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-show --input <path>",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
@@ -702,12 +704,17 @@ async function runPresetCommand(
         bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
         glialnodeVersion: GLIALNODE_VERSION,
         nodeEngine: GLIALNODE_NODE_ENGINE,
+        origin: parsed.flags.origin,
+        signer: parsed.flags.signer,
+        checksumAlgorithm: "sha256" as const,
+        checksum: "",
       },
       exportedAt: new Date().toISOString(),
       preset: loadRegisteredPreset(name, directory),
       history: listRegisteredPresetHistory(name, directory),
       channels: readPresetChannels(directory, name),
     };
+    bundle.metadata.checksum = computePresetBundleChecksum(bundle);
     const outputPath = resolve(requireFlag(parsed.flags, "output"));
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, JSON.stringify(bundle, null, 2), "utf8");
@@ -718,6 +725,7 @@ async function runPresetCommand(
         `name=${name}`,
         `output=${outputPath}`,
         `versions=${bundle.history.length}`,
+        `checksum=${bundle.metadata.checksum}`,
       ],
     };
   }
@@ -767,6 +775,10 @@ async function runPresetCommand(
         `bundleFormatVersion=${bundle.metadata.bundleFormatVersion}`,
         `glialnodeVersion=${bundle.metadata.glialnodeVersion}`,
         `nodeEngine=${bundle.metadata.nodeEngine}`,
+        `origin=${bundle.metadata.origin ?? ""}`,
+        `signer=${bundle.metadata.signer ?? ""}`,
+        `checksumAlgorithm=${bundle.metadata.checksumAlgorithm}`,
+        `checksum=${bundle.metadata.checksum}`,
         `versions=${bundle.history.length}`,
         `defaultChannel=${bundle.channels.defaultChannel ?? ""}`,
         `warnings=${validation.warnings.length}`,
@@ -2194,6 +2206,10 @@ function parsePresetBundle(value: string): {
     bundleFormatVersion: number;
     glialnodeVersion: string;
     nodeEngine: string;
+    origin?: string;
+    signer?: string;
+    checksumAlgorithm: "sha256";
+    checksum: string;
   };
   exportedAt: string;
   preset: ReturnType<typeof parseSpacePresetDefinition>;
@@ -2223,11 +2239,19 @@ function parsePresetBundleMetadata(value: string): {
   bundleFormatVersion: number;
   glialnodeVersion: string;
   nodeEngine: string;
+  origin?: string;
+  signer?: string;
+  checksumAlgorithm: "sha256";
+  checksum: string;
 } {
   const parsed = JSON.parse(value) as {
     bundleFormatVersion?: unknown;
     glialnodeVersion?: unknown;
     nodeEngine?: unknown;
+    origin?: unknown;
+    signer?: unknown;
+    checksumAlgorithm?: unknown;
+    checksum?: unknown;
   };
 
   return {
@@ -2240,6 +2264,10 @@ function parsePresetBundleMetadata(value: string): {
     nodeEngine: typeof parsed.nodeEngine === "string"
       ? parsed.nodeEngine
       : GLIALNODE_NODE_ENGINE,
+    origin: typeof parsed.origin === "string" ? parsed.origin : undefined,
+    signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
+    checksumAlgorithm: parsed.checksumAlgorithm === "sha256" ? "sha256" : "sha256",
+    checksum: typeof parsed.checksum === "string" ? parsed.checksum : "",
   };
 }
 
@@ -2263,10 +2291,48 @@ function validatePresetBundle(bundle: ReturnType<typeof parsePresetBundle>) {
     );
   }
 
+  const expectedChecksum = computePresetBundleChecksum(bundle);
+  if (bundle.metadata.checksum !== expectedChecksum) {
+    throw new Error("Preset bundle checksum verification failed.");
+  }
+
   return {
     metadata: bundle.metadata,
     warnings,
   };
+}
+
+function computePresetBundleChecksum(bundle: ReturnType<typeof parsePresetBundle>): string {
+  const checksumPayload = {
+    ...bundle,
+    metadata: {
+      ...bundle.metadata,
+      checksum: "",
+    },
+  };
+
+  return createHash("sha256")
+    .update(stableStringify(checksumPayload))
+    .digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortJsonValue(entry));
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => [key, sortJsonValue(entryValue)]);
+    return Object.fromEntries(entries);
+  }
+
+  return value;
 }
 
 function toPresetFileName(name: string): string {

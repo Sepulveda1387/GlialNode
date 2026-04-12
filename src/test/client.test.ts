@@ -490,6 +490,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
   const presetPath = join(tempDirectory, "execution-first.json");
   const bundlePath = join(tempDirectory, "team-executor.bundle.json");
   const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
+  const tamperedBundlePath = join(tempDirectory, "team-executor.tampered.bundle.json");
   const presetDirectory = join(tempDirectory, "presets");
   const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
 
@@ -500,10 +501,15 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       version: "2.1.0",
     });
 
-    const bundle = client.exportPresetBundle("team-executor", bundlePath);
+    const bundle = client.exportPresetBundle("team-executor", bundlePath, undefined, {
+      origin: "local-dev",
+      signer: "GlialNode Test",
+    });
     const validation = client.validatePresetBundle(bundlePath);
     assert.equal(validation.metadata.bundleFormatVersion, 1);
     assert.equal(validation.warnings.length, 0);
+    assert.equal(validation.metadata.origin, "local-dev");
+    assert.equal(validation.metadata.signer, "GlialNode Test");
 
     const invalidBundle = {
       ...bundle,
@@ -521,6 +527,20 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.throws(
       () => client.importPresetBundle(invalidBundlePath),
       /Unsupported preset bundle format: 999/,
+    );
+
+    const tamperedBundle = {
+      ...bundle,
+      preset: {
+        ...bundle.preset,
+        summary: "tampered",
+      },
+    };
+    writeFileSync(tamperedBundlePath, JSON.stringify(tamperedBundle, null, 2), "utf8");
+
+    assert.throws(
+      () => client.validatePresetBundle(tamperedBundlePath),
+      /Preset bundle checksum verification failed/,
     );
   } finally {
     client.close();

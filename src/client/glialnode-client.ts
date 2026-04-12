@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 
 import type {
   CompactionPolicy,
@@ -196,6 +197,10 @@ export interface PresetBundleMetadata {
   bundleFormatVersion: number;
   glialnodeVersion: string;
   nodeEngine: string;
+  origin?: string;
+  signer?: string;
+  checksumAlgorithm: "sha256";
+  checksum: string;
 }
 
 export interface PresetBundleValidation {
@@ -412,19 +417,29 @@ export class GlialNodeClient {
     return state;
   }
 
-  exportPresetBundle(name: string, outputPath: string, directory?: string): PresetBundle {
+  exportPresetBundle(
+    name: string,
+    outputPath: string,
+    directory?: string,
+    trust?: { origin?: string; signer?: string },
+  ): PresetBundle {
     const resolvedDirectory = resolve(directory ?? this.presetDirectory);
     const bundle: PresetBundle = {
       metadata: {
         bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
         glialnodeVersion: GLIALNODE_VERSION,
         nodeEngine: GLIALNODE_NODE_ENGINE,
+        origin: trust?.origin,
+        signer: trust?.signer,
+        checksumAlgorithm: "sha256",
+        checksum: "",
       },
       exportedAt: new Date().toISOString(),
       preset: this.getRegisteredPreset(name, resolvedDirectory),
       history: this.listRegisteredPresetHistory(name, resolvedDirectory),
       channels: this.listPresetChannels(name, resolvedDirectory),
     };
+    bundle.metadata.checksum = computePresetBundleChecksum(bundle);
     const resolvedOutputPath = resolve(outputPath);
     mkdirSync(dirname(resolvedOutputPath), { recursive: true });
     writeFileSync(resolvedOutputPath, JSON.stringify(bundle, null, 2), "utf8");
@@ -1151,6 +1166,10 @@ function parsePresetBundleMetadata(value: string): PresetBundleMetadata {
     bundleFormatVersion: typeof parsed.bundleFormatVersion === "number" ? parsed.bundleFormatVersion : PRESET_BUNDLE_FORMAT_VERSION,
     glialnodeVersion: typeof parsed.glialnodeVersion === "string" ? parsed.glialnodeVersion : GLIALNODE_VERSION,
     nodeEngine: typeof parsed.nodeEngine === "string" ? parsed.nodeEngine : GLIALNODE_NODE_ENGINE,
+    origin: typeof parsed.origin === "string" ? parsed.origin : undefined,
+    signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
+    checksumAlgorithm: parsed.checksumAlgorithm === "sha256" ? "sha256" : "sha256",
+    checksum: typeof parsed.checksum === "string" ? parsed.checksum : "",
   };
 }
 
@@ -1174,10 +1193,48 @@ function validatePresetBundle(bundle: PresetBundle): PresetBundleValidation {
     );
   }
 
+  const expectedChecksum = computePresetBundleChecksum(bundle);
+  if (bundle.metadata.checksum !== expectedChecksum) {
+    throw new Error("Preset bundle checksum verification failed.");
+  }
+
   return {
     metadata: bundle.metadata,
     warnings,
   };
+}
+
+function computePresetBundleChecksum(bundle: PresetBundle): string {
+  const checksumPayload = {
+    ...bundle,
+    metadata: {
+      ...bundle.metadata,
+      checksum: "",
+    },
+  };
+
+  return createHash("sha256")
+    .update(stableStringify(checksumPayload))
+    .digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortJsonValue(entry));
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => [key, sortJsonValue(entryValue)]);
+    return Object.fromEntries(entries);
+  }
+
+  return value;
 }
 
 function mergeSpaceSettings(

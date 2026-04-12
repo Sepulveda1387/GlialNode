@@ -822,6 +822,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
   const presetPath = join(tempDirectory, "execution-first.json");
   const bundlePath = join(tempDirectory, "team-executor.bundle.json");
   const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
+  const tamperedBundlePath = join(tempDirectory, "team-executor.tampered.bundle.json");
   const presetDirectory = join(tempDirectory, "source-presets");
   const repository = createRepository(databasePath);
 
@@ -847,10 +848,13 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
         "--name", "team-executor",
         "--output", bundlePath,
         "--directory", presetDirectory,
+        "--origin", "local-dev",
+        "--signer", "GlialNode Test",
       ]),
       { repository },
     );
     assert.equal(exported.lines[0], "Preset bundle exported.");
+    assert.match(exported.lines.join("\n"), /checksum=/);
 
     const shown = await runCommand(
       parseArgs(["preset", "bundle-show", "--input", bundlePath]),
@@ -858,6 +862,9 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     );
     assert.match(shown.lines.join("\n"), /bundleFormatVersion=1/);
     assert.match(shown.lines.join("\n"), /warnings=0/);
+    assert.match(shown.lines.join("\n"), /origin=local-dev/);
+    assert.match(shown.lines.join("\n"), /signer=GlialNode Test/);
+    assert.match(shown.lines.join("\n"), /checksumAlgorithm=sha256/);
 
     const bundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
       metadata: { bundleFormatVersion: number };
@@ -872,6 +879,17 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     await assert.rejects(
       () => runCommand(parseArgs(["preset", "bundle-import", "--input", invalidBundlePath]), { repository }),
       /Unsupported preset bundle format: 999/,
+    );
+
+    const tamperedBundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
+      preset: { summary: string };
+    };
+    tamperedBundle.preset.summary = "tampered";
+    writeFileSync(tamperedBundlePath, JSON.stringify(tamperedBundle, null, 2), "utf8");
+
+    await assert.rejects(
+      () => runCommand(parseArgs(["preset", "bundle-show", "--input", tamperedBundlePath]), { repository }),
+      /Preset bundle checksum verification failed/,
     );
   } finally {
     repository.close();
