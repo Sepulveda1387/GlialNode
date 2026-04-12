@@ -146,12 +146,12 @@ export function usageText(): string {
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
     "  glialnode preset channel-show --name <name> --channel <name> [--directory <path>]",
     "  glialnode preset channel-list --name <name> [--directory <path>]",
-    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
+    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -209,6 +209,9 @@ async function runSpaceCommand(
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
+    const channelPreset = parsed.flags["preset-local"] && parsed.flags["preset-channel"]
+      ? resolvePresetChannel(parsed.flags["preset-local"], parsed.flags["preset-channel"], parsed.flags["preset-directory"])
+      : undefined;
 
     await context.repository.createSpace({
       id,
@@ -216,6 +219,7 @@ async function runSpaceCommand(
       description: parsed.flags.description,
       settings: mergeSpaceSettings(
         preset ? getSpacePreset(preset) : undefined,
+        channelPreset?.settings,
         registeredPreset?.settings,
         presetDefinition?.settings,
       ),
@@ -267,6 +271,9 @@ async function runSpaceCommand(
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
+    const channelPreset = parsed.flags["preset-local"] && parsed.flags["preset-channel"]
+      ? resolvePresetChannel(parsed.flags["preset-local"], parsed.flags["preset-channel"], parsed.flags["preset-directory"])
+      : undefined;
     const settingsFromJson = parsed.flags.settings ? parseSettingsFlag(parsed.flags.settings) : {};
     const settingsFromFlags = mergeSpaceSettings(
       undefined,
@@ -280,6 +287,7 @@ async function runSpaceCommand(
     const mergedSettings = mergeSpaceSettings(
       space.settings,
       preset ? getSpacePreset(preset) : undefined,
+      channelPreset?.settings,
       registeredPreset?.settings,
       presetDefinition?.settings,
       settingsFromJson,
@@ -1919,6 +1927,17 @@ function loadRegisteredPreset(name: string, directory: string | undefined) {
   }
 
   return preset;
+}
+
+function resolvePresetChannel(name: string, channel: string, directory: string | undefined) {
+  const resolvedDirectory = resolvePresetDirectory(directory);
+  const state = readPresetChannels(resolvedDirectory, name);
+  const version = state.channels[channel];
+  if (!version) {
+    throw new Error(`Unknown preset channel for ${name}: ${channel}`);
+  }
+
+  return requirePresetHistoryVersion(listRegisteredPresetHistory(name, resolvedDirectory), name, version);
 }
 
 function listRegisteredPresetHistory(name: string, directory: string | undefined) {

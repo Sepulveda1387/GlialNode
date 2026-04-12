@@ -446,6 +446,101 @@ test("CLI can promote preset versions into named channels", async () => {
   }
 });
 
+test("CLI can create and configure spaces from preset channels", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-channel-space-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const alternatePresetPath = join(tempDirectory, "planning-heavy.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const createSpaceResult = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Channel Space",
+        "--preset-local", "team-executor",
+        "--preset-channel", "stable",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const createdSpace = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId]),
+      { repository },
+    );
+    assert.match(createdSpace.lines.join("\n"), /"preferPlannerOnDistilled":false/);
+
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "planning-heavy", "--output", alternatePresetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", alternatePresetPath,
+        "--name", "team-executor",
+        "--version", "2.2.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "candidate",
+        "--version", "2.2.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const configured = await runCommand(
+      parseArgs([
+        "space", "configure",
+        "--id", spaceId,
+        "--preset-local", "team-executor",
+        "--preset-channel", "candidate",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.match(configured.lines.join("\n"), /"preferPlannerOnDistilled":true/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

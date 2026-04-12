@@ -28,6 +28,7 @@
 - Added preset diffing so built-in, local, and file-backed brain styles can be compared across metadata and policy settings.
 - Added preset rollback so a registered local brain style can be restored to an earlier version from history.
 - Added preset release channels so registered brain styles can promote versions into lanes like `stable` and `candidate`.
+- Added channel-based space creation and configuration so spaces can consume a named preset lane directly.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

@@ -91,6 +91,9 @@ export interface CreateSpaceInput {
   name: string;
   description?: string;
   preset?: SpacePresetName;
+  presetLocalName?: string;
+  presetChannel?: string;
+  presetDirectory?: string;
   presetDefinition?: SpacePresetDefinition;
   settings?: MemorySpaceSettings;
 }
@@ -98,6 +101,9 @@ export interface CreateSpaceInput {
 export interface ConfigureSpaceInput {
   spaceId: string;
   preset?: SpacePresetName;
+  presetLocalName?: string;
+  presetChannel?: string;
+  presetDirectory?: string;
   presetDefinition?: SpacePresetDefinition;
   settings?: MemorySpaceSettings;
   compaction?: Partial<CompactionPolicy>;
@@ -203,8 +209,16 @@ export class GlialNodeClient {
 
   async createSpace(input: CreateSpaceInput): Promise<MemorySpace> {
     const timestamp = new Date().toISOString();
+    const channelPreset =
+      input.presetLocalName && input.presetChannel
+        ? this.resolvePresetChannel(input.presetLocalName, {
+            channel: input.presetChannel,
+            directory: input.presetDirectory,
+          })
+        : undefined;
     const settings = mergeSpaceSettings(
       input.preset ? getSpacePreset(input.preset) : undefined,
+      channelPreset?.settings,
       input.presetDefinition?.settings,
       input.settings,
     );
@@ -376,9 +390,17 @@ export class GlialNodeClient {
 
   async configureSpace(input: ConfigureSpaceInput): Promise<MemorySpace> {
     const space = await requireSpace(this.repository, input.spaceId);
+    const channelPreset =
+      input.presetLocalName && input.presetChannel
+        ? this.resolvePresetChannel(input.presetLocalName, {
+            channel: input.presetChannel,
+            directory: input.presetDirectory,
+          })
+        : undefined;
     const settings = mergeSpaceSettings(
       space.settings,
       input.preset ? getSpacePreset(input.preset) : undefined,
+      channelPreset?.settings,
       input.presetDefinition?.settings,
       input.settings,
       mergeSpaceSettings(

@@ -198,6 +198,8 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset promote --name team-executor --channel stable --version 2.1.0`
 - `glialnode preset channel-list --name team-executor`
 - `glialnode preset channel-show --name team-executor --channel stable`
+- `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
+- `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
 
 Preset files and registered local presets can also carry provenance metadata like `version`, `author`, `source`, `createdAt`, and `updatedAt`, and the local registry now keeps versioned snapshot history for each registered preset. That gives a shared brain style some lineage instead of treating every update like an overwrite with no memory of what came before.
 
@@ -618,6 +620,9 @@ glialnode preset show --input ./execution-first.json
 glialnode preset register --input ./execution-first.json --name team-executor
 glialnode preset local-list
 glialnode preset local-show --name team-executor
+glialnode preset promote --name team-executor --channel stable --version 2.1.0
+glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
+glialnode space configure --id <space-id> --preset-local team-executor --preset-channel stable
 glialnode space create --name "Registry Memory" --preset-local team-executor
 glialnode space create --name "Custom Memory" --preset-file ./execution-first.json
 glialnode scope add --space-id <space-id> --type agent --label planner

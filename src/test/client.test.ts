@@ -291,6 +291,56 @@ test("GlialNodeClient can promote preset versions into named channels", async ()
   }
 });
 
+test("GlialNodeClient can create and configure spaces from preset channels", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-channel-space-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const alternatePresetPath = join(tempDirectory, "planning-heavy.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+    client.promotePresetChannel("team-executor", {
+      channel: "stable",
+      version: "2.1.0",
+    });
+
+    const created = await client.createSpace({
+      name: "Channel Space",
+      presetLocalName: "team-executor",
+      presetChannel: "stable",
+    });
+    assert.ok(created.settings);
+    assert.equal(created.settings.routing?.preferPlannerOnDistilled, false);
+
+    client.exportPreset("planning-heavy", alternatePresetPath);
+    client.registerPreset(alternatePresetPath, {
+      name: "team-executor",
+      version: "2.2.0",
+    });
+    client.promotePresetChannel("team-executor", {
+      channel: "candidate",
+      version: "2.2.0",
+    });
+
+    const configured = await client.configureSpace({
+      spaceId: created.id,
+      presetLocalName: "team-executor",
+      presetChannel: "candidate",
+    });
+    assert.ok(configured.settings);
+    assert.equal(configured.settings.routing?.preferPlannerOnDistilled, true);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
