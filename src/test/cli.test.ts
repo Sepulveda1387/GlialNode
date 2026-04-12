@@ -620,6 +620,85 @@ test("CLI can use a preset default channel for space setup", async () => {
   }
 });
 
+test("CLI can export and import preset channel manifests", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-channel-io-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const manifestPath = join(tempDirectory, "channels.json");
+  const sourcePresetDirectory = join(tempDirectory, "source-presets");
+  const targetPresetDirectory = join(tempDirectory, "target-presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--version", "2.1.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "channel-default",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+
+    const exported = await runCommand(
+      parseArgs([
+        "preset", "channel-export",
+        "--name", "team-executor",
+        "--output", manifestPath,
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(exported.lines[0], "Preset channels exported.");
+
+    const imported = await runCommand(
+      parseArgs([
+        "preset", "channel-import",
+        "--input", manifestPath,
+        "--name", "team-executor-copy",
+        "--directory", targetPresetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(imported.lines[0], "Preset channels imported.");
+    assert.match(imported.lines.join("\n"), /defaultChannel=stable/);
+
+    const listed = await runCommand(
+      parseArgs(["preset", "channel-list", "--name", "team-executor-copy", "--directory", targetPresetDirectory]),
+      { repository },
+    );
+    assert.match(listed.lines.join("\n"), /defaultChannel=stable/);
+    assert.match(listed.lines.join("\n"), /stable=2.1.0/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

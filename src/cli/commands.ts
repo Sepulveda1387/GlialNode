@@ -147,6 +147,8 @@ export function usageText(): string {
     "  glialnode preset channel-show --name <name> [--channel <name>] [--directory <path>]",
     "  glialnode preset channel-list --name <name> [--directory <path>]",
     "  glialnode preset channel-default --name <name> --channel <name> [--directory <path>]",
+    "  glialnode preset channel-export --name <name> --output <path> [--directory <path>]",
+    "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -606,6 +608,7 @@ async function runPresetCommand(
     requirePresetHistoryVersion(listRegisteredPresetHistory(name, directory), name, version);
     const current = readPresetChannels(directory, name);
     const next = {
+      ...current,
       name,
       channels: {
         ...current.channels,
@@ -643,6 +646,43 @@ async function runPresetCommand(
         "Preset default channel set.",
         `name=${name}`,
         `defaultChannel=${channel}`,
+      ],
+    };
+  }
+
+  if (action === "channel-export") {
+    const name = requireFlag(parsed.flags, "name");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const state = readPresetChannels(directory, name);
+    const outputPath = resolve(requireFlag(parsed.flags, "output"));
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, JSON.stringify(state, null, 2), "utf8");
+
+    return {
+      lines: [
+        "Preset channels exported.",
+        `name=${name}`,
+        `output=${outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "channel-import") {
+    const inputPath = resolve(requireFlag(parsed.flags, "input"));
+    const imported = parsePresetChannelState(readTextFile(inputPath));
+    const state = {
+      ...imported,
+      name: parsed.flags.name ?? imported.name,
+    };
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    writePresetChannels(directory, state);
+
+    return {
+      lines: [
+        "Preset channels imported.",
+        `name=${state.name}`,
+        `channels=${Object.keys(state.channels).length}`,
+        `defaultChannel=${state.defaultChannel ?? ""}`,
       ],
     };
   }
@@ -2014,13 +2054,10 @@ function readPresetChannels(directory: string, name: string): { name: string; ch
     };
   }
 
-  const parsed = JSON.parse(readTextFile(channelsPath)) as { channels?: Record<string, string> };
+  const parsed = parsePresetChannelState(readTextFile(channelsPath));
   return {
+    ...parsed,
     name,
-    channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
-    defaultChannel: "defaultChannel" in parsed && typeof (parsed as { defaultChannel?: unknown }).defaultChannel === "string"
-      ? (parsed as { defaultChannel?: string }).defaultChannel
-      : undefined,
   };
 }
 
@@ -2029,6 +2066,22 @@ function writePresetChannels(directory: string, state: { name: string; channels:
   mkdirSync(channelsDirectory, { recursive: true });
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
   writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
+}
+
+function parsePresetChannelState(value: string): { name: string; channels: Record<string, string>; defaultChannel?: string } {
+  const parsed = JSON.parse(value) as {
+    name?: unknown;
+    channels?: unknown;
+    defaultChannel?: unknown;
+  };
+
+  return {
+    name: typeof parsed.name === "string" ? parsed.name : "preset",
+    channels: parsed.channels && typeof parsed.channels === "object" && !Array.isArray(parsed.channels)
+      ? { ...(parsed.channels as Record<string, string>) }
+      : {},
+    defaultChannel: typeof parsed.defaultChannel === "string" ? parsed.defaultChannel : undefined,
+  };
 }
 
 function toPresetFileName(name: string): string {

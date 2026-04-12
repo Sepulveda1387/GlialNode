@@ -378,6 +378,50 @@ test("GlialNodeClient can use a preset default channel for space setup", async (
   }
 });
 
+test("GlialNodeClient can export and import preset channel manifests", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-channel-io-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const manifestPath = join(tempDirectory, "channels.json");
+  const sourcePresetDirectory = join(tempDirectory, "source-presets");
+  const targetPresetDirectory = join(tempDirectory, "target-presets");
+  const sourceClient = new GlialNodeClient({ filename: databasePath, presetDirectory: sourcePresetDirectory });
+  const targetClient = new GlialNodeClient({ filename: databasePath, presetDirectory: targetPresetDirectory });
+
+  try {
+    sourceClient.exportPreset("execution-first", presetPath);
+    sourceClient.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+    sourceClient.promotePresetChannel("team-executor", {
+      channel: "stable",
+      version: "2.1.0",
+    });
+    sourceClient.setDefaultPresetChannel("team-executor", {
+      channel: "stable",
+    });
+
+    const exported = sourceClient.exportPresetChannels("team-executor", manifestPath);
+    assert.equal(exported.defaultChannel, "stable");
+
+    const imported = targetClient.importPresetChannels(manifestPath, {
+      name: "team-executor-copy",
+    });
+    assert.equal(imported.name, "team-executor-copy");
+    assert.equal(imported.defaultChannel, "stable");
+    assert.equal(imported.channels.stable, "2.1.0");
+
+    const listed = targetClient.listPresetChannels("team-executor-copy");
+    assert.equal(listed.defaultChannel, "stable");
+    assert.equal(listed.channels.stable, "2.1.0");
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");

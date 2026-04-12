@@ -30,6 +30,7 @@
 - Added preset release channels so registered brain styles can promote versions into lanes like `stable` and `candidate`.
 - Added channel-based space creation and configuration so spaces can consume a named preset lane directly.
 - Added default preset channels so local preset consumers can resolve a recommended lane without specifying it every time.
+- Added preset channel export/import so channel manifests can move between machines or repos.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

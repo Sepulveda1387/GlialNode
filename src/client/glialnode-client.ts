@@ -369,6 +369,26 @@ export class GlialNodeClient {
     return next;
   }
 
+  exportPresetChannels(name: string, outputPath: string, directory?: string): PresetChannelState {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    const state = readPresetChannels(resolvedDirectory, name);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, JSON.stringify(state, null, 2), "utf8");
+    return state;
+  }
+
+  importPresetChannels(inputPath: string, options: { directory?: string; name?: string } = {}): PresetChannelState {
+    const parsed = parsePresetChannelState(readFileSync(resolve(inputPath), "utf8"));
+    const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    const state: PresetChannelState = {
+      ...parsed,
+      name: options.name ?? parsed.name,
+    };
+    writePresetChannels(resolvedDirectory, state);
+    return state;
+  }
+
   promotePresetChannel(
     name: string,
     options: { channel: string; version: string; directory?: string },
@@ -1005,11 +1025,10 @@ function readPresetChannels(directory: string, name: string): PresetChannelState
     };
   }
 
-  const parsed = JSON.parse(readFileSync(channelsPath, "utf8")) as Partial<PresetChannelState>;
+  const parsed = parsePresetChannelState(readFileSync(channelsPath, "utf8"));
   return {
+    ...parsed,
     name,
-    channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
-    defaultChannel: typeof parsed.defaultChannel === "string" ? parsed.defaultChannel : undefined,
   };
 }
 
@@ -1018,6 +1037,15 @@ function writePresetChannels(directory: string, state: PresetChannelState): void
   mkdirSync(channelsDirectory, { recursive: true });
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
   writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
+}
+
+function parsePresetChannelState(value: string): PresetChannelState {
+  const parsed = JSON.parse(value) as Partial<PresetChannelState>;
+  return {
+    name: typeof parsed.name === "string" ? parsed.name : "preset",
+    channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
+    defaultChannel: typeof parsed.defaultChannel === "string" ? parsed.defaultChannel : undefined,
+  };
 }
 
 function mergeSpaceSettings(
