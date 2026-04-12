@@ -331,6 +331,54 @@ test("CLI can manage local signing keys", async () => {
   }
 });
 
+test("CLI can manage trusted signers", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-trusted-signers-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const publicKeyPath = join(tempDirectory, "team-executor.public.pem");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "keygen", "--name", "team-executor-key", "--signer", "GlialNode Test", "--directory", presetDirectory]),
+      { repository },
+    );
+    const trustedFromLocal = await runCommand(
+      parseArgs(["preset", "trust-local-key", "--name", "team-executor-key", "--trust-name", "team-anchor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(trustedFromLocal.lines[0], "Trusted signer registered from local key.");
+
+    await runCommand(
+      parseArgs(["preset", "key-export", "--name", "team-executor-key", "--output", publicKeyPath, "--directory", presetDirectory]),
+      { repository },
+    );
+    const trustedFromFile = await runCommand(
+      parseArgs(["preset", "trust-register", "--input", publicKeyPath, "--name", "team-public", "--signer", "GlialNode Test", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(trustedFromFile.lines[0], "Trusted signer registered.");
+
+    const listed = await runCommand(
+      parseArgs(["preset", "trust-list", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(listed.lines.join("\n"), /trustedSigners=2/);
+    assert.match(listed.lines.join("\n"), /team-anchor/);
+    assert.match(listed.lines.join("\n"), /team-public/);
+
+    const shown = await runCommand(
+      parseArgs(["preset", "trust-show", "--name", "team-anchor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(shown.lines.join("\n"), /algorithm=ed25519/);
+    assert.match(shown.lines.join("\n"), /source=signing-key:team-executor-key/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI can roll back a local preset to an earlier version", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-rollback-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -977,6 +1025,27 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       ]), { repository }),
       new RegExp(`Preset bundle trust validation failed: Preset bundle signer key id is not allowed: ${signerKeyId}`),
     );
+
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "team-executor-key",
+        "--trust-name", "team-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const trustedByName = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--require-signature",
+        "--trust-signer", "team-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.match(trustedByName.lines.join("\n"), /trusted=true/);
 
     const invalidSignatureBundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
       metadata: { signature: string };

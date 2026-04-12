@@ -205,6 +205,27 @@ export interface SigningKeySummary {
   updatedAt: string;
 }
 
+export interface TrustedSignerRecord {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  publicKeyPem: string;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TrustedSignerSummary {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PresetBundle {
   metadata: PresetBundleMetadata;
   exportedAt: string;
@@ -240,6 +261,7 @@ export interface PresetBundleTrustPolicy {
   allowedOrigins?: string[];
   allowedSigners?: string[];
   allowedSignerKeyIds?: string[];
+  trustedSignerNames?: string[];
 }
 
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
@@ -395,6 +417,68 @@ export class GlialNodeClient {
     mkdirSync(dirname(resolvedOutputPath), { recursive: true });
     writeFileSync(resolvedOutputPath, record.publicKeyPem, "utf8");
     return toSigningKeySummary(record);
+  }
+
+  trustSigningKey(
+    name: string,
+    options: { trustName?: string; directory?: string; signer?: string; overwrite?: boolean } = {},
+  ): TrustedSignerSummary {
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    const key = this.getSigningKey(name, directory);
+    const trustName = options.trustName ?? name;
+    const existingPath = getTrustedSignerPath(directory, trustName);
+    if (!options.overwrite && existsSync(existingPath)) {
+      throw new Error(`Trusted signer already exists: ${trustName}`);
+    }
+
+    const timestamp = new Date().toISOString();
+    const record: TrustedSignerRecord = {
+      name: trustName,
+      algorithm: "ed25519",
+      signer: options.signer ?? key.signer,
+      keyId: key.keyId,
+      publicKeyPem: key.publicKeyPem,
+      source: `signing-key:${name}`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, record);
+    return toTrustedSignerSummary(record);
+  }
+
+  registerTrustedSignerFromPublicKey(
+    inputPath: string,
+    options: { name: string; directory?: string; signer?: string; source?: string; overwrite?: boolean },
+  ): TrustedSignerSummary {
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    const existingPath = getTrustedSignerPath(directory, options.name);
+    if (!options.overwrite && existsSync(existingPath)) {
+      throw new Error(`Trusted signer already exists: ${options.name}`);
+    }
+
+    const publicKeyPem = readFileSync(resolve(inputPath), "utf8");
+    const timestamp = new Date().toISOString();
+    const record: TrustedSignerRecord = {
+      name: options.name,
+      algorithm: "ed25519",
+      signer: options.signer,
+      keyId: computeSignerKeyId(publicKeyPem),
+      publicKeyPem,
+      source: options.source ?? inputPath,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, record);
+    return toTrustedSignerSummary(record);
+  }
+
+  listTrustedSigners(directory?: string): TrustedSignerSummary[] {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    return listTrustedSignerRecords(resolvedDirectory).map((record) => toTrustedSignerSummary(record));
+  }
+
+  getTrustedSigner(name: string, directory?: string): TrustedSignerRecord {
+    return readTrustedSignerRecord(resolve(directory ?? this.presetDirectory), name);
   }
 
   listRegisteredPresets(directory?: string): SpacePresetDefinition[] {
@@ -555,8 +639,8 @@ export class GlialNodeClient {
     options: { directory?: string; name?: string; trustPolicy?: PresetBundleTrustPolicy } = {},
   ): PresetBundle {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
-    validatePresetBundle(bundle, options.trustPolicy);
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    validatePresetBundle(bundle, resolvePresetBundleTrustPolicy(options.trustPolicy, resolvedDirectory));
     const nextName = options.name ?? bundle.preset.name;
     const history = bundle.history.map((preset) => ({
       ...preset,
@@ -587,8 +671,9 @@ export class GlialNodeClient {
   }
 
   validatePresetBundle(inputPath: string, trustPolicy?: PresetBundleTrustPolicy): PresetBundleValidation {
+    const resolvedDirectory = resolve(this.presetDirectory);
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
-    return validatePresetBundle(bundle, trustPolicy);
+    return validatePresetBundle(bundle, resolvePresetBundleTrustPolicy(trustPolicy, resolvedDirectory));
   }
 
   promotePresetChannel(
@@ -1320,6 +1405,78 @@ function toSigningKeySummary(record: SigningKeyRecord): SigningKeySummary {
   };
 }
 
+function getTrustedSignersDirectory(directory: string): string {
+  return join(directory, ".trusted");
+}
+
+function getTrustedSignerPath(directory: string, name: string): string {
+  return join(getTrustedSignersDirectory(directory), `${toPresetFileName(name)}.json`);
+}
+
+function writeTrustedSignerRecord(directory: string, record: TrustedSignerRecord): void {
+  const trustDirectory = getTrustedSignersDirectory(directory);
+  mkdirSync(trustDirectory, { recursive: true });
+  writeFileSync(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+}
+
+function readTrustedSignerRecord(directory: string, name: string): TrustedSignerRecord {
+  const recordPath = getTrustedSignerPath(directory, name);
+  if (!existsSync(recordPath)) {
+    throw new Error(`Unknown trusted signer: ${name}`);
+  }
+
+  return parseTrustedSignerRecord(readFileSync(recordPath, "utf8"));
+}
+
+function listTrustedSignerRecords(directory: string): TrustedSignerRecord[] {
+  const trustDirectory = getTrustedSignersDirectory(directory);
+  if (!existsSync(trustDirectory)) {
+    return [];
+  }
+
+  return readdirSync(trustDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => parseTrustedSignerRecord(readFileSync(join(trustDirectory, entry), "utf8")))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseTrustedSignerRecord(value: string): TrustedSignerRecord {
+  const parsed = JSON.parse(value) as Partial<TrustedSignerRecord>;
+  if (typeof parsed.name !== "string" || !parsed.name) {
+    throw new Error("Invalid trusted signer record: missing name.");
+  }
+  if (parsed.algorithm !== "ed25519") {
+    throw new Error(`Invalid trusted signer algorithm: ${String(parsed.algorithm ?? "undefined")}`);
+  }
+  if (typeof parsed.publicKeyPem !== "string" || !parsed.publicKeyPem) {
+    throw new Error("Invalid trusted signer record: missing public key.");
+  }
+
+  const timestamp = new Date().toISOString();
+  return {
+    name: parsed.name,
+    algorithm: "ed25519",
+    signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
+    keyId: typeof parsed.keyId === "string" && parsed.keyId ? parsed.keyId : computeSignerKeyId(parsed.publicKeyPem),
+    publicKeyPem: parsed.publicKeyPem,
+    source: typeof parsed.source === "string" ? parsed.source : undefined,
+    createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+  };
+}
+
+function toTrustedSignerSummary(record: TrustedSignerRecord): TrustedSignerSummary {
+  return {
+    name: record.name,
+    algorithm: record.algorithm,
+    signer: record.signer,
+    keyId: record.keyId,
+    source: record.source,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
 function parsePresetChannelState(value: string): PresetChannelState {
   const parsed = JSON.parse(value) as Partial<PresetChannelState>;
   return {
@@ -1447,6 +1604,27 @@ function validatePresetBundle(
     warnings,
     trustWarnings,
     trusted: true,
+  };
+}
+
+function resolvePresetBundleTrustPolicy(
+  trustPolicy: PresetBundleTrustPolicy | undefined,
+  directory: string,
+): PresetBundleTrustPolicy {
+  if (!trustPolicy?.trustedSignerNames?.length) {
+    return trustPolicy ?? {};
+  }
+
+  const trustedKeyIds = trustPolicy.trustedSignerNames
+    .map((name) => readTrustedSignerRecord(directory, name).keyId);
+  const allowedSignerKeyIds = [
+    ...(trustPolicy.allowedSignerKeyIds ?? []),
+    ...trustedKeyIds,
+  ];
+
+  return {
+    ...trustPolicy,
+    allowedSignerKeyIds: Array.from(new Set(allowedSignerKeyIds)),
   };
 }
 

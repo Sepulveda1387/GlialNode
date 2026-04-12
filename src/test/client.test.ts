@@ -151,6 +151,44 @@ test("GlialNodeClient can manage local signing keys", async () => {
   }
 });
 
+test("GlialNodeClient can manage trusted signers", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-trusted-signers-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const publicKeyPath = join(tempDirectory, "team-executor.public.pem");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.generateSigningKey("team-executor-key", {
+      signer: "GlialNode Test",
+    });
+    const trustedFromLocal = client.trustSigningKey("team-executor-key", {
+      trustName: "team-anchor",
+    });
+    assert.equal(trustedFromLocal.name, "team-anchor");
+    assert.equal(trustedFromLocal.signer, "GlialNode Test");
+
+    client.exportSigningPublicKey("team-executor-key", publicKeyPath);
+    const trustedFromFile = client.registerTrustedSignerFromPublicKey(publicKeyPath, {
+      name: "team-public",
+      signer: "GlialNode Test",
+    });
+    assert.equal(trustedFromFile.name, "team-public");
+
+    const listed = client.listTrustedSigners();
+    assert.equal(listed.length, 2);
+    assert.ok(listed.some((entry) => entry.name === "team-anchor"));
+    assert.ok(listed.some((entry) => entry.name === "team-public"));
+
+    const stored = client.getTrustedSigner("team-anchor");
+    assert.equal(stored.keyId, trustedFromLocal.keyId);
+    assert.match(stored.publicKeyPem, /BEGIN PUBLIC KEY/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can diff preset definitions", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-diff-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -524,8 +562,10 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
   const databasePath = join(tempDirectory, "glialnode.sqlite");
   const presetPath = join(tempDirectory, "execution-first.json");
   const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const signerPublicKeyPath = join(tempDirectory, "team-executor.signer.public.pem");
   const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
   const tamperedBundlePath = join(tempDirectory, "team-executor.tampered.bundle.json");
+  const invalidSignatureBundlePath = join(tempDirectory, "team-executor.invalid-signature.bundle.json");
   const presetDirectory = join(tempDirectory, "presets");
   const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
 
@@ -565,6 +605,18 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       allowedSignerKeyIds: [signerKeyId],
     });
     assert.equal(strictValidation.trusted, true);
+
+    writeFileSync(signerPublicKeyPath, bundle.metadata.signerPublicKey ?? publicKeyPem, "utf8");
+    client.registerTrustedSignerFromPublicKey(signerPublicKeyPath, {
+      name: "team-anchor",
+      signer: "GlialNode Test",
+      source: "bundle-test",
+    });
+    const trustedByName = client.validatePresetBundle(bundlePath, {
+      requireSignature: true,
+      trustedSignerNames: ["team-anchor"],
+    });
+    assert.equal(trustedByName.trusted, true);
 
     assert.throws(
       () => client.validatePresetBundle(bundlePath, { allowedOrigins: ["production"] }),

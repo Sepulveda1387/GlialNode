@@ -197,6 +197,10 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset key-list`
 - `glialnode preset key-show --name team-executor-key`
 - `glialnode preset key-export --name team-executor-key --output ./team-executor.public.pem`
+- `glialnode preset trust-local-key --name team-executor-key --trust-name team-anchor`
+- `glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"`
+- `glialnode preset trust-list`
+- `glialnode preset trust-show --name team-anchor`
 - `glialnode preset history --name team-executor`
 - `glialnode preset rollback --name team-executor --to-version 2.1.0`
 - `glialnode preset promote --name team-executor --channel stable --version 2.1.0`
@@ -208,6 +212,7 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>`
+- `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
@@ -635,6 +640,10 @@ glialnode preset keygen --name team-executor-key --signer "GlialNode Test"
 glialnode preset key-list
 glialnode preset key-show --name team-executor-key
 glialnode preset key-export --name team-executor-key --output ./team-executor.public.pem
+glialnode preset trust-local-key --name team-executor-key --trust-name team-anchor
+glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"
+glialnode preset trust-list
+glialnode preset trust-show --name team-anchor
 glialnode preset promote --name team-executor --channel stable --version 2.1.0
 glialnode preset channel-default --name team-executor --channel stable
 glialnode preset channel-export --name team-executor --output ./team-executor.channels.json
@@ -643,6 +652,7 @@ glialnode preset bundle-export --name team-executor --output ./team-executor.bun
 glialnode preset bundle-show --input ./team-executor.bundle.json
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signer --allow-origin local-dev --allow-signer "GlialNode Test"
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>
+glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor

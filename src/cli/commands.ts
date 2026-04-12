@@ -150,6 +150,10 @@ export function usageText(): string {
     "  glialnode preset key-list [--directory <path>]",
     "  glialnode preset key-show --name <name> [--directory <path>]",
     "  glialnode preset key-export --name <name> --output <path> [--directory <path>]",
+    "  glialnode preset trust-local-key --name <key-name> [--trust-name <name>] [--directory <path>] [--overwrite]",
+    "  glialnode preset trust-register --input <path> --name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
+    "  glialnode preset trust-list [--directory <path>]",
+    "  glialnode preset trust-show --name <name> [--directory <path>]",
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
@@ -160,8 +164,8 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
-    "  glialnode preset bundle-show --input <path> [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode preset bundle-show --input <path> [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -649,6 +653,95 @@ async function runPresetCommand(
     };
   }
 
+  if (action === "trust-local-key") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const key = readSigningKeyRecord(directory, requireFlag(parsed.flags, "name"));
+    const trustName = parsed.flags["trust-name"] ?? key.name;
+    const recordPath = getTrustedSignerPath(directory, trustName);
+    if (parsed.flags.overwrite !== "true" && existsSync(recordPath)) {
+      throw new Error(`Trusted signer already exists: ${trustName}`);
+    }
+
+    const timestamp = new Date().toISOString();
+    const record = {
+      name: trustName,
+      algorithm: "ed25519" as const,
+      signer: key.signer,
+      keyId: key.keyId,
+      publicKeyPem: key.publicKeyPem,
+      source: `signing-key:${key.name}`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, record);
+
+    return {
+      lines: [
+        "Trusted signer registered from local key.",
+        `name=${record.name}`,
+        `keyId=${record.keyId}`,
+        `signer=${record.signer ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "trust-register") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const name = requireFlag(parsed.flags, "name");
+    const recordPath = getTrustedSignerPath(directory, name);
+    if (parsed.flags.overwrite !== "true" && existsSync(recordPath)) {
+      throw new Error(`Trusted signer already exists: ${name}`);
+    }
+
+    const publicKeyPem = readTextFile(resolve(requireFlag(parsed.flags, "input")));
+    const timestamp = new Date().toISOString();
+    const record = {
+      name,
+      algorithm: "ed25519" as const,
+      signer: parsed.flags.signer,
+      keyId: computeSignerKeyId(publicKeyPem),
+      publicKeyPem,
+      source: parsed.flags.source ?? requireFlag(parsed.flags, "input"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, record);
+
+    return {
+      lines: [
+        "Trusted signer registered.",
+        `name=${record.name}`,
+        `keyId=${record.keyId}`,
+        `signer=${record.signer ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "trust-list") {
+    const signers = listTrustedSignerRecords(resolvePresetDirectory(parsed.flags.directory));
+    return {
+      lines: [
+        `trustedSigners=${signers.length}`,
+        ...signers.map((record) => `${record.name} ${record.keyId} signer=${record.signer ?? ""}`),
+      ],
+    };
+  }
+
+  if (action === "trust-show") {
+    const record = readTrustedSignerRecord(resolvePresetDirectory(parsed.flags.directory), requireFlag(parsed.flags, "name"));
+    return {
+      lines: [
+        `name=${record.name}`,
+        `algorithm=${record.algorithm}`,
+        `signer=${record.signer ?? ""}`,
+        `keyId=${record.keyId}`,
+        `source=${record.source ?? ""}`,
+        `createdAt=${record.createdAt}`,
+        `updatedAt=${record.updatedAt}`,
+      ],
+    };
+  }
+
   if (action === "history") {
     const history = listRegisteredPresetHistory(requireFlag(parsed.flags, "name"), parsed.flags.directory);
     return {
@@ -830,9 +923,9 @@ async function runPresetCommand(
   if (action === "bundle-import") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const imported = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(imported, parsePresetTrustPolicy(parsed.flags));
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const validation = validatePresetBundle(imported, resolvePresetTrustPolicy(parsePresetTrustPolicy(parsed.flags), directory));
 
     for (const preset of imported.history) {
       writePresetHistoryFile(directory, {
@@ -864,8 +957,9 @@ async function runPresetCommand(
 
   if (action === "bundle-show") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
+    const directory = resolvePresetDirectory(parsed.flags.directory);
     const bundle = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(bundle, parsePresetTrustPolicy(parsed.flags));
+    const validation = validatePresetBundle(bundle, resolvePresetTrustPolicy(parsePresetTrustPolicy(parsed.flags), directory));
 
     return {
       lines: [
@@ -1741,6 +1835,7 @@ function parsePresetTrustPolicy(flags: Record<string, string>) {
     allowedOrigins: parseCsvFlag(flags["allow-origin"]),
     allowedSigners: parseCsvFlag(flags["allow-signer"]),
     allowedSignerKeyIds: parseCsvFlag(flags["allow-key-id"]),
+    trustedSignerNames: parseCsvFlag(flags["trust-signer"]),
   };
 }
 
@@ -2345,6 +2440,106 @@ function listSigningKeyRecords(directory: string): Array<ReturnType<typeof parse
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function getTrustedSignersDirectory(directory: string): string {
+  return join(directory, ".trusted");
+}
+
+function getTrustedSignerPath(directory: string, name: string): string {
+  return join(getTrustedSignersDirectory(directory), `${toPresetFileName(name)}.json`);
+}
+
+function writeTrustedSignerRecord(
+  directory: string,
+  record: {
+    name: string;
+    algorithm: "ed25519";
+    signer?: string;
+    keyId: string;
+    publicKeyPem: string;
+    source?: string;
+    createdAt: string;
+    updatedAt: string;
+  },
+) {
+  const trustDirectory = getTrustedSignersDirectory(directory);
+  mkdirSync(trustDirectory, { recursive: true });
+  writeFileSync(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+}
+
+function readTrustedSignerRecord(directory: string, name: string): {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  publicKeyPem: string;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  const recordPath = getTrustedSignerPath(directory, name);
+  if (!existsSync(recordPath)) {
+    throw new Error(`Unknown trusted signer: ${name}`);
+  }
+
+  return parseTrustedSignerRecord(readTextFile(recordPath));
+}
+
+function listTrustedSignerRecords(directory: string): Array<ReturnType<typeof parseTrustedSignerRecord>> {
+  const trustDirectory = getTrustedSignersDirectory(directory);
+  if (!existsSync(trustDirectory)) {
+    return [];
+  }
+
+  return readdirSync(trustDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => parseTrustedSignerRecord(readTextFile(join(trustDirectory, entry))))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseTrustedSignerRecord(value: string): {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  publicKeyPem: string;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  const parsed = JSON.parse(value) as {
+    name?: unknown;
+    algorithm?: unknown;
+    signer?: unknown;
+    keyId?: unknown;
+    publicKeyPem?: unknown;
+    source?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+  };
+
+  if (typeof parsed.name !== "string" || !parsed.name) {
+    throw new Error("Invalid trusted signer record: missing name.");
+  }
+  if (parsed.algorithm !== "ed25519") {
+    throw new Error(`Invalid trusted signer algorithm: ${String(parsed.algorithm ?? "undefined")}`);
+  }
+  if (typeof parsed.publicKeyPem !== "string" || !parsed.publicKeyPem) {
+    throw new Error("Invalid trusted signer record: missing public key.");
+  }
+
+  const timestamp = new Date().toISOString();
+  return {
+    name: parsed.name,
+    algorithm: "ed25519",
+    signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
+    keyId: typeof parsed.keyId === "string" && parsed.keyId ? parsed.keyId : computeSignerKeyId(parsed.publicKeyPem),
+    publicKeyPem: parsed.publicKeyPem,
+    source: typeof parsed.source === "string" ? parsed.source : undefined,
+    createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+  };
+}
+
 function parseSigningKeyRecord(value: string): {
   name: string;
   algorithm: "ed25519";
@@ -2516,6 +2711,7 @@ function validatePresetBundle(
     allowedOrigins?: string[];
     allowedSigners?: string[];
     allowedSignerKeyIds?: string[];
+    trustedSignerNames?: string[];
   } = {},
 ) {
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
@@ -2601,6 +2797,26 @@ function validatePresetBundle(
     warnings,
     trustWarnings,
     trusted: true,
+  };
+}
+
+function resolvePresetTrustPolicy(
+  trustPolicy: ReturnType<typeof parsePresetTrustPolicy>,
+  directory: string,
+) {
+  if (!trustPolicy.trustedSignerNames?.length) {
+    return trustPolicy;
+  }
+
+  const trustedKeyIds = trustPolicy.trustedSignerNames
+    .map((name) => readTrustedSignerRecord(directory, name).keyId);
+
+  return {
+    ...trustPolicy,
+    allowedSignerKeyIds: Array.from(new Set([
+      ...(trustPolicy.allowedSignerKeyIds ?? []),
+      ...trustedKeyIds,
+    ])),
   };
 }
 
