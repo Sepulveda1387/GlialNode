@@ -187,6 +187,61 @@ test("CLI can export a preset file and apply it to a new space", async () => {
   }
 });
 
+test("CLI can register a local preset and reuse it by name", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-registry-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+
+    const registerResult = await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(registerResult.lines[0], "Preset registered.");
+
+    const listResult = await runCommand(
+      parseArgs(["preset", "local-list", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(listResult.lines[0], "presets=1");
+    assert.match(listResult.lines[1] ?? "", /team-executor/);
+
+    const createSpaceResult = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Registered Preset Space",
+        "--preset-local", "team-executor",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const showResult = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId]),
+      { repository },
+    );
+    assert.match(showResult.lines.join("\n"), /preferExecutorOnActionable/);
+    assert.match(showResult.lines.join("\n"), /"preferPlannerOnDistilled":false/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

@@ -187,6 +187,12 @@ Built-in presets can also be exported to JSON and reused as custom preset files:
 - `glialnode preset export --name execution-first --output ./execution-first.json`
 - `glialnode preset show --input ./execution-first.json`
 
+If you want to keep a reusable local registry of custom brain styles, you can also register them once and reuse them by name:
+
+- `glialnode preset register --input ./execution-first.json --name team-executor`
+- `glialnode preset local-list`
+- `glialnode preset local-show --name team-executor`
+
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
 - `npm run demo` exercises the CLI workflow
@@ -237,6 +243,7 @@ const client = new GlialNodeClient({
 
 console.log(client.listPresets());
 client.exportPreset("execution-first", "./execution-first.json");
+client.registerPreset("./execution-first.json", { name: "team-executor" });
 
 const space = await client.createSpace({
   name: "Team Memory",
@@ -594,6 +601,10 @@ glialnode preset list
 glialnode preset show --name planning-heavy
 glialnode preset export --name execution-first --output ./execution-first.json
 glialnode preset show --input ./execution-first.json
+glialnode preset register --input ./execution-first.json --name team-executor
+glialnode preset local-list
+glialnode preset local-show --name team-executor
+glialnode space create --name "Registry Memory" --preset-local team-executor
 glialnode space create --name "Custom Memory" --preset-file ./execution-first.json
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."

@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import { createId } from "../core/ids.js";
 import {
@@ -136,12 +136,15 @@ export function usageText(): string {
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset export --name <preset> --output <path>",
-    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-file <path>] [--db <path>]",
+    "  glialnode preset register --input <path> [--name <name>] [--directory <path>]",
+    "  glialnode preset local-list [--directory <path>]",
+    "  glialnode preset local-show --name <name> [--directory <path>]",
+    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -193,6 +196,9 @@ async function runSpaceCommand(
     const timestamp = new Date().toISOString();
     const id = createId("space");
     const preset = parseSpacePreset(parsed.flags.preset);
+    const registeredPreset = parsed.flags["preset-local"]
+      ? loadRegisteredPreset(parsed.flags["preset-local"], parsed.flags["preset-directory"])
+      : undefined;
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
@@ -203,6 +209,7 @@ async function runSpaceCommand(
       description: parsed.flags.description,
       settings: mergeSpaceSettings(
         preset ? getSpacePreset(preset) : undefined,
+        registeredPreset?.settings,
         presetDefinition?.settings,
       ),
       createdAt: timestamp,
@@ -247,6 +254,9 @@ async function runSpaceCommand(
     const spaceId = requireFlag(parsed.flags, "id");
     const space = await requireSpace(context.repository, spaceId);
     const preset = parseSpacePreset(parsed.flags.preset);
+    const registeredPreset = parsed.flags["preset-local"]
+      ? loadRegisteredPreset(parsed.flags["preset-local"], parsed.flags["preset-directory"])
+      : undefined;
     const presetDefinition = parsed.flags["preset-file"]
       ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
       : undefined;
@@ -263,6 +273,7 @@ async function runSpaceCommand(
     const mergedSettings = mergeSpaceSettings(
       space.settings,
       preset ? getSpacePreset(preset) : undefined,
+      registeredPreset?.settings,
       presetDefinition?.settings,
       settingsFromJson,
       settingsFromFlags,
@@ -445,6 +456,47 @@ async function runPresetCommand(
         "Preset exported.",
         `name=${preset.name}`,
         `output=${outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "register") {
+    const preset = loadPresetDefinitionFromFile(requireFlag(parsed.flags, "input"));
+    const registered = {
+      ...preset,
+      name: parsed.flags.name ?? preset.name,
+    };
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    mkdirSync(directory, { recursive: true });
+    const outputPath = join(directory, `${toPresetFileName(registered.name)}.json`);
+    writeFileSync(outputPath, stringifySpacePresetDefinition(registered), "utf8");
+
+    return {
+      lines: [
+        "Preset registered.",
+        `name=${registered.name}`,
+        `output=${outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "local-list") {
+    const presets = listRegisteredPresets(parsed.flags.directory);
+    return {
+      lines: [
+        `presets=${presets.length}`,
+        ...presets.map((preset) => `${preset.name} ${preset.summary}`),
+      ],
+    };
+  }
+
+  if (action === "local-show") {
+    const preset = loadRegisteredPreset(requireFlag(parsed.flags, "name"), parsed.flags.directory);
+    return {
+      lines: [
+        `name=${preset.name}`,
+        `summary=${preset.summary}`,
+        `settings=${JSON.stringify(preset.settings)}`,
       ],
     };
   }
@@ -1670,6 +1722,47 @@ function readTextFile(path: string): string {
 
 function loadPresetDefinitionFromFile(path: string) {
   return parseSpacePresetDefinition(readTextFile(resolve(path)));
+}
+
+function resolvePresetDirectory(directory: string | undefined): string {
+  return resolve(directory ?? ".glialnode/presets");
+}
+
+function listRegisteredPresets(directory: string | undefined) {
+  const resolvedDirectory = resolvePresetDirectory(directory);
+  if (!existsSync(resolvedDirectory)) {
+    return [];
+  }
+
+  return readdirSync(resolvedDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => loadPresetDefinitionFromFile(join(resolvedDirectory, entry)))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function loadRegisteredPreset(name: string, directory: string | undefined) {
+  const resolvedDirectory = resolvePresetDirectory(directory);
+  const candidatePath = join(resolvedDirectory, `${toPresetFileName(name)}.json`);
+  if (existsSync(candidatePath)) {
+    return loadPresetDefinitionFromFile(candidatePath);
+  }
+
+  const preset = listRegisteredPresets(resolvedDirectory).find((entry) => entry.name === name);
+  if (!preset) {
+    throw new Error(`Unknown registered preset: ${name}`);
+  }
+
+  return preset;
+}
+
+function toPresetFileName(name: string): string {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "preset";
 }
 
 interface SpaceExport {

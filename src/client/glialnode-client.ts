@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type {
   CompactionPolicy,
@@ -81,6 +81,7 @@ import { SqliteMemoryRepository } from "../storage/sqlite/sqlite-repository.js";
 export interface GlialNodeClientOptions {
   filename?: string;
   repository?: MemoryRepository;
+  presetDirectory?: string;
   sqlite?: Partial<SqliteConnectionPolicy>;
 }
 
@@ -172,11 +173,13 @@ export interface RecallOptions {
 export class GlialNodeClient {
   private readonly repository: MemoryRepository;
   private readonly closeRepository: (() => void) | null;
+  private readonly presetDirectory: string;
 
   constructor(options: GlialNodeClientOptions = {}) {
     if (options.repository) {
       this.repository = options.repository;
       this.closeRepository = null;
+      this.presetDirectory = resolve(options.presetDirectory ?? ".glialnode/presets");
       return;
     }
 
@@ -188,6 +191,7 @@ export class GlialNodeClient {
     });
     this.repository = repository;
     this.closeRepository = () => repository.close();
+    this.presetDirectory = resolve(options.presetDirectory ?? join(dirname(filename), "presets"));
   }
 
   async createSpace(input: CreateSpaceInput): Promise<MemorySpace> {
@@ -232,6 +236,49 @@ export class GlialNodeClient {
 
   loadPreset(inputPath: string): SpacePresetDefinition {
     return parseSpacePresetDefinition(readFileSync(resolve(inputPath), "utf8"));
+  }
+
+  registerPreset(
+    inputPath: string,
+    options: { name?: string; directory?: string } = {},
+  ): SpacePresetDefinition {
+    const preset = this.loadPreset(inputPath);
+    const registered: SpacePresetDefinition = {
+      ...preset,
+      name: options.name ?? preset.name,
+    };
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    mkdirSync(directory, { recursive: true });
+    const outputPath = join(directory, `${toPresetFileName(registered.name)}.json`);
+    writeFileSync(outputPath, stringifySpacePresetDefinition(registered), "utf8");
+    return registered;
+  }
+
+  listRegisteredPresets(directory?: string): SpacePresetDefinition[] {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    if (!existsSync(resolvedDirectory)) {
+      return [];
+    }
+
+    return readdirSync(resolvedDirectory)
+      .filter((entry) => entry.toLowerCase().endsWith(".json"))
+      .map((entry) => this.loadPreset(join(resolvedDirectory, entry)))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  getRegisteredPreset(name: string, directory?: string): SpacePresetDefinition {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    const candidatePath = join(resolvedDirectory, `${toPresetFileName(name)}.json`);
+    if (existsSync(candidatePath)) {
+      return this.loadPreset(candidatePath);
+    }
+
+    const preset = this.listRegisteredPresets(resolvedDirectory).find((entry) => entry.name === name);
+    if (!preset) {
+      throw new Error(`Unknown registered preset: ${name}`);
+    }
+
+    return preset;
   }
 
   async getSpace(spaceId: string): Promise<MemorySpace> {
@@ -738,6 +785,16 @@ export class GlialNodeClient {
   close(): void {
     this.closeRepository?.();
   }
+}
+
+function toPresetFileName(name: string): string {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || basename(`${Date.now()}`);
 }
 
 function mergeSpaceSettings(

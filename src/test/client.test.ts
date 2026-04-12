@@ -142,6 +142,30 @@ test("GlialNodeClient can export and load preset files for custom space setup", 
   }
 });
 
+test("GlialNodeClient can register and reload local preset files", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-registry-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    const registered = client.registerPreset(presetPath, { name: "team-executor" });
+    assert.equal(registered.name, "team-executor");
+
+    const listed = client.listRegisteredPresets();
+    assert.ok(listed.some((preset) => preset.name === "team-executor"));
+
+    const loaded = client.getRegisteredPreset("team-executor");
+    assert.equal(loaded.settings.routing?.preferExecutorOnActionable, true);
+    assert.equal(loaded.settings.routing?.preferPlannerOnDistilled, false);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
