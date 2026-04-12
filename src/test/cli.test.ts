@@ -66,6 +66,59 @@ test("CLI commands create and query persisted memory", async () => {
   }
 });
 
+test("CLI can create and configure spaces from presets with explicit overrides", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Preset Space",
+        "--preset", "planning-heavy",
+      ]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    await runCommand(
+      parseArgs([
+        "space", "configure",
+        "--id", spaceId,
+        "--preset", "execution-first",
+        "--routing-prefer-executor-on-actionable", "false",
+      ]),
+      { repository },
+    );
+
+    const showResult = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId]),
+      { repository },
+    );
+
+    const settingsLine = showResult.lines.find((line) => line.startsWith("settings="));
+    assert.ok(settingsLine);
+    const settings = JSON.parse(settingsLine!.slice("settings=".length)) as {
+      routing?: {
+        preferExecutorOnActionable?: boolean;
+        preferPlannerOnDistilled?: boolean;
+      };
+      reinforcement?: {
+        confidenceBoost?: number;
+      };
+    };
+
+    assert.equal(settings.routing?.preferExecutorOnActionable, false);
+    assert.equal(settings.routing?.preferPlannerOnDistilled, false);
+    assert.equal(settings.reinforcement?.confidenceBoost, 0.1);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

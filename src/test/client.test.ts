@@ -76,6 +76,27 @@ test("GlialNodeClient supports the core programmatic memory workflow", async () 
   }
 });
 
+test("GlialNodeClient can create a space from a preset", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Preset Space",
+      preset: "execution-first",
+    });
+
+    assert.equal(space.settings?.routing?.preferExecutorOnActionable, true);
+    assert.equal(space.settings?.routing?.preferPlannerOnDistilled, false);
+    assert.equal(space.settings?.compaction?.shortPromoteImportanceMin, 0.78);
+    assert.equal(space.settings?.reinforcement?.confidenceBoost, 0.1);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");

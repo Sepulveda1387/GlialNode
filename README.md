@@ -75,6 +75,7 @@ flowchart TD
 - detect contradictory durable memory and preserve it as contested state
 - attach bundle annotations and consumer hints for actionable, stale, distilled, or contested handoff memory
 - tune auto-routing behavior per space so different memory spaces can lean toward review, planning, or execution
+- start spaces from named brain-style presets instead of configuring every policy family manually
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
@@ -169,6 +170,13 @@ npm run demo:client
 npm run pack:check
 ```
 
+You can also start a space from a preset brain style:
+
+- `balanced-default`
+- `execution-first`
+- `conservative-review`
+- `planning-heavy`
+
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
 - `npm run demo` exercises the CLI workflow
@@ -217,7 +225,10 @@ const client = new GlialNodeClient({
   filename: ".glialnode/app.sqlite",
 });
 
-const space = await client.createSpace({ name: "Team Memory" });
+const space = await client.createSpace({
+  name: "Team Memory",
+  preset: "planning-heavy",
+});
 const scope = await client.addScope({
   spaceId: space.id,
   type: "agent",
@@ -479,6 +490,8 @@ Auto-routing can also be tuned per space through routing settings:
 - `routing.preferExecutorOnActionable`
 - `routing.preferPlannerOnDistilled`
 
+If you do not want to tune those one by one, presets can stamp a coherent policy bundle into the space first, and explicit settings can still override the preset afterward.
+
 ## Contradiction Handling
 
 GlialNode can now detect likely contradictions when a new durable record is written into the same scope as older durable memory.
@@ -562,6 +575,7 @@ GlialNode is packaged as both a library and a CLI:
 
 ```bash
 glialnode space create --name "Team Memory"
+glialnode space create --name "Review Memory" --preset conservative-review
 glialnode status
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
@@ -584,6 +598,7 @@ glialnode memory decay --space-id <space-id>
 glialnode memory decay --space-id <space-id> --apply
 glialnode memory reinforce --record-id <record-id> --strength 2 --reason manual-confirmation
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
+glialnode space configure --id <space-id> --preset execution-first
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2

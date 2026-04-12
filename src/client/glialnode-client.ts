@@ -10,6 +10,7 @@ import type {
   RetentionPolicy,
 } from "../core/config.js";
 import { createId } from "../core/ids.js";
+import { getSpacePreset, type SpacePresetName } from "../core/presets.js";
 import type {
   ActorType,
   CreateMemoryRecordInput,
@@ -78,11 +79,13 @@ export interface GlialNodeClientOptions {
 export interface CreateSpaceInput {
   name: string;
   description?: string;
+  preset?: SpacePresetName;
   settings?: MemorySpaceSettings;
 }
 
 export interface ConfigureSpaceInput {
   spaceId: string;
+  preset?: SpacePresetName;
   settings?: MemorySpaceSettings;
   compaction?: Partial<CompactionPolicy>;
   conflict?: Partial<ConflictPolicy>;
@@ -179,11 +182,15 @@ export class GlialNodeClient {
 
   async createSpace(input: CreateSpaceInput): Promise<MemorySpace> {
     const timestamp = new Date().toISOString();
+    const settings = mergeSpaceSettings(
+      input.preset ? getSpacePreset(input.preset) : undefined,
+      input.settings,
+    );
     const space: MemorySpace = {
       id: createId("space"),
       name: input.name,
       description: input.description,
-      settings: input.settings,
+      settings,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -204,6 +211,7 @@ export class GlialNodeClient {
     const space = await requireSpace(this.repository, input.spaceId);
     const settings = mergeSpaceSettings(
       space.settings,
+      input.preset ? getSpacePreset(input.preset) : undefined,
       input.settings,
       mergeSpaceSettings(
         undefined,

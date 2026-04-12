@@ -188,6 +188,8 @@ GlialNode v1 is SQLite-first and lexical-first:
 - FTS5 is the first retrieval engine
 - semantic retrieval is deferred until the structured and lexical path is strong
 
+The configuration layer now also supports named space presets so new memory spaces can start with a coherent policy posture before finer overrides are applied.
+
 ## V1 Operational Note
 
 The current SQLite-first implementation is best treated as a local single-writer foundation.
