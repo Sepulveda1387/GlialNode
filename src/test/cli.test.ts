@@ -699,6 +699,123 @@ test("CLI can export and import preset channel manifests", async () => {
   }
 });
 
+test("CLI can export and import full preset bundles", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-bundle-io-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const altPresetPath = join(tempDirectory, "planning-heavy.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const sourcePresetDirectory = join(tempDirectory, "source-presets");
+  const targetPresetDirectory = join(tempDirectory, "target-presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "planning-heavy", "--output", altPresetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", altPresetPath,
+        "--name", "team-executor",
+        "--version", "2.2.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--version", "2.1.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "promote",
+        "--name", "team-executor",
+        "--channel", "candidate",
+        "--version", "2.2.0",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "channel-default",
+        "--name", "team-executor",
+        "--channel", "stable",
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+
+    const exported = await runCommand(
+      parseArgs([
+        "preset", "bundle-export",
+        "--name", "team-executor",
+        "--output", bundlePath,
+        "--directory", sourcePresetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(exported.lines[0], "Preset bundle exported.");
+
+    const imported = await runCommand(
+      parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--name", "team-executor-copy",
+        "--directory", targetPresetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(imported.lines[0], "Preset bundle imported.");
+    assert.match(imported.lines.join("\n"), /defaultChannel=stable/);
+
+    const localShow = await runCommand(
+      parseArgs(["preset", "local-show", "--name", "team-executor-copy", "--directory", targetPresetDirectory]),
+      { repository },
+    );
+    assert.match(localShow.lines.join("\n"), /version=2.2.0/);
+
+    const history = await runCommand(
+      parseArgs(["preset", "history", "--name", "team-executor-copy", "--directory", targetPresetDirectory]),
+      { repository },
+    );
+    assert.match(history.lines.join("\n"), /2.1.0/);
+    assert.match(history.lines.join("\n"), /2.2.0/);
+
+    const channels = await runCommand(
+      parseArgs(["preset", "channel-list", "--name", "team-executor-copy", "--directory", targetPresetDirectory]),
+      { repository },
+    );
+    assert.match(channels.lines.join("\n"), /stable=2.1.0/);
+    assert.match(channels.lines.join("\n"), /candidate=2.2.0/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

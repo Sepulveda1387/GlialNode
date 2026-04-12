@@ -149,6 +149,8 @@ export function usageText(): string {
     "  glialnode preset channel-default --name <name> --channel <name> [--directory <path>]",
     "  glialnode preset channel-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
+    "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -683,6 +685,61 @@ async function runPresetCommand(
         `name=${state.name}`,
         `channels=${Object.keys(state.channels).length}`,
         `defaultChannel=${state.defaultChannel ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "bundle-export") {
+    const name = requireFlag(parsed.flags, "name");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      preset: loadRegisteredPreset(name, directory),
+      history: listRegisteredPresetHistory(name, directory),
+      channels: readPresetChannels(directory, name),
+    };
+    const outputPath = resolve(requireFlag(parsed.flags, "output"));
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, JSON.stringify(bundle, null, 2), "utf8");
+
+    return {
+      lines: [
+        "Preset bundle exported.",
+        `name=${name}`,
+        `output=${outputPath}`,
+        `versions=${bundle.history.length}`,
+      ],
+    };
+  }
+
+  if (action === "bundle-import") {
+    const inputPath = resolve(requireFlag(parsed.flags, "input"));
+    const imported = parsePresetBundle(readTextFile(inputPath));
+    const name = parsed.flags.name ?? imported.preset.name;
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+
+    for (const preset of imported.history) {
+      writePresetHistoryFile(directory, {
+        ...preset,
+        name,
+      });
+    }
+
+    writePresetFiles(directory, {
+      ...imported.preset,
+      name,
+    });
+    writePresetChannels(directory, {
+      ...imported.channels,
+      name,
+    });
+
+    return {
+      lines: [
+        "Preset bundle imported.",
+        `name=${name}`,
+        `versions=${imported.history.length}`,
+        `defaultChannel=${imported.channels.defaultChannel ?? ""}`,
       ],
     };
   }
@@ -2068,6 +2125,23 @@ function writePresetChannels(directory: string, state: { name: string; channels:
   writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
 }
 
+function writePresetFiles(directory: string, preset: ReturnType<typeof parseSpacePresetDefinition>) {
+  const outputPath = join(directory, `${toPresetFileName(preset.name)}.json`);
+  writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
+
+  writePresetHistoryFile(directory, preset);
+}
+
+function writePresetHistoryFile(directory: string, preset: ReturnType<typeof parseSpacePresetDefinition>) {
+  const historyDirectory = join(directory, ".versions", toPresetFileName(preset.name));
+  mkdirSync(historyDirectory, { recursive: true });
+  const historyPath = join(
+    historyDirectory,
+    `${toPresetHistoryTimestamp(preset.updatedAt)}--${toPresetVersionFileName(preset.version ?? "1.0.0")}.json`,
+  );
+  writeFileSync(historyPath, stringifySpacePresetDefinition(preset), "utf8");
+}
+
 function parsePresetChannelState(value: string): { name: string; channels: Record<string, string>; defaultChannel?: string } {
   const parsed = JSON.parse(value) as {
     name?: unknown;
@@ -2081,6 +2155,29 @@ function parsePresetChannelState(value: string): { name: string; channels: Recor
       ? { ...(parsed.channels as Record<string, string>) }
       : {},
     defaultChannel: typeof parsed.defaultChannel === "string" ? parsed.defaultChannel : undefined,
+  };
+}
+
+function parsePresetBundle(value: string): {
+  exportedAt: string;
+  preset: ReturnType<typeof parseSpacePresetDefinition>;
+  history: Array<ReturnType<typeof parseSpacePresetDefinition>>;
+  channels: ReturnType<typeof parsePresetChannelState>;
+} {
+  const parsed = JSON.parse(value) as {
+    exportedAt?: unknown;
+    preset?: unknown;
+    history?: unknown;
+    channels?: unknown;
+  };
+
+  return {
+    exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : new Date().toISOString(),
+    preset: parseSpacePresetDefinition(JSON.stringify(parsed.preset ?? {})),
+    history: Array.isArray(parsed.history)
+      ? parsed.history.map((entry) => parseSpacePresetDefinition(JSON.stringify(entry)))
+      : [],
+    channels: parsePresetChannelState(JSON.stringify(parsed.channels ?? {})),
   };
 }
 
@@ -2118,19 +2215,6 @@ function toPresetHistoryTimestamp(value: string | undefined): string {
     .replace(/[^0-9a-zA-Z-]/g, "");
 
   return normalized || "snapshot";
-}
-
-function writePresetFiles(directory: string, preset: ReturnType<typeof parseSpacePresetDefinition>) {
-  const outputPath = join(directory, `${toPresetFileName(preset.name)}.json`);
-  writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
-
-  const historyDirectory = join(directory, ".versions", toPresetFileName(preset.name));
-  mkdirSync(historyDirectory, { recursive: true });
-  const historyPath = join(
-    historyDirectory,
-    `${toPresetHistoryTimestamp(preset.updatedAt)}--${toPresetVersionFileName(preset.version ?? "1.0.0")}.json`,
-  );
-  writeFileSync(historyPath, stringifySpacePresetDefinition(preset), "utf8");
 }
 
 interface SpaceExport {

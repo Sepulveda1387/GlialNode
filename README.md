@@ -201,12 +201,14 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset channel-default --name team-executor --channel stable`
 - `glialnode preset channel-export --name team-executor --output ./team-executor.channels.json`
 - `glialnode preset channel-import --input ./team-executor.channels.json --name team-executor-copy`
+- `glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json`
+- `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
 
 Preset files and registered local presets can also carry provenance metadata like `version`, `author`, `source`, `createdAt`, and `updatedAt`, and the local registry now keeps versioned snapshot history for each registered preset. That gives a shared brain style some lineage instead of treating every update like an overwrite with no memory of what came before.
 
-You can also diff preset definitions directly to see how one brain style differs from another at the metadata and settings level. The CLI accepts `builtin:`, `local:`, and `file:` references so you can compare built-ins, registered local presets, and exported preset files with one command. And if a local preset needs to move back to an earlier known-good version, rollback can restore a historical snapshot while still preserving the new restore operation in history. Release channels then let a team point consumers at `stable`, `candidate`, or any other named lane without forcing every integration to pin a raw version string, a default channel can be set so local preset consumers do not have to spell the lane out on every space command, and channel manifests can be exported or imported so those release lanes can travel between machines and repos.
+You can also diff preset definitions directly to see how one brain style differs from another at the metadata and settings level. The CLI accepts `builtin:`, `local:`, and `file:` references so you can compare built-ins, registered local presets, and exported preset files with one command. And if a local preset needs to move back to an earlier known-good version, rollback can restore a historical snapshot while still preserving the new restore operation in history. Release channels then let a team point consumers at `stable`, `candidate`, or any other named lane without forcing every integration to pin a raw version string, a default channel can be set so local preset consumers do not have to spell the lane out on every space command, channel manifests can be exported or imported so those release lanes can travel between machines and repos, and full preset bundles can now move the active preset, its history, and its channel manifest together as one portable brain-style package.
 
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
@@ -627,6 +629,8 @@ glialnode preset promote --name team-executor --channel stable --version 2.1.0
 glialnode preset channel-default --name team-executor --channel stable
 glialnode preset channel-export --name team-executor --output ./team-executor.channels.json
 glialnode preset channel-import --input ./team-executor.channels.json --name team-executor-copy
+glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json
+glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor
 glialnode space configure --id <space-id> --preset-local team-executor --preset-channel stable

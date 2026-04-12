@@ -422,6 +422,68 @@ test("GlialNodeClient can export and import preset channel manifests", async () 
   }
 });
 
+test("GlialNodeClient can export and import full preset bundles", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-io-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const altPresetPath = join(tempDirectory, "planning-heavy.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const sourcePresetDirectory = join(tempDirectory, "source-presets");
+  const targetPresetDirectory = join(tempDirectory, "target-presets");
+  const sourceClient = new GlialNodeClient({ filename: databasePath, presetDirectory: sourcePresetDirectory });
+  const targetClient = new GlialNodeClient({ filename: databasePath, presetDirectory: targetPresetDirectory });
+
+  try {
+    sourceClient.exportPreset("execution-first", presetPath);
+    sourceClient.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+    sourceClient.exportPreset("planning-heavy", altPresetPath);
+    sourceClient.registerPreset(altPresetPath, {
+      name: "team-executor",
+      version: "2.2.0",
+    });
+    sourceClient.promotePresetChannel("team-executor", {
+      channel: "stable",
+      version: "2.1.0",
+    });
+    sourceClient.promotePresetChannel("team-executor", {
+      channel: "candidate",
+      version: "2.2.0",
+    });
+    sourceClient.setDefaultPresetChannel("team-executor", {
+      channel: "stable",
+    });
+
+    const exported = sourceClient.exportPresetBundle("team-executor", bundlePath);
+    assert.equal(exported.preset.name, "team-executor");
+    assert.ok(exported.history.length >= 2);
+    assert.equal(exported.channels.defaultChannel, "stable");
+
+    const imported = targetClient.importPresetBundle(bundlePath, {
+      name: "team-executor-copy",
+    });
+    assert.equal(imported.preset.name, "team-executor-copy");
+    assert.equal(imported.channels.defaultChannel, "stable");
+
+    const current = targetClient.getRegisteredPreset("team-executor-copy");
+    assert.equal(current.version, "2.2.0");
+
+    const history = targetClient.listRegisteredPresetHistory("team-executor-copy");
+    assert.ok(history.some((preset) => preset.version === "2.1.0"));
+    assert.ok(history.some((preset) => preset.version === "2.2.0"));
+
+    const channels = targetClient.listPresetChannels("team-executor-copy");
+    assert.equal(channels.channels.stable, "2.1.0");
+    assert.equal(channels.channels.candidate, "2.2.0");
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
