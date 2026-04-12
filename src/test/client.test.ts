@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -500,10 +501,15 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       name: "team-executor",
       version: "2.1.0",
     });
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const signerKeyId = createHash("sha256").update(publicKeyPem).digest("hex");
 
     const bundle = client.exportPresetBundle("team-executor", bundlePath, undefined, {
       origin: "local-dev",
       signer: "GlialNode Test",
+      signingPrivateKeyPem: privateKeyPem,
     });
     const validation = client.validatePresetBundle(bundlePath);
     assert.equal(validation.metadata.bundleFormatVersion, 1);
@@ -511,12 +517,18 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.equal(validation.trusted, true);
     assert.equal(validation.metadata.origin, "local-dev");
     assert.equal(validation.metadata.signer, "GlialNode Test");
+    assert.equal(validation.metadata.signatureAlgorithm, "ed25519");
+    assert.equal(validation.metadata.signerKeyId, signerKeyId);
+    assert.equal(validation.metadata.signerPublicKey, publicKeyPem);
+    assert.ok(validation.metadata.signature);
     assert.equal(validation.trustWarnings.length, 0);
 
     const strictValidation = client.validatePresetBundle(bundlePath, {
       requireSigner: true,
+      requireSignature: true,
       allowedOrigins: ["local-dev"],
       allowedSigners: ["GlialNode Test"],
+      allowedSignerKeyIds: [signerKeyId],
     });
     assert.equal(strictValidation.trusted, true);
 
@@ -529,6 +541,10 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
         trustPolicy: { allowedSigners: ["Trusted CI"] },
       }),
       /Preset bundle trust validation failed: Preset bundle signer is not allowed: GlialNode Test/,
+    );
+    assert.throws(
+      () => client.validatePresetBundle(bundlePath, { allowedSignerKeyIds: ["deadbeef"] }),
+      new RegExp(`Preset bundle trust validation failed: Preset bundle signer key id is not allowed: ${signerKeyId}`),
     );
 
     const invalidBundle = {
@@ -561,6 +577,21 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.throws(
       () => client.validatePresetBundle(tamperedBundlePath),
       /Preset bundle checksum verification failed/,
+    );
+
+    const invalidSignatureBundlePath = join(tempDirectory, "team-executor.invalid-signature.bundle.json");
+    const invalidSignatureBundle = {
+      ...bundle,
+      metadata: {
+        ...bundle.metadata,
+        signature: "invalid-signature",
+      },
+    };
+    writeFileSync(invalidSignatureBundlePath, JSON.stringify(invalidSignatureBundle, null, 2), "utf8");
+
+    assert.throws(
+      () => client.validatePresetBundle(invalidSignatureBundlePath),
+      /Preset bundle signature verification failed/,
     );
   } finally {
     client.close();

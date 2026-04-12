@@ -203,6 +203,7 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset channel-import --input ./team-executor.channels.json --name team-executor-copy`
 - `glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json`
+- `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
@@ -633,6 +634,7 @@ glialnode preset channel-import --input ./team-executor.channels.json --name tea
 glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json
 glialnode preset bundle-show --input ./team-executor.bundle.json
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signer --allow-origin local-dev --allow-signer "GlialNode Test"
+glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor

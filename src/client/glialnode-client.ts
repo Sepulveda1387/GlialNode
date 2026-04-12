@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 
 import type {
   CompactionPolicy,
@@ -201,6 +201,10 @@ export interface PresetBundleMetadata {
   signer?: string;
   checksumAlgorithm: "sha256";
   checksum: string;
+  signatureAlgorithm?: "ed25519";
+  signerKeyId?: string;
+  signerPublicKey?: string;
+  signature?: string;
 }
 
 export interface PresetBundleValidation {
@@ -212,8 +216,10 @@ export interface PresetBundleValidation {
 
 export interface PresetBundleTrustPolicy {
   requireSigner?: boolean;
+  requireSignature?: boolean;
   allowedOrigins?: string[];
   allowedSigners?: string[];
+  allowedSignerKeyIds?: string[];
 }
 
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
@@ -429,9 +435,20 @@ export class GlialNodeClient {
     name: string,
     outputPath: string,
     directory?: string,
-    trust?: { origin?: string; signer?: string },
+    trust?: {
+      origin?: string;
+      signer?: string;
+      signingPrivateKeyPem?: string;
+      signingPublicKeyPem?: string;
+    },
   ): PresetBundle {
     const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    const signerPublicKeyPem = trust?.signingPrivateKeyPem
+      ? (trust.signingPublicKeyPem ?? createPublicKey(createPrivateKey(trust.signingPrivateKeyPem)).export({
+          type: "spki",
+          format: "pem",
+        }).toString())
+      : undefined;
     const bundle: PresetBundle = {
       metadata: {
         bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
@@ -441,6 +458,10 @@ export class GlialNodeClient {
         signer: trust?.signer,
         checksumAlgorithm: "sha256",
         checksum: "",
+        signatureAlgorithm: signerPublicKeyPem ? "ed25519" : undefined,
+        signerKeyId: signerPublicKeyPem ? computeSignerKeyId(signerPublicKeyPem) : undefined,
+        signerPublicKey: signerPublicKeyPem,
+        signature: undefined,
       },
       exportedAt: new Date().toISOString(),
       preset: this.getRegisteredPreset(name, resolvedDirectory),
@@ -448,6 +469,9 @@ export class GlialNodeClient {
       channels: this.listPresetChannels(name, resolvedDirectory),
     };
     bundle.metadata.checksum = computePresetBundleChecksum(bundle);
+    if (trust?.signingPrivateKeyPem) {
+      bundle.metadata.signature = computePresetBundleSignature(bundle, trust.signingPrivateKeyPem);
+    }
     const resolvedOutputPath = resolve(outputPath);
     mkdirSync(dirname(resolvedOutputPath), { recursive: true });
     writeFileSync(resolvedOutputPath, JSON.stringify(bundle, null, 2), "utf8");
@@ -1181,6 +1205,10 @@ function parsePresetBundleMetadata(value: string): PresetBundleMetadata {
     signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
     checksumAlgorithm: parsed.checksumAlgorithm === "sha256" ? "sha256" : "sha256",
     checksum: typeof parsed.checksum === "string" ? parsed.checksum : "",
+    signatureAlgorithm: parsed.signatureAlgorithm === "ed25519" ? "ed25519" : undefined,
+    signerKeyId: typeof parsed.signerKeyId === "string" ? parsed.signerKeyId : undefined,
+    signerPublicKey: typeof parsed.signerPublicKey === "string" ? parsed.signerPublicKey : undefined,
+    signature: typeof parsed.signature === "string" ? parsed.signature : undefined,
   };
 }
 
@@ -1217,6 +1245,10 @@ function validatePresetBundle(
     trustWarnings.push("Preset bundle is unsigned.");
   }
 
+  if (trustPolicy.requireSignature && !bundle.metadata.signature) {
+    trustWarnings.push("Preset bundle is unsigned by key.");
+  }
+
   if (trustPolicy.allowedOrigins?.length) {
     if (!bundle.metadata.origin) {
       trustWarnings.push("Preset bundle origin is missing.");
@@ -1231,6 +1263,32 @@ function validatePresetBundle(
     } else if (!trustPolicy.allowedSigners.includes(bundle.metadata.signer)) {
       trustWarnings.push(`Preset bundle signer is not allowed: ${bundle.metadata.signer}`);
     }
+  }
+
+  if (bundle.metadata.signature) {
+    if (bundle.metadata.signatureAlgorithm !== "ed25519") {
+      throw new Error(`Unsupported preset bundle signature algorithm: ${bundle.metadata.signatureAlgorithm ?? "unknown"}.`);
+    }
+
+    if (!bundle.metadata.signerPublicKey) {
+      throw new Error("Preset bundle signature is missing signer public key.");
+    }
+
+    const signerKeyId = computeSignerKeyId(bundle.metadata.signerPublicKey);
+    if (bundle.metadata.signerKeyId && bundle.metadata.signerKeyId !== signerKeyId) {
+      throw new Error("Preset bundle signer key id verification failed.");
+    }
+
+    const verified = verifyPresetBundleSignature(bundle);
+    if (!verified) {
+      throw new Error("Preset bundle signature verification failed.");
+    }
+
+    if (trustPolicy.allowedSignerKeyIds?.length && !trustPolicy.allowedSignerKeyIds.includes(signerKeyId)) {
+      trustWarnings.push(`Preset bundle signer key id is not allowed: ${signerKeyId}`);
+    }
+  } else if (trustPolicy.allowedSignerKeyIds?.length) {
+    trustWarnings.push("Preset bundle signer key id is missing.");
   }
 
   if (trustWarnings.length > 0) {
@@ -1251,12 +1309,46 @@ function computePresetBundleChecksum(bundle: PresetBundle): string {
     metadata: {
       ...bundle.metadata,
       checksum: "",
+      signature: undefined,
     },
   };
 
   return createHash("sha256")
     .update(stableStringify(checksumPayload))
     .digest("hex");
+}
+
+function computePresetBundleSignature(bundle: PresetBundle, privateKeyPem: string): string {
+  const payload = createPresetBundleSignaturePayload(bundle);
+  return sign(null, payload, createPrivateKey(privateKeyPem)).toString("base64");
+}
+
+function verifyPresetBundleSignature(bundle: PresetBundle): boolean {
+  if (!bundle.metadata.signature || !bundle.metadata.signerPublicKey) {
+    return false;
+  }
+
+  const payload = createPresetBundleSignaturePayload(bundle);
+  return verify(
+    null,
+    payload,
+    createPublicKey(bundle.metadata.signerPublicKey),
+    Buffer.from(bundle.metadata.signature, "base64"),
+  );
+}
+
+function createPresetBundleSignaturePayload(bundle: PresetBundle): Buffer {
+  return Buffer.from(stableStringify({
+    ...bundle,
+    metadata: {
+      ...bundle.metadata,
+      signature: undefined,
+    },
+  }));
+}
+
+function computeSignerKeyId(publicKeyPem: string): string {
+  return createHash("sha256").update(publicKeyPem).digest("hex");
 }
 
 function stableStringify(value: unknown): string {

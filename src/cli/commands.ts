@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 
 import { createId } from "../core/ids.js";
 import {
@@ -155,9 +155,9 @@ export function usageText(): string {
     "  glialnode preset channel-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
-    "    [--origin <text>] [--signer <text>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--allow-origin <a,b>] [--allow-signer <a,b>]",
-    "  glialnode preset bundle-show --input <path> [--require-signer] [--allow-origin <a,b>] [--allow-signer <a,b>]",
+    "    [--origin <text>] [--signer <text>] [--signing-private-key <path>] [--signing-public-key <path>]",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
+    "  glialnode preset bundle-show --input <path> [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -699,7 +699,15 @@ async function runPresetCommand(
   if (action === "bundle-export") {
     const name = requireFlag(parsed.flags, "name");
     const directory = resolvePresetDirectory(parsed.flags.directory);
-    const bundle = {
+    const signingPrivateKeyPem = parsed.flags["signing-private-key"]
+      ? readTextFile(resolve(parsed.flags["signing-private-key"]))
+      : undefined;
+    const signingPublicKeyPem = signingPrivateKeyPem
+      ? (parsed.flags["signing-public-key"]
+          ? readTextFile(resolve(parsed.flags["signing-public-key"]))
+          : createPublicKey(createPrivateKey(signingPrivateKeyPem)).export({ type: "spki", format: "pem" }).toString())
+      : undefined;
+    const bundle: ReturnType<typeof parsePresetBundle> = {
       metadata: {
         bundleFormatVersion: PRESET_BUNDLE_FORMAT_VERSION,
         glialnodeVersion: GLIALNODE_VERSION,
@@ -708,6 +716,10 @@ async function runPresetCommand(
         signer: parsed.flags.signer,
         checksumAlgorithm: "sha256" as const,
         checksum: "",
+        signatureAlgorithm: signingPublicKeyPem ? "ed25519" as const : undefined,
+        signerKeyId: signingPublicKeyPem ? computeSignerKeyId(signingPublicKeyPem) : undefined,
+        signerPublicKey: signingPublicKeyPem,
+        signature: undefined,
       },
       exportedAt: new Date().toISOString(),
       preset: loadRegisteredPreset(name, directory),
@@ -715,6 +727,9 @@ async function runPresetCommand(
       channels: readPresetChannels(directory, name),
     };
     bundle.metadata.checksum = computePresetBundleChecksum(bundle);
+    if (signingPrivateKeyPem) {
+      bundle.metadata.signature = computePresetBundleSignature(bundle, signingPrivateKeyPem);
+    }
     const outputPath = resolve(requireFlag(parsed.flags, "output"));
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, JSON.stringify(bundle, null, 2), "utf8");
@@ -726,6 +741,7 @@ async function runPresetCommand(
         `output=${outputPath}`,
         `versions=${bundle.history.length}`,
         `checksum=${bundle.metadata.checksum}`,
+        `signed=${Boolean(bundle.metadata.signature)}`,
       ],
     };
   }
@@ -780,6 +796,9 @@ async function runPresetCommand(
         `signer=${bundle.metadata.signer ?? ""}`,
         `checksumAlgorithm=${bundle.metadata.checksumAlgorithm}`,
         `checksum=${bundle.metadata.checksum}`,
+        `signatureAlgorithm=${bundle.metadata.signatureAlgorithm ?? ""}`,
+        `signerKeyId=${bundle.metadata.signerKeyId ?? ""}`,
+        `signed=${Boolean(bundle.metadata.signature)}`,
         `versions=${bundle.history.length}`,
         `defaultChannel=${bundle.channels.defaultChannel ?? ""}`,
         `trusted=${validation.trusted}`,
@@ -1637,8 +1656,10 @@ function parseCsvFlag(value: string | undefined): string[] | undefined {
 function parsePresetTrustPolicy(flags: Record<string, string>) {
   return {
     requireSigner: flags["require-signer"] === "true",
+    requireSignature: flags["require-signature"] === "true",
     allowedOrigins: parseCsvFlag(flags["allow-origin"]),
     allowedSigners: parseCsvFlag(flags["allow-signer"]),
+    allowedSignerKeyIds: parseCsvFlag(flags["allow-key-id"]),
   };
 }
 
@@ -2229,6 +2250,10 @@ function parsePresetBundle(value: string): {
     signer?: string;
     checksumAlgorithm: "sha256";
     checksum: string;
+    signatureAlgorithm?: "ed25519";
+    signerKeyId?: string;
+    signerPublicKey?: string;
+    signature?: string;
   };
   exportedAt: string;
   preset: ReturnType<typeof parseSpacePresetDefinition>;
@@ -2262,6 +2287,10 @@ function parsePresetBundleMetadata(value: string): {
   signer?: string;
   checksumAlgorithm: "sha256";
   checksum: string;
+  signatureAlgorithm?: "ed25519";
+  signerKeyId?: string;
+  signerPublicKey?: string;
+  signature?: string;
 } {
   const parsed = JSON.parse(value) as {
     bundleFormatVersion?: unknown;
@@ -2271,6 +2300,10 @@ function parsePresetBundleMetadata(value: string): {
     signer?: unknown;
     checksumAlgorithm?: unknown;
     checksum?: unknown;
+    signatureAlgorithm?: unknown;
+    signerKeyId?: unknown;
+    signerPublicKey?: unknown;
+    signature?: unknown;
   };
 
   return {
@@ -2287,6 +2320,10 @@ function parsePresetBundleMetadata(value: string): {
     signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
     checksumAlgorithm: parsed.checksumAlgorithm === "sha256" ? "sha256" : "sha256",
     checksum: typeof parsed.checksum === "string" ? parsed.checksum : "",
+    signatureAlgorithm: parsed.signatureAlgorithm === "ed25519" ? "ed25519" : undefined,
+    signerKeyId: typeof parsed.signerKeyId === "string" ? parsed.signerKeyId : undefined,
+    signerPublicKey: typeof parsed.signerPublicKey === "string" ? parsed.signerPublicKey : undefined,
+    signature: typeof parsed.signature === "string" ? parsed.signature : undefined,
   };
 }
 
@@ -2294,8 +2331,10 @@ function validatePresetBundle(
   bundle: ReturnType<typeof parsePresetBundle>,
   trustPolicy: {
     requireSigner?: boolean;
+    requireSignature?: boolean;
     allowedOrigins?: string[];
     allowedSigners?: string[];
+    allowedSignerKeyIds?: string[];
   } = {},
 ) {
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
@@ -2327,6 +2366,10 @@ function validatePresetBundle(
     trustWarnings.push("Preset bundle is unsigned.");
   }
 
+  if (trustPolicy.requireSignature && !bundle.metadata.signature) {
+    trustWarnings.push("Preset bundle is unsigned by key.");
+  }
+
   if (trustPolicy.allowedOrigins?.length) {
     if (!bundle.metadata.origin) {
       trustWarnings.push("Preset bundle origin is missing.");
@@ -2341,6 +2384,31 @@ function validatePresetBundle(
     } else if (!trustPolicy.allowedSigners.includes(bundle.metadata.signer)) {
       trustWarnings.push(`Preset bundle signer is not allowed: ${bundle.metadata.signer}`);
     }
+  }
+
+  if (bundle.metadata.signature) {
+    if (bundle.metadata.signatureAlgorithm !== "ed25519") {
+      throw new Error(`Unsupported preset bundle signature algorithm: ${bundle.metadata.signatureAlgorithm ?? "unknown"}.`);
+    }
+
+    if (!bundle.metadata.signerPublicKey) {
+      throw new Error("Preset bundle signature is missing signer public key.");
+    }
+
+    const signerKeyId = computeSignerKeyId(bundle.metadata.signerPublicKey);
+    if (bundle.metadata.signerKeyId && bundle.metadata.signerKeyId !== signerKeyId) {
+      throw new Error("Preset bundle signer key id verification failed.");
+    }
+
+    if (!verifyPresetBundleSignature(bundle)) {
+      throw new Error("Preset bundle signature verification failed.");
+    }
+
+    if (trustPolicy.allowedSignerKeyIds?.length && !trustPolicy.allowedSignerKeyIds.includes(signerKeyId)) {
+      trustWarnings.push(`Preset bundle signer key id is not allowed: ${signerKeyId}`);
+    }
+  } else if (trustPolicy.allowedSignerKeyIds?.length) {
+    trustWarnings.push("Preset bundle signer key id is missing.");
   }
 
   if (trustWarnings.length > 0) {
@@ -2361,12 +2429,44 @@ function computePresetBundleChecksum(bundle: ReturnType<typeof parsePresetBundle
     metadata: {
       ...bundle.metadata,
       checksum: "",
+      signature: undefined,
     },
   };
 
   return createHash("sha256")
     .update(stableStringify(checksumPayload))
     .digest("hex");
+}
+
+function computePresetBundleSignature(bundle: ReturnType<typeof parsePresetBundle>, privateKeyPem: string): string {
+  return sign(null, createPresetBundleSignaturePayload(bundle), createPrivateKey(privateKeyPem)).toString("base64");
+}
+
+function verifyPresetBundleSignature(bundle: ReturnType<typeof parsePresetBundle>): boolean {
+  if (!bundle.metadata.signature || !bundle.metadata.signerPublicKey) {
+    return false;
+  }
+
+  return verify(
+    null,
+    createPresetBundleSignaturePayload(bundle),
+    createPublicKey(bundle.metadata.signerPublicKey),
+    Buffer.from(bundle.metadata.signature, "base64"),
+  );
+}
+
+function createPresetBundleSignaturePayload(bundle: ReturnType<typeof parsePresetBundle>): Buffer {
+  return Buffer.from(stableStringify({
+    ...bundle,
+    metadata: {
+      ...bundle.metadata,
+      signature: undefined,
+    },
+  }));
+}
+
+function computeSignerKeyId(publicKeyPem: string): string {
+  return createHash("sha256").update(publicKeyPem).digest("hex");
 }
 
 function stableStringify(value: unknown): string {

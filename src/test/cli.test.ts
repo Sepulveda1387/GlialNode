@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -823,10 +824,17 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
   const bundlePath = join(tempDirectory, "team-executor.bundle.json");
   const invalidBundlePath = join(tempDirectory, "team-executor.invalid.bundle.json");
   const tamperedBundlePath = join(tempDirectory, "team-executor.tampered.bundle.json");
+  const invalidSignatureBundlePath = join(tempDirectory, "team-executor.invalid-signature.bundle.json");
   const presetDirectory = join(tempDirectory, "source-presets");
   const repository = createRepository(databasePath);
 
   try {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const privateKeyPath = join(tempDirectory, "team-executor.private.pem");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const signerKeyId = createHash("sha256").update(publicKeyPem).digest("hex");
+    writeFileSync(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), "utf8");
+
     await runCommand(
       parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
       { repository },
@@ -850,6 +858,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
         "--directory", presetDirectory,
         "--origin", "local-dev",
         "--signer", "GlialNode Test",
+        "--signing-private-key", privateKeyPath,
       ]),
       { repository },
     );
@@ -865,6 +874,9 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     assert.match(shown.lines.join("\n"), /origin=local-dev/);
     assert.match(shown.lines.join("\n"), /signer=GlialNode Test/);
     assert.match(shown.lines.join("\n"), /checksumAlgorithm=sha256/);
+    assert.match(shown.lines.join("\n"), /signatureAlgorithm=ed25519/);
+    assert.match(shown.lines.join("\n"), new RegExp(`signerKeyId=${signerKeyId}`));
+    assert.match(shown.lines.join("\n"), /signed=true/);
     assert.match(shown.lines.join("\n"), /trusted=true/);
 
     const bundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
@@ -907,9 +919,29 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
         "preset", "bundle-import",
         "--input", bundlePath,
         "--require-signer",
+        "--require-signature",
         "--allow-signer", "Trusted CI",
       ]), { repository }),
       /Preset bundle trust validation failed: Preset bundle signer is not allowed: GlialNode Test/,
+    );
+    await assert.rejects(
+      () => runCommand(parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--allow-key-id", "deadbeef",
+      ]), { repository }),
+      new RegExp(`Preset bundle trust validation failed: Preset bundle signer key id is not allowed: ${signerKeyId}`),
+    );
+
+    const invalidSignatureBundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
+      metadata: { signature: string };
+    };
+    invalidSignatureBundle.metadata.signature = "invalid-signature";
+    writeFileSync(invalidSignatureBundlePath, JSON.stringify(invalidSignatureBundle, null, 2), "utf8");
+
+    await assert.rejects(
+      () => runCommand(parseArgs(["preset", "bundle-show", "--input", invalidSignatureBundlePath]), { repository }),
+      /Preset bundle signature verification failed/,
     );
   } finally {
     repository.close();
