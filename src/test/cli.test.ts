@@ -119,6 +119,32 @@ test("CLI can create and configure spaces from presets with explicit overrides",
   }
 });
 
+test("CLI can list and show preset definitions", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-show-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const listResult = await runCommand(
+      parseArgs(["preset", "list"]),
+      { repository },
+    );
+    assert.equal(listResult.lines[0], "presets=4");
+    assert.match(listResult.lines.join("\n"), /execution-first/);
+
+    const showResult = await runCommand(
+      parseArgs(["preset", "show", "--name", "conservative-review"]),
+      { repository },
+    );
+    assert.equal(showResult.lines[0], "name=conservative-review");
+    assert.match(showResult.lines[1] ?? "", /cautious trust management/i);
+    assert.match(showResult.lines[2] ?? "", /preferReviewerOnContested/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

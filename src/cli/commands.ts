@@ -2,7 +2,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { createId } from "../core/ids.js";
-import { getSpacePreset, isSpacePresetName, type SpacePresetName } from "../core/presets.js";
+import {
+  getSpacePreset,
+  getSpacePresetDefinition,
+  isSpacePresetName,
+  listSpacePresetDefinitions,
+  type SpacePresetName,
+} from "../core/presets.js";
 import type {
   ActorType,
   CreateMemoryRecordInput,
@@ -85,6 +91,10 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
     return runSpaceCommand(action, parsed, context);
   }
 
+  if (resource === "preset") {
+    return runPresetCommand(action, parsed);
+  }
+
   if (resource === "scope") {
     return runScopeCommand(action, parsed, context);
   }
@@ -121,6 +131,8 @@ export function usageText(): string {
   return [
     "Usage:",
     "  glialnode status",
+    "  glialnode preset list",
+    "  glialnode preset show --name <preset>",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -379,6 +391,36 @@ async function runSpaceCommand(
 
   return {
     lines: ["Unknown space command.", usageText()],
+  };
+}
+
+async function runPresetCommand(
+  action: string,
+  parsed: ParsedArgs,
+): Promise<CommandResult> {
+  if (action === "list") {
+    const presets = listSpacePresetDefinitions();
+    return {
+      lines: [
+        `presets=${presets.length}`,
+        ...presets.map((preset) => `${preset.name} ${preset.summary}`),
+      ],
+    };
+  }
+
+  if (action === "show") {
+    const preset = getSpacePresetDefinition(parseRequiredSpacePreset(requireFlag(parsed.flags, "name")));
+    return {
+      lines: [
+        `name=${preset.name}`,
+        `summary=${preset.summary}`,
+        `settings=${JSON.stringify(preset.settings)}`,
+      ],
+    };
+  }
+
+  return {
+    lines: ["Unknown preset command.", usageText()],
   };
 }
 
@@ -1326,6 +1368,10 @@ function parseSpacePreset(value: string | undefined): SpacePresetName | undefine
     return undefined;
   }
 
+  return parseRequiredSpacePreset(value);
+}
+
+function parseRequiredSpacePreset(value: string): SpacePresetName {
   if (!isSpacePresetName(value)) {
     throw new Error(`Invalid space preset: ${value}`);
   }

@@ -6,6 +6,12 @@ export type SpacePresetName =
   | "conservative-review"
   | "planning-heavy";
 
+export interface SpacePresetDefinition {
+  name: SpacePresetName;
+  summary: string;
+  settings: MemorySpaceSettings;
+}
+
 export const spacePresets: Record<SpacePresetName, MemorySpaceSettings> = {
   "balanced-default": {},
   "execution-first": {
@@ -98,6 +104,13 @@ export const spacePresets: Record<SpacePresetName, MemorySpaceSettings> = {
   },
 };
 
+const presetSummaries: Record<SpacePresetName, string> = {
+  "balanced-default": "Keeps GlialNode close to the default tiering, routing, and maintenance posture.",
+  "execution-first": "Biases memory toward actionable handoff, faster promotion, and execution-oriented routing.",
+  "conservative-review": "Prefers reviewer routing, slower archival, and more cautious trust management for risky memory.",
+  "planning-heavy": "Keeps more distilled context available and favors planner-oriented recall over execution routing.",
+};
+
 export function isSpacePresetName(value: string | undefined): value is SpacePresetName {
   if (!value) {
     return false;
@@ -108,4 +121,16 @@ export function isSpacePresetName(value: string | undefined): value is SpacePres
 
 export function getSpacePreset(name: SpacePresetName): MemorySpaceSettings {
   return structuredClone(spacePresets[name]);
+}
+
+export function getSpacePresetDefinition(name: SpacePresetName): SpacePresetDefinition {
+  return {
+    name,
+    summary: presetSummaries[name],
+    settings: getSpacePreset(name),
+  };
+}
+
+export function listSpacePresetDefinitions(): SpacePresetDefinition[] {
+  return (Object.keys(spacePresets) as SpacePresetName[]).map((name) => getSpacePresetDefinition(name));
 }

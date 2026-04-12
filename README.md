@@ -177,6 +177,11 @@ You can also start a space from a preset brain style:
 - `conservative-review`
 - `planning-heavy`
 
+And you can inspect them directly before applying one:
+
+- `glialnode preset list`
+- `glialnode preset show --name planning-heavy`
+
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
 - `npm run demo` exercises the CLI workflow
@@ -224,6 +229,8 @@ import { GlialNodeClient } from "glialnode";
 const client = new GlialNodeClient({
   filename: ".glialnode/app.sqlite",
 });
+
+console.log(client.listPresets());
 
 const space = await client.createSpace({
   name: "Team Memory",
@@ -577,6 +584,8 @@ GlialNode is packaged as both a library and a CLI:
 glialnode space create --name "Team Memory"
 glialnode space create --name "Review Memory" --preset conservative-review
 glialnode status
+glialnode preset list
+glialnode preset show --name planning-heavy
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"

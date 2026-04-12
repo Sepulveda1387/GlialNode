@@ -97,6 +97,25 @@ test("GlialNodeClient can create a space from a preset", async () => {
   }
 });
 
+test("GlialNodeClient can inspect available presets", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-inspect-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const presets = client.listPresets();
+    assert.ok(presets.length >= 4);
+    assert.ok(presets.some((preset) => preset.name === "conservative-review"));
+
+    const preset = client.getPreset("planning-heavy");
+    assert.match(preset.summary, /planner-oriented/i);
+    assert.equal(preset.settings.routing?.preferPlannerOnDistilled, true);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");

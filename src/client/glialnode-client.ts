@@ -10,7 +10,13 @@ import type {
   RetentionPolicy,
 } from "../core/config.js";
 import { createId } from "../core/ids.js";
-import { getSpacePreset, type SpacePresetName } from "../core/presets.js";
+import {
+  getSpacePreset,
+  getSpacePresetDefinition,
+  listSpacePresetDefinitions,
+  type SpacePresetDefinition,
+  type SpacePresetName,
+} from "../core/presets.js";
 import type {
   ActorType,
   CreateMemoryRecordInput,
@@ -201,6 +207,14 @@ export class GlialNodeClient {
 
   async listSpaces(): Promise<MemorySpace[]> {
     return this.repository.listSpaces();
+  }
+
+  listPresets(): SpacePresetDefinition[] {
+    return listSpacePresetDefinitions();
+  }
+
+  getPreset(name: SpacePresetName): SpacePresetDefinition {
+    return getSpacePresetDefinition(name);
   }
 
   async getSpace(spaceId: string): Promise<MemorySpace> {
