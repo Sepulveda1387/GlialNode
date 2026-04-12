@@ -17,7 +17,7 @@ import type {
   ScopeRecord,
   ScopeType,
 } from "../core/types.js";
-import type { CompactionPolicy, ConflictPolicy, DecayPolicy, ReinforcementPolicy } from "../core/config.js";
+import type { CompactionPolicy, ConflictPolicy, DecayPolicy, ReinforcementPolicy, RoutingPolicy } from "../core/config.js";
 import {
   applyCompactionPlan,
   createCompactionDistillationLinks,
@@ -125,7 +125,7 @@ export function usageText(): string {
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -228,6 +228,7 @@ async function runSpaceCommand(
       parseCompactionFlags(parsed.flags),
       parseConflictFlags(parsed.flags),
       parseDecayFlags(parsed.flags),
+      parseRoutingFlags(parsed.flags),
       parseReinforcementFlags(parsed.flags),
       parseRetentionFlags(parsed.flags),
     );
@@ -648,6 +649,7 @@ async function runMemoryCommand(
 
   if (action === "bundle") {
     const spaceId = requireFlag(parsed.flags, "space-id");
+    const space = await requireSpace(context.repository, spaceId);
     const query = {
       spaceId,
       text: parsed.flags.text,
@@ -661,7 +663,6 @@ async function runMemoryCommand(
     const records = await context.repository.searchRecords(query);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
-      const space = await requireSpace(context.repository, spaceId);
       const availableRecords = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
       const reinforceLimit = parsed.flags["reinforce-limit"]
         ? Number(parsed.flags["reinforce-limit"])
@@ -701,6 +702,7 @@ async function runMemoryCommand(
         queryText: parsed.flags.text,
         profile: parseBundleProfile(parsed.flags["bundle-profile"]),
         consumer: parseBundleConsumer(parsed.flags["bundle-consumer"]),
+        routingPolicy: space.settings?.routing,
         maxSupporting: parseOptionalNumber(parsed.flags["bundle-max-supporting"]),
         maxContentChars: parseOptionalNumber(parsed.flags["bundle-max-content-chars"]),
         preferCompact: parsed.flags["bundle-prefer-compact"] !== undefined
@@ -1446,6 +1448,38 @@ function parseReinforcementFlags(flags: Record<string, string>): MemorySpace["se
   return { reinforcement };
 }
 
+function parseRoutingFlags(flags: Record<string, string>): MemorySpace["settings"] {
+  const routingEntries: Array<[keyof RoutingPolicy, number | boolean | undefined]> = [
+    ["staleThreshold", parseOptionalNumber(flags["routing-stale-threshold"])],
+  ];
+
+  const routing = Object.fromEntries(
+    routingEntries.filter(([, value]) => value !== undefined),
+  ) as Partial<RoutingPolicy>;
+
+  if (flags["routing-prefer-reviewer-on-contested"] !== undefined) {
+    routing.preferReviewerOnContested = parseOptionalBoolean(flags["routing-prefer-reviewer-on-contested"]);
+  }
+
+  if (flags["routing-prefer-reviewer-on-stale"] !== undefined) {
+    routing.preferReviewerOnStale = parseOptionalBoolean(flags["routing-prefer-reviewer-on-stale"]);
+  }
+
+  if (flags["routing-prefer-executor-on-actionable"] !== undefined) {
+    routing.preferExecutorOnActionable = parseOptionalBoolean(flags["routing-prefer-executor-on-actionable"]);
+  }
+
+  if (flags["routing-prefer-planner-on-distilled"] !== undefined) {
+    routing.preferPlannerOnDistilled = parseOptionalBoolean(flags["routing-prefer-planner-on-distilled"]);
+  }
+
+  if (Object.keys(routing).length === 0) {
+    return {};
+  }
+
+  return { routing };
+}
+
 function mergeSpaceSettings(
   ...settings: Array<MemorySpace["settings"] | undefined>
 ): MemorySpace["settings"] {
@@ -1473,6 +1507,10 @@ function mergeSpaceSettings(
     reinforcement: {
       ...(existing?.reinforcement ?? {}),
       ...Object.assign({}, ...rest.map((entry) => entry?.reinforcement ?? {})),
+    },
+    routing: {
+      ...(existing?.routing ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.routing ?? {})),
     },
   };
 }

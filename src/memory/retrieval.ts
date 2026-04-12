@@ -1,3 +1,4 @@
+import { defaultRoutingPolicy, type RoutingPolicy } from "../core/config.js";
 import type { MemoryRecord, MemoryRecordLink } from "../core/types.js";
 
 const QUERY_STOP_WORDS = new Set([
@@ -142,6 +143,7 @@ export interface BuildMemoryBundleOptions {
   queryText?: string;
   profile?: MemoryBundleProfile;
   consumer?: MemoryBundleConsumer;
+  routingPolicy?: Partial<RoutingPolicy>;
   maxSupporting?: number;
   maxContentChars?: number;
   preferCompact?: boolean;
@@ -240,8 +242,9 @@ export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTr
 }
 
 export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOptions = {}): MemoryBundle {
-  const hints = buildBundleHints(pack.primary, pack.supporting, pack.links);
-  const route = resolveBundleRoute(pack.primary, pack.supporting, hints, options);
+  const routingPolicy = resolveRoutingPolicy(options.routingPolicy);
+  const hints = buildBundleHints(pack.primary, pack.supporting, pack.links, routingPolicy);
+  const route = resolveBundleRoute(pack.primary, pack.supporting, hints, options, routingPolicy);
   const resolved = resolveBundlePolicy(route.profileUsed, options);
   const supporting = rankSupportingForBundle(pack.supporting, route.profileUsed).slice(0, Math.max(resolved.maxSupporting, 0));
   const relatedIds = new Set([pack.primary.id, ...supporting.map((record) => record.id)]);
@@ -255,8 +258,8 @@ export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOp
       },
       resolved.queryText,
     ),
-    primary: toBundleEntry(pack.primary, "primary", resolved),
-    supporting: supporting.map((record) => toBundleEntry(record, "supporting", resolved)),
+    primary: toBundleEntry(pack.primary, "primary", { ...resolved, routingPolicy }),
+    supporting: supporting.map((record) => toBundleEntry(record, "supporting", { ...resolved, routingPolicy })),
     links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
     hints: buildBundleHints(pack.primary, supporting, pack.links),
     route,
@@ -352,8 +355,9 @@ function truncateText(value: string, length: number): string {
 function toBundleEntry(
   record: MemoryRecord,
   role: "primary" | "supporting",
-  options: Required<Pick<BuildMemoryBundleOptions, "maxContentChars" | "preferCompact">>,
+  options: Required<Pick<BuildMemoryBundleOptions, "maxContentChars" | "preferCompact">> & { routingPolicy?: Partial<RoutingPolicy> },
 ): MemoryBundleEntry {
+  const routingPolicy = resolveRoutingPolicy(options.routingPolicy);
   const content = options.preferCompact && record.compactContent
     ? truncateText(record.compactContent, options.maxContentChars)
     : truncateText(record.content, options.maxContentChars);
@@ -368,11 +372,11 @@ function toBundleEntry(
     content,
     compactContent: record.compactContent,
     tags: record.tags,
-    annotations: buildEntryAnnotations(record),
+    annotations: buildEntryAnnotations(record, routingPolicy),
   };
 }
 
-function buildEntryAnnotations(record: MemoryRecord): MemoryBundleAnnotation[] {
+function buildEntryAnnotations(record: MemoryRecord, routingPolicy: RoutingPolicy = defaultRoutingPolicy): MemoryBundleAnnotation[] {
   const annotations = new Set<MemoryBundleAnnotation>();
   const lowerTags = new Set(record.tags.map((tag) => tag.toLowerCase()));
 
@@ -384,7 +388,7 @@ function buildEntryAnnotations(record: MemoryRecord): MemoryBundleAnnotation[] {
     annotations.add("high_confidence");
   }
 
-  if (record.freshness <= 0.35 || record.confidence <= 0.35) {
+  if (record.freshness <= routingPolicy.staleThreshold || record.confidence <= routingPolicy.staleThreshold) {
     annotations.add("stale");
   }
 
@@ -409,6 +413,7 @@ function buildBundleHints(
   primary: MemoryRecord,
   supporting: MemoryRecord[],
   links: MemoryRecordLink[],
+  routingPolicy: RoutingPolicy = defaultRoutingPolicy,
 ): MemoryBundleHint[] {
   const hints = new Set<MemoryBundleHint>();
   const records = [primary, ...supporting];
@@ -425,7 +430,7 @@ function buildBundleHints(
     hints.add("contains_contested_memory");
   }
 
-  if (records.some((record) => record.freshness <= 0.35 || record.confidence <= 0.35 || record.status === "expired")) {
+  if (records.some((record) => record.freshness <= routingPolicy.staleThreshold || record.confidence <= routingPolicy.staleThreshold || record.status === "expired")) {
     hints.add("contains_stale_memory");
   }
 
@@ -441,6 +446,7 @@ function resolveBundleRoute(
   supporting: MemoryRecord[],
   hints: MemoryBundleHint[],
   options: BuildMemoryBundleOptions,
+  routingPolicy: RoutingPolicy,
 ): MemoryBundleRoute {
   const requestedConsumer = options.consumer ?? (options.profile ?? "balanced");
 
@@ -456,7 +462,7 @@ function resolveBundleRoute(
     };
   }
 
-  const resolvedConsumer = autoResolveConsumer(primary, supporting, hints);
+  const resolvedConsumer = autoResolveConsumer(primary, supporting, hints, routingPolicy);
   return {
     requestedConsumer,
     resolvedConsumer,
@@ -472,18 +478,24 @@ function autoResolveConsumer(
   primary: MemoryRecord,
   supporting: MemoryRecord[],
   hints: MemoryBundleHint[],
+  routingPolicy: RoutingPolicy = defaultRoutingPolicy,
 ): MemoryBundleProfile {
-  if (hints.includes("contains_contested_memory") || hints.includes("contains_stale_memory")) {
+  if (
+    (routingPolicy.preferReviewerOnContested && hints.includes("contains_contested_memory")) ||
+    (routingPolicy.preferReviewerOnStale && hints.includes("contains_stale_memory"))
+  ) {
     return "reviewer";
   }
 
-  if (primary.kind === "decision" || primary.kind === "task" || primary.kind === "blocker") {
+  if (routingPolicy.preferExecutorOnActionable && (primary.kind === "decision" || primary.kind === "task" || primary.kind === "blocker")) {
     return "executor";
   }
 
   if (
-    hints.includes("contains_distilled_memory") ||
+    routingPolicy.preferPlannerOnDistilled && (
+      hints.includes("contains_distilled_memory") ||
     [primary, ...supporting].some((record) => record.kind === "summary")
+    )
   ) {
     return "planner";
   }
@@ -595,6 +607,13 @@ function scoreSupportingForProfile(record: MemoryRecord, profile: MemoryBundlePr
   }
 
   return baseScore;
+}
+
+function resolveRoutingPolicy(policy: Partial<RoutingPolicy> | undefined): RoutingPolicy {
+  return {
+    ...defaultRoutingPolicy,
+    ...(policy ?? {}),
+  };
 }
 
 function resolveBundlePolicy(

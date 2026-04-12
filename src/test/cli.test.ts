@@ -1859,3 +1859,107 @@ test("CLI bundle can auto-route actionable memory toward executor handoff", asyn
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("CLI space routing policy can override auto-routing defaults", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-routing-policy-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Routing Policy Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    await runCommand(
+      parseArgs([
+        "space", "configure",
+        "--id", spaceId,
+        "--routing-prefer-reviewer-on-contested", "false",
+        "--routing-prefer-reviewer-on-stale", "false",
+        "--routing-prefer-planner-on-distilled", "true",
+      ]),
+      { repository },
+    );
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const primaryResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "summary",
+        "--content", "Distilled retrieval memory that is stale but still useful for planning.",
+        "--summary", "Distilled retrieval memory",
+        "--tags", "retrieval,distilled",
+        "--confidence", "0.3",
+        "--freshness", "0.3",
+      ]),
+      { repository },
+    );
+    const primaryId = primaryResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(primaryId);
+
+    const contestedResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Legacy retrieval decision that has been superseded.",
+        "--summary", "Legacy retrieval decision",
+        "--status", "superseded",
+        "--tags", "retrieval",
+      ]),
+      { repository },
+    );
+    const contestedId = contestedResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(contestedId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", primaryId,
+        "--to-record-id", contestedId,
+        "--type", "references",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "retrieval",
+        "--limit", "1",
+        "--bundle-consumer", "auto",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      route: { resolvedConsumer: string; profileUsed: string; source: string };
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.route.resolvedConsumer, "planner");
+    assert.equal(parsed[0]?.route.profileUsed, "planner");
+    assert.equal(parsed[0]?.route.source, "auto");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

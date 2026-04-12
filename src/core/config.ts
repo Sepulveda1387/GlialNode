@@ -49,6 +49,14 @@ export interface ReinforcementPolicy {
   maxFreshness: number;
 }
 
+export interface RoutingPolicy {
+  preferReviewerOnContested: boolean;
+  preferReviewerOnStale: boolean;
+  staleThreshold: number;
+  preferExecutorOnActionable: boolean;
+  preferPlannerOnDistilled: boolean;
+}
+
 export const defaultConfig: GlialNodeConfig = {
   maxWorkingMemoryRecords: 50,
   staleRecordWindowDays: 14,
@@ -96,4 +104,12 @@ export const defaultReinforcementPolicy: ReinforcementPolicy = {
   freshnessBoost: 0.12,
   maxConfidence: 1,
   maxFreshness: 1,
+};
+
+export const defaultRoutingPolicy: RoutingPolicy = {
+  preferReviewerOnContested: true,
+  preferReviewerOnStale: true,
+  staleThreshold: 0.35,
+  preferExecutorOnActionable: true,
+  preferPlannerOnDistilled: true,
 };

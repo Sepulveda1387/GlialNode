@@ -947,3 +947,79 @@ test("GlialNodeClient can auto-route bundles toward reviewer context when memory
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient space routing policy can override auto-routing defaults", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-routing-policy-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Routing Policy Space",
+      settings: {
+        routing: {
+          preferReviewerOnContested: false,
+          preferReviewerOnStale: false,
+          preferPlannerOnDistilled: true,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "summary",
+      content: "Distilled retrieval memory that is stale but still useful for planning.",
+      summary: "Distilled retrieval memory",
+      tags: ["retrieval", "distilled"],
+      confidence: 0.3,
+      freshness: 0.3,
+      importance: 0.7,
+    });
+
+    const contested = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Legacy retrieval decision that has been superseded.",
+      summary: "Legacy retrieval decision",
+      status: "superseded",
+      tags: ["retrieval"],
+      confidence: 0.58,
+      freshness: 0.42,
+      importance: 0.67,
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: primary.id,
+      toRecordId: contested.id,
+      type: "references",
+    });
+
+    const bundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "retrieval",
+      limit: 1,
+    }, {
+      bundleConsumer: "auto",
+      primaryLimit: 1,
+      supportLimit: 4,
+    });
+
+    assert.equal(bundles.length, 1);
+    assert.equal(bundles[0]?.route.resolvedConsumer, "planner");
+    assert.equal(bundles[0]?.route.profileUsed, "planner");
+    assert.equal(bundles[0]?.route.source, "auto");
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

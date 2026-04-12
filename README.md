@@ -74,6 +74,7 @@ flowchart TD
 - distill related active records into durable summary memory with provenance links
 - detect contradictory durable memory and preserve it as contested state
 - attach bundle annotations and consumer hints for actionable, stale, distilled, or contested handoff memory
+- tune auto-routing behavior per space so different memory spaces can lean toward review, planning, or execution
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
@@ -470,6 +471,14 @@ Each bundle now includes a `route` object with:
 - the routing reason
 - warnings derived from risky bundle hints
 
+Auto-routing can also be tuned per space through routing settings:
+
+- `routing.preferReviewerOnContested`
+- `routing.preferReviewerOnStale`
+- `routing.staleThreshold`
+- `routing.preferExecutorOnActionable`
+- `routing.preferPlannerOnDistilled`
+
 ## Contradiction Handling
 
 GlialNode can now detect likely contradictions when a new durable record is written into the same scope as older durable memory.
@@ -579,6 +588,7 @@ glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
 glialnode space configure --id <space-id> --decay-enabled true --decay-min-age-days 7 --decay-confidence-per-day 0.02 --decay-freshness-per-day 0.03
+glialnode space configure --id <space-id> --routing-prefer-reviewer-on-contested false --routing-prefer-reviewer-on-stale false --routing-prefer-planner-on-distilled true
 glialnode space configure --id <space-id> --reinforcement-enabled true --reinforcement-confidence-boost 0.05 --reinforcement-freshness-boost 0.1
 glialnode space configure --id <space-id> --retention-short-days 7 --retention-mid-days 30
 glialnode space report --id <space-id>

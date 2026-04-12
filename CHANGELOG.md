@@ -18,6 +18,7 @@
 - Added bundle profiles and pruning controls for tighter downstream handoff payloads.
 - Added bundle annotations and consumer hints so handoff bundles can flag actionable, stale, distilled, and contested memory explicitly.
 - Added bundle intent routing so GlialNode can auto-shape handoff payloads for planner, executor, or reviewer consumers.
+- Added per-space routing policy controls so auto-routing behavior can be tuned without changing application code.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

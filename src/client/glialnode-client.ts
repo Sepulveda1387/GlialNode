@@ -5,6 +5,7 @@ import type {
   CompactionPolicy,
   ConflictPolicy,
   DecayPolicy,
+  RoutingPolicy,
   ReinforcementPolicy,
   RetentionPolicy,
 } from "../core/config.js";
@@ -86,6 +87,7 @@ export interface ConfigureSpaceInput {
   compaction?: Partial<CompactionPolicy>;
   conflict?: Partial<ConflictPolicy>;
   decay?: Partial<DecayPolicy>;
+  routing?: Partial<RoutingPolicy>;
   reinforcement?: Partial<ReinforcementPolicy>;
   retentionDays?: Partial<RetentionPolicy>;
 }
@@ -209,6 +211,7 @@ export class GlialNodeClient {
         input.retentionDays ? { retentionDays: input.retentionDays } : undefined,
         input.conflict ? { conflict: input.conflict } : undefined,
         input.decay ? { decay: input.decay } : undefined,
+        input.routing ? { routing: input.routing } : undefined,
         input.reinforcement ? { reinforcement: input.reinforcement } : undefined,
       ),
     );
@@ -344,11 +347,13 @@ export class GlialNodeClient {
     query: Parameters<MemoryRepository["searchRecords"]>[0],
     options: RecallOptions = {},
   ): Promise<MemoryBundle[]> {
+    const space = await requireSpace(this.repository, query.spaceId);
     const packs = await this.recallRecords(query, options);
     return packs.map((pack) => buildMemoryBundle(pack, {
       queryText: query.text,
       profile: options.bundleProfile,
       consumer: options.bundleConsumer,
+      routingPolicy: space.settings?.routing,
       maxSupporting: options.bundleMaxSupporting,
       maxContentChars: options.bundleMaxContentChars,
       preferCompact: options.bundlePreferCompact,
@@ -722,6 +727,10 @@ function mergeSpaceSettings(
     reinforcement: {
       ...(existing?.reinforcement ?? {}),
       ...Object.assign({}, ...rest.map((entry) => entry?.reinforcement ?? {})),
+    },
+    routing: {
+      ...(existing?.routing ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.routing ?? {})),
     },
   };
 }

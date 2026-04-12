@@ -99,6 +99,13 @@ export interface MemorySpaceSettings {
     maxConfidence?: number;
     maxFreshness?: number;
   };
+  routing?: {
+    preferReviewerOnContested?: boolean;
+    preferReviewerOnStale?: boolean;
+    staleThreshold?: number;
+    preferExecutorOnActionable?: boolean;
+    preferPlannerOnDistilled?: boolean;
+  };
 }
 
 export interface MemorySpace {
