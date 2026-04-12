@@ -756,17 +756,19 @@ export class GlialNodeClient {
     });
 
     await ensureSpaceAuditScope(this.repository, space.id);
-    await this.repository.appendEvent(
-      createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${imported.preset.name}.`, {
-        bundleName: sourceBundle.preset.name,
-        importedPresetName: imported.preset.name,
-        trusted: true,
-        trustProfile,
-        signer: imported.metadata.signer,
-        signerKeyId: imported.metadata.signerKeyId,
-        origin: imported.metadata.origin,
-      }),
-    );
+    const event = createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${imported.preset.name}.`, {
+      bundleName: sourceBundle.preset.name,
+      importedPresetName: imported.preset.name,
+      trusted: true,
+      trustProfile,
+      signer: imported.metadata.signer,
+      signerKeyId: imported.metadata.signerKeyId,
+      origin: imported.metadata.origin,
+      matchedTrustedSignerNames: [],
+      warnings: [],
+    });
+    await this.repository.appendEvent(event);
+    await this.repository.writeRecord(createPresetBundleAuditSummaryRecord(space.id, event));
 
     return imported;
   }
@@ -804,18 +806,19 @@ export class GlialNodeClient {
     );
 
     await ensureSpaceAuditScope(this.repository, space.id);
-    await this.repository.appendEvent(
-      createPresetBundleAuditEvent(space.id, "bundle_reviewed", `Reviewed preset bundle ${basename(resolve(inputPath))}.`, {
-        bundlePath: resolve(inputPath),
-        trusted: validation.trusted,
-        trustProfile: validation.report.trustProfile,
-        signer: validation.metadata.signer,
-        signerKeyId: validation.report.signerKeyId,
-        origin: validation.metadata.origin,
-        matchedTrustedSignerNames: validation.report.matchedTrustedSignerNames,
-        warnings: validation.warnings,
-      }),
-    );
+    const event = createPresetBundleAuditEvent(space.id, "bundle_reviewed", `Reviewed preset bundle ${basename(resolve(inputPath))}.`, {
+      bundleName: basename(resolve(inputPath)),
+      bundlePath: resolve(inputPath),
+      trusted: validation.trusted,
+      trustProfile: validation.report.trustProfile,
+      signer: validation.metadata.signer,
+      signerKeyId: validation.report.signerKeyId,
+      origin: validation.metadata.origin,
+      matchedTrustedSignerNames: validation.report.matchedTrustedSignerNames,
+      warnings: validation.warnings,
+    });
+    await this.repository.appendEvent(event);
+    await this.repository.writeRecord(createPresetBundleAuditSummaryRecord(space.id, event));
 
     return validation;
   }
@@ -1849,6 +1852,39 @@ function createPresetBundleAuditEvent(
     payload,
     createdAt: new Date().toISOString(),
   };
+}
+
+function createPresetBundleAuditSummaryRecord(spaceId: string, event: MemoryEvent): MemoryRecord {
+  const payload = event.payload ?? {};
+  const bundleName = typeof payload.bundleName === "string" ? payload.bundleName : "unknown";
+  const importedPresetName = typeof payload.importedPresetName === "string" ? payload.importedPresetName : undefined;
+  const trustProfile = typeof payload.trustProfile === "string" ? payload.trustProfile : "permissive";
+  const signer = typeof payload.signer === "string" ? payload.signer : "unknown";
+  const origin = typeof payload.origin === "string" ? payload.origin : "unknown";
+  const trusted = payload.trusted === true;
+  const warnings = Array.isArray(payload.warnings) ? payload.warnings.filter((item): item is string => typeof item === "string") : [];
+  const matchedTrustedSignerNames = Array.isArray(payload.matchedTrustedSignerNames)
+    ? payload.matchedTrustedSignerNames.filter((item): item is string => typeof item === "string")
+    : [];
+
+  const content = event.type === "bundle_imported"
+    ? `Preset bundle ${bundleName} was imported as ${importedPresetName ?? bundleName} with trust profile ${trustProfile}. trusted=${trusted}. signer=${signer}. origin=${origin}. matchedTrustedSigners=${matchedTrustedSignerNames.join(",") || "none"}. warnings=${warnings.join(" | ") || "none"}.`
+    : `Preset bundle ${bundleName} was reviewed with trust profile ${trustProfile}. trusted=${trusted}. signer=${signer}. origin=${origin}. matchedTrustedSigners=${matchedTrustedSignerNames.join(",") || "none"}. warnings=${warnings.join(" | ") || "none"}.`;
+
+  return createMemoryRecord({
+    spaceId,
+    tier: "mid",
+    kind: "summary",
+    content,
+    summary: event.type === "bundle_imported" ? "Bundle import audit" : "Bundle review audit",
+    scope: event.scope,
+    visibility: "space",
+    tags: ["provenance", "bundle", "audit", event.type],
+    importance: event.type === "bundle_imported" ? 0.66 : 0.58,
+    confidence: 1,
+    freshness: 0.74,
+    sourceEventId: event.id,
+  });
 }
 
 async function ensureSpaceAuditScope(repository: MemoryRepository, spaceId: string): Promise<void> {

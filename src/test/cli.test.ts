@@ -218,6 +218,12 @@ test("CLI can store provenance settings on a space and use them for bundle valid
     assert.match(report.lines.join("\n"), /recentProvenanceEvents=2/);
     assert.match(report.lines.join("\n"), /bundle_reviewed/);
     assert.match(report.lines.join("\n"), /bundle_imported/);
+
+    const auditSearch = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--text", "Bundle import audit"]),
+      { repository },
+    );
+    assert.match(auditSearch.lines.join("\n"), /Bundle import audit/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

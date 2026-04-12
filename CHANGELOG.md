@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added provenance audit events for space-scoped preset bundle review and import.
+- Added searchable audit summary records for space-scoped preset bundle review and import.
 - Added space-aware preset bundle validation and import helpers to `GlialNodeClient`.
 - Added semantic memory distillation during compaction.
 - Added provenance links from distilled summary records back to their source records.
