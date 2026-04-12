@@ -68,6 +68,7 @@ import {
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import { SqliteMemoryRepository } from "../storage/index.js";
+import type { MemoryRepository } from "../storage/repository.js";
 import type { ParsedArgs } from "./args.js";
 
 export interface CommandResult {
@@ -359,6 +360,10 @@ async function runSpaceCommand(
         `kinds=${formatCounts(report.recordsByKind)}`,
         `recentLifecycleEvents=${report.recentLifecycleEvents.length}`,
         ...report.recentLifecycleEvents.map(
+          (event) => `${event.id} ${event.type} ${truncate(event.summary, 100)}`,
+        ),
+        `recentProvenanceEvents=${report.recentProvenanceEvents.length}`,
+        ...report.recentProvenanceEvents.map(
           (event) => `${event.id} ${event.type} ${truncate(event.summary, 100)}`,
         ),
       ],
@@ -1009,9 +1014,10 @@ async function runPresetCommand(
     const imported = parsePresetBundle(readTextFile(inputPath));
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
-    const provenanceSettings = parsed.flags["space-id"]
-      ? (await requireSpace(context.repository, parsed.flags["space-id"])).settings?.provenance
+    const space = parsed.flags["space-id"]
+      ? await requireSpace(context.repository, parsed.flags["space-id"])
       : undefined;
+    const provenanceSettings = space?.settings?.provenance;
     const validation = validatePresetBundle(
       imported,
       resolvePresetTrustPolicy(
@@ -1038,6 +1044,23 @@ async function runPresetCommand(
       name,
     });
 
+    if (space) {
+      await ensureSpaceAuditScope(context.repository, space.id);
+      await context.repository.appendEvent(
+        createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${name}.`, {
+          bundleName: imported.preset.name,
+          importedPresetName: name,
+          trusted: validation.trusted,
+          trustProfile: validation.report.trustProfile,
+          signer: validation.metadata.signer,
+          signerKeyId: validation.report.signerKeyId,
+          origin: validation.metadata.origin,
+          matchedTrustedSignerNames: validation.report.matchedTrustedSignerNames,
+          warnings: validation.warnings,
+        }),
+      );
+    }
+
     return {
       lines: [
         "Preset bundle imported.",
@@ -1053,9 +1076,10 @@ async function runPresetCommand(
   if (action === "bundle-show") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const directory = resolvePresetDirectory(parsed.flags.directory);
-    const provenanceSettings = parsed.flags["space-id"]
-      ? (await requireSpace(context.repository, parsed.flags["space-id"])).settings?.provenance
+    const space = parsed.flags["space-id"]
+      ? await requireSpace(context.repository, parsed.flags["space-id"])
       : undefined;
+    const provenanceSettings = space?.settings?.provenance;
     const bundle = parsePresetBundle(readTextFile(inputPath));
     const validation = validatePresetBundle(
       bundle,
@@ -1066,6 +1090,22 @@ async function runPresetCommand(
       ),
       parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
     );
+
+    if (space) {
+      await ensureSpaceAuditScope(context.repository, space.id);
+      await context.repository.appendEvent(
+        createPresetBundleAuditEvent(space.id, "bundle_reviewed", `Reviewed preset bundle ${bundle.preset.name}.`, {
+          bundleName: bundle.preset.name,
+          trusted: validation.trusted,
+          trustProfile: validation.report.trustProfile,
+          signer: validation.metadata.signer,
+          signerKeyId: validation.report.signerKeyId,
+          origin: validation.metadata.origin,
+          matchedTrustedSignerNames: validation.report.matchedTrustedSignerNames,
+          warnings: validation.warnings,
+        }),
+      );
+    }
 
     return {
       lines: [
@@ -3020,6 +3060,44 @@ function mergePresetTrustPolicyFromSettings(
     allowedSignerKeyIds: mergeStringLists(provenanceSettings?.allowedSignerKeyIds, trustPolicy.allowedSignerKeyIds),
     trustedSignerNames: mergeStringLists(provenanceSettings?.trustedSignerNames, trustPolicy.trustedSignerNames),
   };
+}
+
+function createPresetBundleAuditEvent(
+  spaceId: string,
+  type: "bundle_reviewed" | "bundle_imported",
+  summary: string,
+  payload: Record<string, unknown>,
+): MemoryEvent {
+  return {
+    id: createId("event"),
+    spaceId,
+    scope: {
+      type: "memory_space",
+      id: getSpaceAuditScopeId(spaceId),
+    },
+    actorType: "system",
+    actorId: "preset-bundle-audit",
+    type,
+    summary,
+    payload,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function ensureSpaceAuditScope(repository: MemoryRepository, spaceId: string): Promise<void> {
+  const timestamp = new Date().toISOString();
+  await repository.upsertScope({
+    id: getSpaceAuditScopeId(spaceId),
+    spaceId,
+    type: "memory_space",
+    label: "Space Audit",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function getSpaceAuditScopeId(spaceId: string): string {
+  return `space_audit_${spaceId}`;
 }
 
 function getPresetTrustProfile(profile: "permissive" | "signed" | "anchored"): {

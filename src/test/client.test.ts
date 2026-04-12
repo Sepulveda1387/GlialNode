@@ -683,6 +683,10 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     });
     assert.equal(importedBySpace.preset.name, "team-executor-imported");
 
+    const provenanceReport = await client.getSpaceReport(provenanceSpace.id);
+    assert.match(provenanceReport.recentProvenanceEvents.map((event) => event.type).join(","), /bundle_reviewed/);
+    assert.match(provenanceReport.recentProvenanceEvents.map((event) => event.type).join(","), /bundle_imported/);
+
     const signedProfile = client.validatePresetBundle(bundlePath, undefined, "signed");
     assert.equal(signedProfile.trusted, true);
     assert.equal(signedProfile.report.trustProfile, "signed");

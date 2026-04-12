@@ -198,6 +198,26 @@ test("CLI can store provenance settings on a space and use them for bundle valid
     );
     assert.match(showResult.lines.join("\n"), /trustProfile=anchored/);
     assert.match(showResult.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
+
+    const importResult = await runCommand(
+      parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--name", "team-executor-imported",
+        "--space-id", spaceId,
+      ]),
+      { repository },
+    );
+    assert.match(importResult.lines.join("\n"), /trusted=true/);
+
+    const report = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId]),
+      { repository },
+    );
+    assert.match(report.lines.join("\n"), /recentProvenanceEvents=2/);
+    assert.match(report.lines.join("\n"), /bundle_reviewed/);
+    assert.match(report.lines.join("\n"), /bundle_imported/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

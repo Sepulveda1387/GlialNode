@@ -16,6 +16,7 @@ export interface SpaceReport {
   recordsByStatus: Record<string, number>;
   recordsByKind: Record<string, number>;
   recentLifecycleEvents: MemoryEvent[];
+  recentProvenanceEvents: MemoryEvent[];
 }
 
 export interface MemoryRepository {

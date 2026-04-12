@@ -746,13 +746,29 @@ export class GlialNodeClient {
     const space = await requireSpace(this.repository, options.spaceId);
     const provenanceSettings = space.settings?.provenance;
     const trustProfile = options.trustProfile ?? provenanceSettings?.trustProfile ?? "permissive";
+    const sourceBundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
 
-    return this.importPresetBundle(inputPath, {
+    const imported = this.importPresetBundle(inputPath, {
       directory: options.directory,
       name: options.name,
       trustPolicy: mergePresetBundleTrustPolicyFromSettings(options.trustPolicy, provenanceSettings),
       trustProfile,
     });
+
+    await ensureSpaceAuditScope(this.repository, space.id);
+    await this.repository.appendEvent(
+      createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${imported.preset.name}.`, {
+        bundleName: sourceBundle.preset.name,
+        importedPresetName: imported.preset.name,
+        trusted: true,
+        trustProfile,
+        signer: imported.metadata.signer,
+        signerKeyId: imported.metadata.signerKeyId,
+        origin: imported.metadata.origin,
+      }),
+    );
+
+    return imported;
   }
 
   validatePresetBundle(
@@ -781,11 +797,27 @@ export class GlialNodeClient {
     const provenanceSettings = space.settings?.provenance;
     const trustProfile = options.trustProfile ?? provenanceSettings?.trustProfile ?? "permissive";
 
-    return this.validatePresetBundle(
+    const validation = this.validatePresetBundle(
       inputPath,
       mergePresetBundleTrustPolicyFromSettings(options.trustPolicy, provenanceSettings),
       trustProfile,
     );
+
+    await ensureSpaceAuditScope(this.repository, space.id);
+    await this.repository.appendEvent(
+      createPresetBundleAuditEvent(space.id, "bundle_reviewed", `Reviewed preset bundle ${basename(resolve(inputPath))}.`, {
+        bundlePath: resolve(inputPath),
+        trusted: validation.trusted,
+        trustProfile: validation.report.trustProfile,
+        signer: validation.metadata.signer,
+        signerKeyId: validation.report.signerKeyId,
+        origin: validation.metadata.origin,
+        matchedTrustedSignerNames: validation.report.matchedTrustedSignerNames,
+        warnings: validation.warnings,
+      }),
+    );
+
+    return validation;
   }
 
   promotePresetChannel(
@@ -1795,6 +1827,44 @@ function mergePresetBundleTrustPolicyFromSettings(
     allowedSignerKeyIds: mergeStringArrays(provenanceSettings?.allowedSignerKeyIds, trustPolicy?.allowedSignerKeyIds),
     trustedSignerNames: mergeStringArrays(provenanceSettings?.trustedSignerNames, trustPolicy?.trustedSignerNames),
   };
+}
+
+function createPresetBundleAuditEvent(
+  spaceId: string,
+  type: "bundle_reviewed" | "bundle_imported",
+  summary: string,
+  payload: Record<string, unknown>,
+): MemoryEvent {
+  return {
+    id: createId("event"),
+    spaceId,
+    scope: {
+      type: "memory_space",
+      id: getSpaceAuditScopeId(spaceId),
+    },
+    actorType: "system",
+    actorId: "preset-bundle-audit",
+    type,
+    summary,
+    payload,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function ensureSpaceAuditScope(repository: MemoryRepository, spaceId: string): Promise<void> {
+  const timestamp = new Date().toISOString();
+  await repository.upsertScope({
+    id: getSpaceAuditScopeId(spaceId),
+    spaceId,
+    type: "memory_space",
+    label: "Space Audit",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function getSpaceAuditScopeId(spaceId: string): string {
+  return `space_audit_${spaceId}`;
 }
 
 function getPresetBundleTrustProfile(profile: PresetBundleTrustProfileName): PresetBundleTrustPolicy {

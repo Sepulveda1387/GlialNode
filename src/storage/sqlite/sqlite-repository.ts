@@ -500,6 +500,12 @@ export class SqliteMemoryRepository implements MemoryRepository {
       recentEventLimit,
     );
 
+    const recentProvenanceEvents = await this.listEventsByType(
+      spaceId,
+      ["bundle_reviewed", "bundle_imported"],
+      recentEventLimit,
+    );
+
     return {
       spaceId,
       recordCount,
@@ -509,6 +515,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
       recordsByStatus,
       recordsByKind,
       recentLifecycleEvents,
+      recentProvenanceEvents,
     };
   }
 

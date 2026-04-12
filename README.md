@@ -140,6 +140,7 @@ GlialNode currently includes:
 - active retention sweeps with expiration events and summaries
 - space-level reporting for memory and lifecycle observability
 - unified maintenance workflow for operational upkeep
+- provenance audit events for space-scoped preset bundle review/import
 - repository tests for core persistence and lexical search
 
 ## Current Notes
@@ -222,7 +223,7 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 
-`bundle-show` now reports the selected trust profile, effective policy, signer key id, and matched trusted signers so provenance decisions are inspectable instead of opaque.
+`bundle-show` now reports the selected trust profile, effective policy, signer key id, and matched trusted signers so provenance decisions are inspectable instead of opaque. When a bundle is reviewed or imported with `--space-id`, GlialNode also records `bundle_reviewed` and `bundle_imported` events for that space so trust decisions become part of the audit trail and show up in `space report`.
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
 

@@ -48,7 +48,9 @@ export type EventType =
   | "memory_superseded"
   | "memory_conflicted"
   | "memory_decayed"
-  | "memory_reinforced";
+  | "memory_reinforced"
+  | "bundle_reviewed"
+  | "bundle_imported";
 
 export type MemoryLinkType =
   | "derived_from"
