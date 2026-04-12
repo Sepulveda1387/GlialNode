@@ -65,6 +65,13 @@ export interface MemoryScope {
 export interface MemorySpaceSettings {
   retentionDays?: Partial<Record<MemoryTier, number>>;
   maxShortTermRecords?: number;
+  provenance?: {
+    trustProfile?: "permissive" | "signed" | "anchored";
+    trustedSignerNames?: string[];
+    allowedOrigins?: string[];
+    allowedSigners?: string[];
+    allowedSignerKeyIds?: string[];
+  };
   compaction?: {
     shortPromoteImportanceMin?: number;
     shortPromoteConfidenceMin?: number;

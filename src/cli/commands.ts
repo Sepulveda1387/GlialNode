@@ -100,7 +100,7 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
   }
 
   if (resource === "preset") {
-    return runPresetCommand(action, parsed);
+    return runPresetCommand(action, parsed, context);
   }
 
   if (resource === "scope") {
@@ -167,14 +167,14 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
-    "  glialnode preset bundle-show --input <path> [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
-    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -248,6 +248,7 @@ async function runSpaceCommand(
         channelPreset?.settings,
         registeredPreset?.settings,
         presetDefinition?.settings,
+        parseProvenanceFlags(parsed.flags),
       ),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -312,6 +313,7 @@ async function runSpaceCommand(
       parseRoutingFlags(parsed.flags),
       parseReinforcementFlags(parsed.flags),
       parseRetentionFlags(parsed.flags),
+      parseProvenanceFlags(parsed.flags),
     );
     const mergedSettings = mergeSpaceSettings(
       space.settings,
@@ -465,6 +467,7 @@ async function runSpaceCommand(
 async function runPresetCommand(
   action: string,
   parsed: ParsedArgs,
+  context: CommandContext,
 ): Promise<CommandResult> {
   if (action === "list") {
     const presets = listSpacePresetDefinitions();
@@ -1006,14 +1009,17 @@ async function runPresetCommand(
     const imported = parsePresetBundle(readTextFile(inputPath));
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const provenanceSettings = parsed.flags["space-id"]
+      ? (await requireSpace(context.repository, parsed.flags["space-id"])).settings?.provenance
+      : undefined;
     const validation = validatePresetBundle(
       imported,
       resolvePresetTrustPolicy(
-        parsePresetTrustPolicy(parsed.flags),
+        mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
         directory,
-        parseTrustProfileFlag(parsed.flags["trust-profile"]),
+        parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
       ),
-      parseTrustProfileFlag(parsed.flags["trust-profile"]),
+      parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
     );
 
     for (const preset of imported.history) {
@@ -1047,15 +1053,18 @@ async function runPresetCommand(
   if (action === "bundle-show") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const provenanceSettings = parsed.flags["space-id"]
+      ? (await requireSpace(context.repository, parsed.flags["space-id"])).settings?.provenance
+      : undefined;
     const bundle = parsePresetBundle(readTextFile(inputPath));
     const validation = validatePresetBundle(
       bundle,
       resolvePresetTrustPolicy(
-        parsePresetTrustPolicy(parsed.flags),
+        mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
         directory,
-        parseTrustProfileFlag(parsed.flags["trust-profile"]),
+        parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
       ),
-      parseTrustProfileFlag(parsed.flags["trust-profile"]),
+      parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
     );
 
     return {
@@ -2281,6 +2290,24 @@ function parseRoutingFlags(flags: Record<string, string>): MemorySpace["settings
   return { routing };
 }
 
+function parseProvenanceFlags(flags: Record<string, string>): MemorySpace["settings"] {
+  const provenance: NonNullable<MemorySpace["settings"]>["provenance"] = {};
+
+  if (flags["provenance-trust-profile"] !== undefined) {
+    provenance.trustProfile = parseTrustProfileFlag(flags["provenance-trust-profile"]);
+  }
+
+  if (flags["provenance-trust-signer"] !== undefined) {
+    provenance.trustedSignerNames = parseCsvFlag(flags["provenance-trust-signer"]);
+  }
+
+  if (Object.keys(provenance).length === 0) {
+    return {};
+  }
+
+  return { provenance };
+}
+
 function mergeSpaceSettings(
   ...settings: Array<MemorySpace["settings"] | undefined>
 ): MemorySpace["settings"] {
@@ -2312,6 +2339,14 @@ function mergeSpaceSettings(
     routing: {
       ...(existing?.routing ?? {}),
       ...Object.assign({}, ...rest.map((entry) => entry?.routing ?? {})),
+    },
+    provenance: {
+      ...(existing?.provenance ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.provenance ?? {})),
+      trustedSignerNames: mergeStringLists(
+        existing?.provenance?.trustedSignerNames,
+        Object.assign([], ...rest.map((entry) => entry?.provenance?.trustedSignerNames ?? [])) as string[],
+      ),
     },
   };
 }
@@ -2971,6 +3006,19 @@ function resolvePresetTrustPolicy(
       ...(basePolicy.allowedSignerKeyIds ?? []),
       ...trustedKeyIds,
     ])),
+  };
+}
+
+function mergePresetTrustPolicyFromSettings(
+  trustPolicy: ReturnType<typeof parsePresetTrustPolicy>,
+  provenanceSettings: NonNullable<MemorySpace["settings"]>["provenance"] | undefined,
+) {
+  return {
+    ...trustPolicy,
+    allowedOrigins: mergeStringLists(provenanceSettings?.allowedOrigins, trustPolicy.allowedOrigins),
+    allowedSigners: mergeStringLists(provenanceSettings?.allowedSigners, trustPolicy.allowedSigners),
+    allowedSignerKeyIds: mergeStringLists(provenanceSettings?.allowedSignerKeyIds, trustPolicy.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringLists(provenanceSettings?.trustedSignerNames, trustPolicy.trustedSignerNames),
   };
 }
 

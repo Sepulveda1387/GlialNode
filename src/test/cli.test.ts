@@ -108,11 +108,96 @@ test("CLI can create and configure spaces from presets with explicit overrides",
       reinforcement?: {
         confidenceBoost?: number;
       };
+      provenance?: {
+        trustProfile?: string;
+        trustedSignerNames?: string[];
+      };
     };
 
     assert.equal(settings.routing?.preferExecutorOnActionable, false);
     assert.equal(settings.routing?.preferPlannerOnDistilled, false);
     assert.equal(settings.reinforcement?.confidenceBoost, 0.1);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can store provenance settings on a space and use them for bundle validation", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-space-provenance-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpace = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Trusted Space",
+        "--provenance-trust-profile", "anchored",
+        "--provenance-trust-signer", "team-anchor",
+      ]),
+      { repository },
+    );
+    const spaceId = createSpace.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "team-executor-key",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "team-executor-key",
+        "--trust-name", "team-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "bundle-export",
+        "--name", "team-executor",
+        "--output", bundlePath,
+        "--directory", presetDirectory,
+        "--signing-key", "team-executor-key",
+      ]),
+      { repository },
+    );
+
+    const showResult = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--space-id", spaceId,
+      ]),
+      { repository },
+    );
+    assert.match(showResult.lines.join("\n"), /trustProfile=anchored/);
+    assert.match(showResult.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

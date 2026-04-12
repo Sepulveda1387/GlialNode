@@ -92,6 +92,31 @@ test("GlialNodeClient can create a space from a preset", async () => {
     assert.equal(space.settings?.routing?.preferPlannerOnDistilled, false);
     assert.equal(space.settings?.compaction?.shortPromoteImportanceMin, 0.78);
     assert.equal(space.settings?.reinforcement?.confidenceBoost, 0.1);
+    assert.equal(space.settings?.provenance?.trustProfile, undefined);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can store provenance settings on a space", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-space-provenance-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({
+      name: "Trusted Space",
+      settings: {
+        provenance: {
+          trustProfile: "anchored",
+          trustedSignerNames: ["team-anchor"],
+        },
+      },
+    });
+
+    assert.equal(space.settings?.provenance?.trustProfile, "anchored");
+    assert.deepEqual(space.settings?.provenance?.trustedSignerNames, ["team-anchor"]);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

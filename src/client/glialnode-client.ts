@@ -1865,6 +1865,14 @@ function mergeSpaceSettings(
       ...(existing?.routing ?? {}),
       ...Object.assign({}, ...rest.map((entry) => entry?.routing ?? {})),
     },
+    provenance: {
+      ...(existing?.provenance ?? {}),
+      ...Object.assign({}, ...rest.map((entry) => entry?.provenance ?? {})),
+      trustedSignerNames: mergeStringArrays(
+        existing?.provenance?.trustedSignerNames,
+        ([] as string[]).concat(...rest.map((entry) => entry?.provenance?.trustedSignerNames ?? [])),
+      ),
+    },
   };
 }
 

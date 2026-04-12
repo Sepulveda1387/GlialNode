@@ -218,6 +218,7 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor`
+- `glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 
 `bundle-show` now reports the selected trust profile, effective policy, signer key id, and matched trusted signers so provenance decisions are inspectable instead of opaque.
@@ -665,6 +666,7 @@ glialnode preset bundle-show --input ./team-executor.bundle.json --require-signe
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor
 glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor
+glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor
@@ -693,6 +695,7 @@ glialnode memory decay --space-id <space-id> --apply
 glialnode memory reinforce --record-id <record-id> --strength 2 --reason manual-confirmation
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --preset execution-first
+glialnode space configure --id <space-id> --provenance-trust-profile anchored --provenance-trust-signer team-anchor
 glialnode space configure --id <space-id> --distill-min-cluster-size 3 --distill-min-token-overlap 3
 glialnode space configure --id <space-id> --distill-supersede-sources false
 glialnode space configure --id <space-id> --conflict-enabled true --conflict-min-token-overlap 3 --conflict-confidence-penalty 0.2
