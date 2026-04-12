@@ -136,9 +136,10 @@ export function usageText(): string {
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset export --name <preset> --output <path>",
-    "  glialnode preset register --input <path> [--name <name>] [--directory <path>]",
+    "  glialnode preset register --input <path> [--name <name>] [--author <name>] [--version <semver>] [--directory <path>]",
     "  glialnode preset local-list [--directory <path>]",
     "  glialnode preset local-show --name <name> [--directory <path>]",
+    "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -440,6 +441,11 @@ async function runPresetCommand(
       lines: [
         `name=${preset.name}`,
         `summary=${preset.summary}`,
+        `version=${preset.version ?? ""}`,
+        `author=${preset.author ?? ""}`,
+        `source=${preset.source ?? ""}`,
+        `createdAt=${preset.createdAt ?? ""}`,
+        `updatedAt=${preset.updatedAt ?? ""}`,
         `settings=${JSON.stringify(preset.settings)}`,
       ],
     };
@@ -462,14 +468,20 @@ async function runPresetCommand(
 
   if (action === "register") {
     const preset = loadPresetDefinitionFromFile(requireFlag(parsed.flags, "input"));
+    const now = new Date().toISOString();
     const registered = {
       ...preset,
       name: parsed.flags.name ?? preset.name,
+      author: parsed.flags.author ?? preset.author,
+      version: parsed.flags.version ?? preset.version ?? "1.0.0",
+      source: requireFlag(parsed.flags, "input"),
+      createdAt: preset.createdAt ?? now,
+      updatedAt: now,
     };
     const directory = resolvePresetDirectory(parsed.flags.directory);
     mkdirSync(directory, { recursive: true });
+    writePresetFiles(directory, registered);
     const outputPath = join(directory, `${toPresetFileName(registered.name)}.json`);
-    writeFileSync(outputPath, stringifySpacePresetDefinition(registered), "utf8");
 
     return {
       lines: [
@@ -496,7 +508,25 @@ async function runPresetCommand(
       lines: [
         `name=${preset.name}`,
         `summary=${preset.summary}`,
+        `version=${preset.version ?? ""}`,
+        `author=${preset.author ?? ""}`,
+        `source=${preset.source ?? ""}`,
+        `createdAt=${preset.createdAt ?? ""}`,
+        `updatedAt=${preset.updatedAt ?? ""}`,
         `settings=${JSON.stringify(preset.settings)}`,
+      ],
+    };
+  }
+
+  if (action === "history") {
+    const history = listRegisteredPresetHistory(requireFlag(parsed.flags, "name"), parsed.flags.directory);
+    return {
+      lines: [
+        `versions=${history.length}`,
+        ...history.map(
+          (preset) =>
+            `${preset.version ?? ""} updatedAt=${preset.updatedAt ?? ""} source=${preset.source ?? ""} author=${preset.author ?? ""}`,
+        ),
       ],
     };
   }
@@ -1755,6 +1785,19 @@ function loadRegisteredPreset(name: string, directory: string | undefined) {
   return preset;
 }
 
+function listRegisteredPresetHistory(name: string, directory: string | undefined) {
+  const resolvedDirectory = resolvePresetDirectory(directory);
+  const historyDirectory = join(resolvedDirectory, ".versions", toPresetFileName(name));
+  if (!existsSync(historyDirectory)) {
+    return [];
+  }
+
+  return readdirSync(historyDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => loadPresetDefinitionFromFile(join(historyDirectory, entry)))
+    .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""));
+}
+
 function toPresetFileName(name: string): string {
   const normalized = name
     .trim()
@@ -1763,6 +1806,37 @@ function toPresetFileName(name: string): string {
     .replace(/^-+|-+$/g, "");
 
   return normalized || "preset";
+}
+
+function toPresetVersionFileName(version: string): string {
+  const normalized = version
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "1-0-0";
+}
+
+function toPresetHistoryTimestamp(value: string | undefined): string {
+  const normalized = (value ?? new Date().toISOString())
+    .replace(/[:.]/g, "-")
+    .replace(/[^0-9a-zA-Z-]/g, "");
+
+  return normalized || "snapshot";
+}
+
+function writePresetFiles(directory: string, preset: ReturnType<typeof parseSpacePresetDefinition>) {
+  const outputPath = join(directory, `${toPresetFileName(preset.name)}.json`);
+  writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
+
+  const historyDirectory = join(directory, ".versions", toPresetFileName(preset.name));
+  mkdirSync(historyDirectory, { recursive: true });
+  const historyPath = join(
+    historyDirectory,
+    `${toPresetHistoryTimestamp(preset.updatedAt)}--${toPresetVersionFileName(preset.version ?? "1.0.0")}.json`,
+  );
+  writeFileSync(historyPath, stringifySpacePresetDefinition(preset), "utf8");
 }
 
 interface SpaceExport {

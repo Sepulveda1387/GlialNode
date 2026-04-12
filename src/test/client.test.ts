@@ -151,8 +151,14 @@ test("GlialNodeClient can register and reload local preset files", async () => {
 
   try {
     client.exportPreset("execution-first", presetPath);
-    const registered = client.registerPreset(presetPath, { name: "team-executor" });
+    const registered = client.registerPreset(presetPath, {
+      name: "team-executor",
+      author: "GlialNode Test",
+      version: "2.1.0",
+    });
     assert.equal(registered.name, "team-executor");
+    assert.equal(registered.author, "GlialNode Test");
+    assert.equal(registered.version, "2.1.0");
 
     const listed = client.listRegisteredPresets();
     assert.ok(listed.some((preset) => preset.name === "team-executor"));
@@ -160,6 +166,14 @@ test("GlialNodeClient can register and reload local preset files", async () => {
     const loaded = client.getRegisteredPreset("team-executor");
     assert.equal(loaded.settings.routing?.preferExecutorOnActionable, true);
     assert.equal(loaded.settings.routing?.preferPlannerOnDistilled, false);
+    assert.equal(loaded.author, "GlialNode Test");
+    assert.equal(loaded.version, "2.1.0");
+    assert.ok(loaded.source?.endsWith("execution-first.json"));
+
+    const history = client.listRegisteredPresetHistory("team-executor");
+    assert.equal(history.length, 1);
+    assert.equal(history[0]?.version, "2.1.0");
+    assert.equal(history[0]?.author, "GlialNode Test");
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

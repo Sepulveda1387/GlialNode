@@ -138,7 +138,8 @@ test("CLI can list and show preset definitions", async () => {
     );
     assert.equal(showResult.lines[0], "name=conservative-review");
     assert.match(showResult.lines[1] ?? "", /cautious trust management/i);
-    assert.match(showResult.lines[2] ?? "", /preferReviewerOnContested/);
+    assert.match(showResult.lines.join("\n"), /version=1.0.0/);
+    assert.match(showResult.lines.join("\n"), /preferReviewerOnContested/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -205,6 +206,8 @@ test("CLI can register a local preset and reuse it by name", async () => {
         "preset", "register",
         "--input", presetPath,
         "--name", "team-executor",
+        "--author", "GlialNode Test",
+        "--version", "2.1.0",
         "--directory", presetDirectory,
       ]),
       { repository },
@@ -236,6 +239,22 @@ test("CLI can register a local preset and reuse it by name", async () => {
     );
     assert.match(showResult.lines.join("\n"), /preferExecutorOnActionable/);
     assert.match(showResult.lines.join("\n"), /"preferPlannerOnDistilled":false/);
+
+    const presetShowResult = await runCommand(
+      parseArgs(["preset", "local-show", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(presetShowResult.lines.join("\n"), /version=2.1.0/);
+    assert.match(presetShowResult.lines.join("\n"), /author=GlialNode Test/);
+    assert.match(presetShowResult.lines.join("\n"), /source=.*execution-first\.json/);
+
+    const historyResult = await runCommand(
+      parseArgs(["preset", "history", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(historyResult.lines[0], "versions=1");
+    assert.match(historyResult.lines.join("\n"), /2.1.0/);
+    assert.match(historyResult.lines.join("\n"), /author=GlialNode Test/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

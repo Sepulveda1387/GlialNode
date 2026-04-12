@@ -189,9 +189,12 @@ Built-in presets can also be exported to JSON and reused as custom preset files:
 
 If you want to keep a reusable local registry of custom brain styles, you can also register them once and reuse them by name:
 
-- `glialnode preset register --input ./execution-first.json --name team-executor`
+- `glialnode preset register --input ./execution-first.json --name team-executor --author "Memory Team" --version 2.1.0`
 - `glialnode preset local-list`
 - `glialnode preset local-show --name team-executor`
+- `glialnode preset history --name team-executor`
+
+Preset files and registered local presets can also carry provenance metadata like `version`, `author`, `source`, `createdAt`, and `updatedAt`, and the local registry now keeps versioned snapshot history for each registered preset. That gives a shared brain style some lineage instead of treating every update like an overwrite with no memory of what came before.
 
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
@@ -243,7 +246,11 @@ const client = new GlialNodeClient({
 
 console.log(client.listPresets());
 client.exportPreset("execution-first", "./execution-first.json");
-client.registerPreset("./execution-first.json", { name: "team-executor" });
+client.registerPreset("./execution-first.json", {
+  name: "team-executor",
+  author: "Memory Team",
+  version: "2.1.0",
+});
 
 const space = await client.createSpace({
   name: "Team Memory",

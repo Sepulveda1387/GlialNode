@@ -9,6 +9,11 @@ export type SpacePresetName =
 export interface SpacePresetDefinition {
   name: string;
   summary: string;
+  version?: string;
+  author?: string;
+  source?: string;
+  createdAt?: string;
+  updatedAt?: string;
   settings: MemorySpaceSettings;
 }
 
@@ -124,9 +129,14 @@ export function getSpacePreset(name: SpacePresetName): MemorySpaceSettings {
 }
 
 export function getSpacePresetDefinition(name: SpacePresetName): SpacePresetDefinition {
+  const timestamp = "built-in";
   return {
     name,
     summary: presetSummaries[name],
+    version: "1.0.0",
+    source: "built-in",
+    createdAt: timestamp,
+    updatedAt: timestamp,
     settings: getSpacePreset(name),
   };
 }
@@ -158,6 +168,11 @@ export function parseSpacePresetDefinition(value: string): SpacePresetDefinition
   return {
     name: candidate.name,
     summary: candidate.summary,
+    version: candidate.version && typeof candidate.version === "string" ? candidate.version : "1.0.0",
+    author: candidate.author && typeof candidate.author === "string" ? candidate.author : undefined,
+    source: candidate.source && typeof candidate.source === "string" ? candidate.source : "custom",
+    createdAt: candidate.createdAt && typeof candidate.createdAt === "string" ? candidate.createdAt : undefined,
+    updatedAt: candidate.updatedAt && typeof candidate.updatedAt === "string" ? candidate.updatedAt : undefined,
     settings: structuredClone(candidate.settings),
   };
 }

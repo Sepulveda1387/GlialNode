@@ -227,7 +227,10 @@ export class GlialNodeClient {
   }
 
   exportPreset(name: SpacePresetName, outputPath: string): SpacePresetDefinition {
-    const preset = getSpacePresetDefinition(name);
+    const preset = {
+      ...getSpacePresetDefinition(name),
+      updatedAt: new Date().toISOString(),
+    };
     const resolvedOutputPath = resolve(outputPath);
     mkdirSync(dirname(resolvedOutputPath), { recursive: true });
     writeFileSync(resolvedOutputPath, stringifySpacePresetDefinition(preset), "utf8");
@@ -240,17 +243,22 @@ export class GlialNodeClient {
 
   registerPreset(
     inputPath: string,
-    options: { name?: string; directory?: string } = {},
+    options: { name?: string; directory?: string; author?: string; version?: string } = {},
   ): SpacePresetDefinition {
     const preset = this.loadPreset(inputPath);
+    const now = new Date().toISOString();
     const registered: SpacePresetDefinition = {
       ...preset,
       name: options.name ?? preset.name,
+      version: options.version ?? preset.version ?? "1.0.0",
+      author: options.author ?? preset.author,
+      source: inputPath,
+      createdAt: preset.createdAt ?? now,
+      updatedAt: now,
     };
     const directory = resolve(options.directory ?? this.presetDirectory);
     mkdirSync(directory, { recursive: true });
-    const outputPath = join(directory, `${toPresetFileName(registered.name)}.json`);
-    writeFileSync(outputPath, stringifySpacePresetDefinition(registered), "utf8");
+    writePresetFiles(directory, registered);
     return registered;
   }
 
@@ -279,6 +287,11 @@ export class GlialNodeClient {
     }
 
     return preset;
+  }
+
+  listRegisteredPresetHistory(name: string, directory?: string): SpacePresetDefinition[] {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    return listRegisteredPresetHistoryFromDirectory(name, resolvedDirectory, (inputPath) => this.loadPreset(inputPath));
   }
 
   async getSpace(spaceId: string): Promise<MemorySpace> {
@@ -795,6 +808,53 @@ function toPresetFileName(name: string): string {
     .replace(/^-+|-+$/g, "");
 
   return normalized || basename(`${Date.now()}`);
+}
+
+function toPresetVersionFileName(version: string): string {
+  const normalized = version
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "1-0-0";
+}
+
+function toPresetHistoryTimestamp(value: string | undefined): string {
+  const normalized = (value ?? new Date().toISOString())
+    .replace(/[:.]/g, "-")
+    .replace(/[^0-9a-zA-Z-]/g, "");
+
+  return normalized || basename(`${Date.now()}`);
+}
+
+function writePresetFiles(directory: string, preset: SpacePresetDefinition): void {
+  const outputPath = join(directory, `${toPresetFileName(preset.name)}.json`);
+  writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
+
+  const historyDirectory = join(directory, ".versions", toPresetFileName(preset.name));
+  mkdirSync(historyDirectory, { recursive: true });
+  const historyPath = join(
+    historyDirectory,
+    `${toPresetHistoryTimestamp(preset.updatedAt)}--${toPresetVersionFileName(preset.version ?? "1.0.0")}.json`,
+  );
+  writeFileSync(historyPath, stringifySpacePresetDefinition(preset), "utf8");
+}
+
+function listRegisteredPresetHistoryFromDirectory(
+  name: string,
+  directory: string,
+  loadPreset: (inputPath: string) => SpacePresetDefinition,
+): SpacePresetDefinition[] {
+  const historyDirectory = join(directory, ".versions", toPresetFileName(name));
+  if (!existsSync(historyDirectory)) {
+    return [];
+  }
+
+  return readdirSync(historyDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => loadPreset(join(historyDirectory, entry)))
+    .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""));
 }
 
 function mergeSpaceSettings(
