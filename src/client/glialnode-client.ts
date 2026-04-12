@@ -14,6 +14,8 @@ import {
   getSpacePreset,
   getSpacePresetDefinition,
   listSpacePresetDefinitions,
+  parseSpacePresetDefinition,
+  stringifySpacePresetDefinition,
   type SpacePresetDefinition,
   type SpacePresetName,
 } from "../core/presets.js";
@@ -86,12 +88,14 @@ export interface CreateSpaceInput {
   name: string;
   description?: string;
   preset?: SpacePresetName;
+  presetDefinition?: SpacePresetDefinition;
   settings?: MemorySpaceSettings;
 }
 
 export interface ConfigureSpaceInput {
   spaceId: string;
   preset?: SpacePresetName;
+  presetDefinition?: SpacePresetDefinition;
   settings?: MemorySpaceSettings;
   compaction?: Partial<CompactionPolicy>;
   conflict?: Partial<ConflictPolicy>;
@@ -190,6 +194,7 @@ export class GlialNodeClient {
     const timestamp = new Date().toISOString();
     const settings = mergeSpaceSettings(
       input.preset ? getSpacePreset(input.preset) : undefined,
+      input.presetDefinition?.settings,
       input.settings,
     );
     const space: MemorySpace = {
@@ -217,6 +222,18 @@ export class GlialNodeClient {
     return getSpacePresetDefinition(name);
   }
 
+  exportPreset(name: SpacePresetName, outputPath: string): SpacePresetDefinition {
+    const preset = getSpacePresetDefinition(name);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, stringifySpacePresetDefinition(preset), "utf8");
+    return preset;
+  }
+
+  loadPreset(inputPath: string): SpacePresetDefinition {
+    return parseSpacePresetDefinition(readFileSync(resolve(inputPath), "utf8"));
+  }
+
   async getSpace(spaceId: string): Promise<MemorySpace> {
     return requireSpace(this.repository, spaceId);
   }
@@ -226,6 +243,7 @@ export class GlialNodeClient {
     const settings = mergeSpaceSettings(
       space.settings,
       input.preset ? getSpacePreset(input.preset) : undefined,
+      input.presetDefinition?.settings,
       input.settings,
       mergeSpaceSettings(
         undefined,

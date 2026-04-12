@@ -7,7 +7,7 @@ export type SpacePresetName =
   | "planning-heavy";
 
 export interface SpacePresetDefinition {
-  name: SpacePresetName;
+  name: string;
   summary: string;
   settings: MemorySpaceSettings;
 }
@@ -133,4 +133,35 @@ export function getSpacePresetDefinition(name: SpacePresetName): SpacePresetDefi
 
 export function listSpacePresetDefinitions(): SpacePresetDefinition[] {
   return (Object.keys(spacePresets) as SpacePresetName[]).map((name) => getSpacePresetDefinition(name));
+}
+
+export function parseSpacePresetDefinition(value: string): SpacePresetDefinition {
+  const parsed = JSON.parse(value) as unknown;
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Preset must be a JSON object.");
+  }
+
+  const candidate = parsed as Partial<SpacePresetDefinition>;
+  if (!candidate.name || typeof candidate.name !== "string") {
+    throw new Error("Preset must include a string name.");
+  }
+
+  if (!candidate.summary || typeof candidate.summary !== "string") {
+    throw new Error("Preset must include a string summary.");
+  }
+
+  if (!candidate.settings || typeof candidate.settings !== "object" || Array.isArray(candidate.settings)) {
+    throw new Error("Preset must include a settings object.");
+  }
+
+  return {
+    name: candidate.name,
+    summary: candidate.summary,
+    settings: structuredClone(candidate.settings),
+  };
+}
+
+export function stringifySpacePresetDefinition(preset: SpacePresetDefinition): string {
+  return JSON.stringify(preset, null, 2);
 }

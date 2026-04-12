@@ -21,6 +21,7 @@
 - Added per-space routing policy controls so auto-routing behavior can be tuned without changing application code.
 - Added named space presets so new memory spaces can start from balanced, execution-first, conservative-review, or planning-heavy policy bundles.
 - Added preset introspection so the client and CLI can list and show preset definitions before applying them.
+- Added preset export and preset-file application so custom brain styles can be shared as JSON and reapplied to new spaces.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

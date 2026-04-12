@@ -145,6 +145,48 @@ test("CLI can list and show preset definitions", async () => {
   }
 });
 
+test("CLI can export a preset file and apply it to a new space", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-file-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const repository = createRepository(databasePath);
+
+  try {
+    const exportResult = await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    assert.equal(exportResult.lines[0], "Preset exported.");
+
+    const showResult = await runCommand(
+      parseArgs(["preset", "show", "--input", presetPath]),
+      { repository },
+    );
+    assert.equal(showResult.lines[0], "name=execution-first");
+
+    const createSpaceResult = await runCommand(
+      parseArgs([
+        "space", "create",
+        "--name", "Preset File Space",
+        "--preset-file", presetPath,
+      ]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const spaceShowResult = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId]),
+      { repository },
+    );
+    assert.match(spaceShowResult.lines.join("\n"), /preferExecutorOnActionable/);
+    assert.match(spaceShowResult.lines.join("\n"), /"preferPlannerOnDistilled":false/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

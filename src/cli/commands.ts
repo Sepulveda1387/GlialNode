@@ -7,6 +7,8 @@ import {
   getSpacePresetDefinition,
   isSpacePresetName,
   listSpacePresetDefinitions,
+  parseSpacePresetDefinition,
+  stringifySpacePresetDefinition,
   type SpacePresetName,
 } from "../core/presets.js";
 import type {
@@ -132,13 +134,14 @@ export function usageText(): string {
     "Usage:",
     "  glialnode status",
     "  glialnode preset list",
-    "  glialnode preset show --name <preset>",
-    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--db <path>]",
+    "  glialnode preset show --name <preset> | --input <path>",
+    "  glialnode preset export --name <preset> --output <path>",
+    "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
-    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
+    "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-file <path>] [--settings <json>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
@@ -190,12 +193,18 @@ async function runSpaceCommand(
     const timestamp = new Date().toISOString();
     const id = createId("space");
     const preset = parseSpacePreset(parsed.flags.preset);
+    const presetDefinition = parsed.flags["preset-file"]
+      ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
+      : undefined;
 
     await context.repository.createSpace({
       id,
       name,
       description: parsed.flags.description,
-      settings: preset ? getSpacePreset(preset) : undefined,
+      settings: mergeSpaceSettings(
+        preset ? getSpacePreset(preset) : undefined,
+        presetDefinition?.settings,
+      ),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -238,6 +247,9 @@ async function runSpaceCommand(
     const spaceId = requireFlag(parsed.flags, "id");
     const space = await requireSpace(context.repository, spaceId);
     const preset = parseSpacePreset(parsed.flags.preset);
+    const presetDefinition = parsed.flags["preset-file"]
+      ? loadPresetDefinitionFromFile(parsed.flags["preset-file"])
+      : undefined;
     const settingsFromJson = parsed.flags.settings ? parseSettingsFlag(parsed.flags.settings) : {};
     const settingsFromFlags = mergeSpaceSettings(
       undefined,
@@ -251,6 +263,7 @@ async function runSpaceCommand(
     const mergedSettings = mergeSpaceSettings(
       space.settings,
       preset ? getSpacePreset(preset) : undefined,
+      presetDefinition?.settings,
       settingsFromJson,
       settingsFromFlags,
     );
@@ -409,12 +422,29 @@ async function runPresetCommand(
   }
 
   if (action === "show") {
-    const preset = getSpacePresetDefinition(parseRequiredSpacePreset(requireFlag(parsed.flags, "name")));
+    const preset = parsed.flags.input
+      ? loadPresetDefinitionFromFile(parsed.flags.input)
+      : getSpacePresetDefinition(parseRequiredSpacePreset(requireFlag(parsed.flags, "name")));
     return {
       lines: [
         `name=${preset.name}`,
         `summary=${preset.summary}`,
         `settings=${JSON.stringify(preset.settings)}`,
+      ],
+    };
+  }
+
+  if (action === "export") {
+    const preset = getSpacePresetDefinition(parseRequiredSpacePreset(requireFlag(parsed.flags, "name")));
+    const outputPath = resolve(requireFlag(parsed.flags, "output"));
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
+
+    return {
+      lines: [
+        "Preset exported.",
+        `name=${preset.name}`,
+        `output=${outputPath}`,
       ],
     };
   }
@@ -1636,6 +1666,10 @@ async function requireSpace(
 
 function readTextFile(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function loadPresetDefinitionFromFile(path: string) {
+  return parseSpacePresetDefinition(readTextFile(resolve(path)));
 }
 
 interface SpaceExport {

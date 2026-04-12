@@ -182,6 +182,11 @@ And you can inspect them directly before applying one:
 - `glialnode preset list`
 - `glialnode preset show --name planning-heavy`
 
+Built-in presets can also be exported to JSON and reused as custom preset files:
+
+- `glialnode preset export --name execution-first --output ./execution-first.json`
+- `glialnode preset show --input ./execution-first.json`
+
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
 - `npm run demo` exercises the CLI workflow
@@ -231,6 +236,7 @@ const client = new GlialNodeClient({
 });
 
 console.log(client.listPresets());
+client.exportPreset("execution-first", "./execution-first.json");
 
 const space = await client.createSpace({
   name: "Team Memory",
@@ -586,6 +592,9 @@ glialnode space create --name "Review Memory" --preset conservative-review
 glialnode status
 glialnode preset list
 glialnode preset show --name planning-heavy
+glialnode preset export --name execution-first --output ./execution-first.json
+glialnode preset show --input ./execution-first.json
+glialnode space create --name "Custom Memory" --preset-file ./execution-first.json
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
