@@ -16,6 +16,8 @@
 - Added structured recall traces with citation-style reasons for primary and supporting memory.
 - Added reusable memory bundles for downstream agent and orchestrator handoff.
 - Added bundle profiles and pruning controls for tighter downstream handoff payloads.
+- Added bundle annotations and consumer hints so handoff bundles can flag actionable, stale, distilled, and contested memory explicitly.
+- Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0
 

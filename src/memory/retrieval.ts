@@ -97,14 +97,32 @@ export interface MemoryBundleEntry {
   content: string;
   compactContent?: string;
   tags: string[];
+  annotations: MemoryBundleAnnotation[];
 }
+
+export type MemoryBundleAnnotation =
+  | "actionable"
+  | "contested"
+  | "stale"
+  | "distilled"
+  | "superseded"
+  | "expired"
+  | "high_confidence";
 
 export interface MemoryBundle {
   trace: RecallTrace;
   primary: MemoryBundleEntry;
   supporting: MemoryBundleEntry[];
   links: MemoryRecordLink[];
+  hints: MemoryBundleHint[];
 }
+
+export type MemoryBundleHint =
+  | "actionable_primary"
+  | "contains_contested_memory"
+  | "contains_stale_memory"
+  | "contains_distilled_memory"
+  | "contains_superseded_memory";
 
 export type MemoryBundleProfile = "balanced" | "planner" | "executor" | "reviewer";
 
@@ -225,6 +243,7 @@ export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOp
     primary: toBundleEntry(pack.primary, "primary", resolved),
     supporting: supporting.map((record) => toBundleEntry(record, "supporting", resolved)),
     links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
+    hints: buildBundleHints(pack.primary, supporting, pack.links),
   };
 }
 
@@ -333,7 +352,72 @@ function toBundleEntry(
     content,
     compactContent: record.compactContent,
     tags: record.tags,
+    annotations: buildEntryAnnotations(record),
   };
+}
+
+function buildEntryAnnotations(record: MemoryRecord): MemoryBundleAnnotation[] {
+  const annotations = new Set<MemoryBundleAnnotation>();
+  const lowerTags = new Set(record.tags.map((tag) => tag.toLowerCase()));
+
+  if (record.kind === "decision" || record.kind === "task" || record.kind === "blocker") {
+    annotations.add("actionable");
+  }
+
+  if (record.confidence >= 0.8) {
+    annotations.add("high_confidence");
+  }
+
+  if (record.freshness <= 0.35 || record.confidence <= 0.35) {
+    annotations.add("stale");
+  }
+
+  if (record.status === "superseded") {
+    annotations.add("superseded");
+    annotations.add("contested");
+  }
+
+  if (record.status === "expired") {
+    annotations.add("expired");
+    annotations.add("stale");
+  }
+
+  if (lowerTags.has("distilled")) {
+    annotations.add("distilled");
+  }
+
+  return [...annotations];
+}
+
+function buildBundleHints(
+  primary: MemoryRecord,
+  supporting: MemoryRecord[],
+  links: MemoryRecordLink[],
+): MemoryBundleHint[] {
+  const hints = new Set<MemoryBundleHint>();
+  const records = [primary, ...supporting];
+
+  if (primary.kind === "decision" || primary.kind === "task" || primary.kind === "blocker") {
+    hints.add("actionable_primary");
+  }
+
+  if (records.some((record) => record.tags.some((tag) => tag.toLowerCase() === "distilled"))) {
+    hints.add("contains_distilled_memory");
+  }
+
+  if (records.some((record) => record.status === "superseded") || links.some((link) => link.type === "contradicts")) {
+    hints.add("contains_contested_memory");
+  }
+
+  if (records.some((record) => record.freshness <= 0.35 || record.confidence <= 0.35 || record.status === "expired")) {
+    hints.add("contains_stale_memory");
+  }
+
+  if (records.some((record) => record.status === "superseded")) {
+    hints.add("contains_superseded_memory");
+  }
+
+  return [...hints];
 }
 
 function resolveBundlePolicy(

@@ -73,6 +73,7 @@ flowchart TD
 - promote, archive, compact, and expire records through explicit policy workflows
 - distill related active records into durable summary memory with provenance links
 - detect contradictory durable memory and preserve it as contested state
+- attach bundle annotations and consumer hints for actionable, stale, distilled, or contested handoff memory
 - configure compaction and retention policy per space
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
@@ -420,6 +421,8 @@ And it can package the whole result as a memory bundle:
 - supporting memory entries with readable and compact text
 - the recall trace
 - relevant intra-bundle links
+- entry annotations such as `actionable`, `stale`, `distilled`, `superseded`, or `high_confidence`
+- bundle-level hints such as `actionable_primary`, `contains_stale_memory`, or `contains_contested_memory`
 
 That gives downstream orchestrators and agents a stable object they can consume directly instead of reconstructing context from raw search results.
 

@@ -1141,6 +1141,9 @@ function createMemoryInput(parsed: ParsedArgs): CreateMemoryRecordInput {
     visibility: parsed.flags.visibility
       ? requireVisibility(parsed.flags.visibility)
       : undefined,
+    status: parsed.flags.status
+      ? requireStatus(parsed.flags.status)
+      : undefined,
     tags: parsed.flags.tags ? parsed.flags.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : undefined,
     importance: parsed.flags.importance ? Number(parsed.flags.importance) : undefined,
     confidence: parsed.flags.confidence ? Number(parsed.flags.confidence) : undefined,

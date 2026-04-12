@@ -709,10 +709,19 @@ test("GlialNodeClient can build reusable memory bundles", async () => {
     assert.match(bundles[0]?.trace.summary ?? "", /Recalled/);
     assert.ok(bundles[0]?.primary.compactContent);
     assert.ok(
+      bundles[0]?.primary.annotations.includes("actionable") ||
+      bundles[0]?.supporting.some((entry) => entry.annotations.includes("actionable")),
+    );
+    assert.ok(
       bundles[0]?.primary.recordId === support.id ||
       bundles[0]?.supporting.some((entry) => entry.recordId === support.id),
     );
     assert.ok(bundles[0]?.links.some((link) => link.type === "supports"));
+    assert.ok(
+      bundles[0]?.hints.includes("actionable_primary") ||
+      bundles[0]?.primary.annotations.includes("actionable") ||
+      bundles[0]?.supporting.some((entry) => entry.annotations.includes("actionable")),
+    );
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -791,6 +800,79 @@ test("GlialNodeClient bundle policies can prune and compact handoff payloads", a
     assert.ok((bundles[0]?.supporting.length ?? 0) <= 1);
     assert.ok((bundles[0]?.primary.content.length ?? 0) <= 18);
     assert.match(bundles[0]?.primary.content ?? "", /\.\.\.$/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient bundle annotations flag stale and contested memory", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-annotations-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Bundle Annotation Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const distilled = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "summary",
+      content: "Distilled retrieval memory with stale confidence.",
+      summary: "Distilled retrieval memory",
+      tags: ["retrieval", "distilled"],
+      confidence: 0.3,
+      freshness: 0.3,
+      importance: 0.7,
+    });
+
+    const superseded = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Legacy retrieval decision that is now superseded.",
+      summary: "Legacy retrieval decision",
+      status: "superseded",
+      tags: ["retrieval"],
+      confidence: 0.6,
+      freshness: 0.4,
+      importance: 0.68,
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: distilled.id,
+      toRecordId: superseded.id,
+      type: "references",
+    });
+
+    const bundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "retrieval",
+      limit: 1,
+    }, {
+      primaryLimit: 1,
+      supportLimit: 4,
+    });
+
+    assert.equal(bundles.length, 1);
+    assert.ok(bundles[0]?.hints.includes("contains_stale_memory"));
+    assert.ok(bundles[0]?.hints.includes("contains_superseded_memory"));
+    assert.ok(
+      bundles[0]?.primary.annotations.includes("distilled") ||
+      bundles[0]?.supporting.some((entry) => entry.annotations.includes("distilled")),
+    );
+    assert.ok(
+      bundles[0]?.primary.recordId === superseded.id ||
+      bundles[0]?.supporting.some((entry) => entry.recordId === superseded.id),
+    );
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

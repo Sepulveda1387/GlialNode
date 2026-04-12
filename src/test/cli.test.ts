@@ -1560,19 +1560,29 @@ test("CLI bundle returns a reusable memory bundle payload", async () => {
 
     const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
       trace: { summary: string };
-      primary: { compactContent?: string; recordId: string };
-      supporting: Array<{ recordId: string }>;
+      primary: { compactContent?: string; recordId: string; annotations: string[] };
+      supporting: Array<{ recordId: string; annotations: string[] }>;
       links: Array<{ type: string }>;
+      hints: string[];
     }>;
 
     assert.equal(parsed.length, 1);
     assert.match(parsed[0]?.trace.summary ?? "", /Recalled/);
     assert.ok(parsed[0]?.primary.compactContent);
     assert.ok(
+      parsed[0]?.primary.annotations.includes("actionable") ||
+      parsed[0]?.supporting.some((entry) => entry.annotations.includes("actionable")),
+    );
+    assert.ok(
       parsed[0]?.primary.recordId === supportId ||
       parsed[0]?.supporting.some((entry) => entry.recordId === supportId),
     );
     assert.ok(parsed[0]?.links.some((link) => link.type === "supports"));
+    assert.ok(
+      parsed[0]?.hints.includes("actionable_primary") ||
+      parsed[0]?.primary.annotations.includes("actionable") ||
+      parsed[0]?.supporting.some((entry) => entry.annotations.includes("actionable")),
+    );
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -1615,7 +1625,7 @@ test("CLI bundle policies can prune payload size for executor handoff", async ()
       { repository },
     );
 
-    await runCommand(
+    const distilledResult = await runCommand(
       parseArgs([
         "memory", "add",
         "--space-id", spaceId,
@@ -1670,6 +1680,109 @@ test("CLI bundle policies can prune payload size for executor handoff", async ()
     assert.equal(parsed.length, 1);
     assert.ok((parsed[0]?.supporting.length ?? 0) <= 1);
     assert.ok((parsed[0]?.primary.content.length ?? 0) <= 18);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI bundle annotations expose stale and contested hints", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-annotation-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Annotation Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const distilledResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "summary",
+        "--content", "Distilled retrieval memory with stale confidence.",
+        "--summary", "Distilled retrieval memory",
+        "--tags", "retrieval,distilled",
+        "--confidence", "0.3",
+        "--freshness", "0.3",
+      ]),
+      { repository },
+    );
+    const distilledId = distilledResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(distilledId);
+
+    const supersededResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Legacy retrieval decision that is now superseded.",
+        "--summary", "Legacy retrieval decision",
+        "--status", "superseded",
+        "--tags", "retrieval",
+      ]),
+      { repository },
+    );
+    const supersededId = supersededResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(supersededId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", distilledId,
+        "--to-record-id", supersededId,
+        "--type", "references",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "retrieval",
+        "--limit", "1",
+        "--support-limit", "4",
+        "--status", "superseded",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      hints: string[];
+      primary: { annotations: string[]; recordId: string };
+      supporting: Array<{ annotations: string[]; recordId: string }>;
+    }>;
+
+    assert.equal(parsed.length, 1);
+    assert.ok(parsed[0]?.hints.includes("contains_stale_memory"));
+    assert.ok(parsed[0]?.hints.includes("contains_superseded_memory"));
+    assert.ok(
+      parsed[0]?.primary.annotations.includes("distilled") ||
+      parsed[0]?.supporting.some((entry) => entry.annotations.includes("distilled")),
+    );
+    assert.ok(
+      parsed[0]?.primary.recordId === supersededId ||
+      parsed[0]?.supporting.some((entry) => entry.recordId === supersededId),
+    );
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
