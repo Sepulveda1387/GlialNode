@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createHash, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -284,6 +283,48 @@ test("CLI can register a local preset and reuse it by name", async () => {
     assert.equal(historyResult.lines[0], "versions=1");
     assert.match(historyResult.lines.join("\n"), /2.1.0/);
     assert.match(historyResult.lines.join("\n"), /author=GlialNode Test/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can manage local signing keys", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-signing-keys-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const publicKeyPath = join(tempDirectory, "team-executor.public.pem");
+  const repository = createRepository(databasePath);
+
+  try {
+    const generated = await runCommand(
+      parseArgs(["preset", "keygen", "--name", "team-executor", "--signer", "GlialNode Test", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(generated.lines[0], "Signing key generated.");
+    const keyId = generated.lines.find((line) => line.startsWith("keyId="))?.slice(6);
+    assert.ok(keyId);
+
+    const listed = await runCommand(
+      parseArgs(["preset", "key-list", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(listed.lines.join("\n"), /keys=1/);
+    assert.match(listed.lines.join("\n"), /team-executor/);
+
+    const shown = await runCommand(
+      parseArgs(["preset", "key-show", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(shown.lines.join("\n"), /algorithm=ed25519/);
+    assert.match(shown.lines.join("\n"), /signer=GlialNode Test/);
+
+    const exported = await runCommand(
+      parseArgs(["preset", "key-export", "--name", "team-executor", "--output", publicKeyPath, "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(exported.lines[0], "Signing public key exported.");
+    assert.match(readFileSync(publicKeyPath, "utf8"), /BEGIN PUBLIC KEY/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -829,12 +870,6 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
   const repository = createRepository(databasePath);
 
   try {
-    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-    const privateKeyPath = join(tempDirectory, "team-executor.private.pem");
-    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
-    const signerKeyId = createHash("sha256").update(publicKeyPem).digest("hex");
-    writeFileSync(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), "utf8");
-
     await runCommand(
       parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
       { repository },
@@ -849,6 +884,17 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       ]),
       { repository },
     );
+    const generatedKey = await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "team-executor-key",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const signerKeyId = generatedKey.lines.find((line) => line.startsWith("keyId="))?.slice(6);
+    assert.ok(signerKeyId);
 
     const exported = await runCommand(
       parseArgs([
@@ -857,8 +903,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
         "--output", bundlePath,
         "--directory", presetDirectory,
         "--origin", "local-dev",
-        "--signer", "GlialNode Test",
-        "--signing-private-key", privateKeyPath,
+        "--signing-key", "team-executor-key",
       ]),
       { repository },
     );

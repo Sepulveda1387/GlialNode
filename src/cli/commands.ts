@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
 import { createId } from "../core/ids.js";
 import {
@@ -146,6 +146,10 @@ export function usageText(): string {
     "  glialnode preset register --input <path> [--name <name>] [--author <name>] [--version <semver>] [--directory <path>]",
     "  glialnode preset local-list [--directory <path>]",
     "  glialnode preset local-show --name <name> [--directory <path>]",
+    "  glialnode preset keygen --name <name> [--signer <text>] [--directory <path>] [--overwrite]",
+    "  glialnode preset key-list [--directory <path>]",
+    "  glialnode preset key-show --name <name> [--directory <path>]",
+    "  glialnode preset key-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
@@ -155,7 +159,7 @@ export function usageText(): string {
     "  glialnode preset channel-export --name <name> --output <path> [--directory <path>]",
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
-    "    [--origin <text>] [--signer <text>] [--signing-private-key <path>] [--signing-public-key <path>]",
+    "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
     "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
     "  glialnode preset bundle-show --input <path> [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
@@ -571,6 +575,80 @@ async function runPresetCommand(
     };
   }
 
+  if (action === "keygen") {
+    const name = requireFlag(parsed.flags, "name");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const recordPath = getSigningKeyPath(directory, name);
+    if (parsed.flags.overwrite !== "true" && existsSync(recordPath)) {
+      throw new Error(`Signing key already exists: ${name}`);
+    }
+
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const timestamp = new Date().toISOString();
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const record = {
+      name,
+      algorithm: "ed25519" as const,
+      signer: parsed.flags.signer,
+      keyId: computeSignerKeyId(publicKeyPem),
+      publicKeyPem,
+      privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeSigningKeyRecord(directory, record);
+
+    return {
+      lines: [
+        "Signing key generated.",
+        `name=${record.name}`,
+        `algorithm=${record.algorithm}`,
+        `signer=${record.signer ?? ""}`,
+        `keyId=${record.keyId}`,
+      ],
+    };
+  }
+
+  if (action === "key-list") {
+    const keys = listSigningKeyRecords(resolvePresetDirectory(parsed.flags.directory));
+    return {
+      lines: [
+        `keys=${keys.length}`,
+        ...keys.map((record) => `${record.name} ${record.keyId} signer=${record.signer ?? ""}`),
+      ],
+    };
+  }
+
+  if (action === "key-show") {
+    const record = readSigningKeyRecord(resolvePresetDirectory(parsed.flags.directory), requireFlag(parsed.flags, "name"));
+    return {
+      lines: [
+        `name=${record.name}`,
+        `algorithm=${record.algorithm}`,
+        `signer=${record.signer ?? ""}`,
+        `keyId=${record.keyId}`,
+        `createdAt=${record.createdAt}`,
+        `updatedAt=${record.updatedAt}`,
+      ],
+    };
+  }
+
+  if (action === "key-export") {
+    const record = readSigningKeyRecord(resolvePresetDirectory(parsed.flags.directory), requireFlag(parsed.flags, "name"));
+    const outputPath = resolve(requireFlag(parsed.flags, "output"));
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, record.publicKeyPem, "utf8");
+
+    return {
+      lines: [
+        "Signing public key exported.",
+        `name=${record.name}`,
+        `output=${outputPath}`,
+        `keyId=${record.keyId}`,
+      ],
+    };
+  }
+
   if (action === "history") {
     const history = listRegisteredPresetHistory(requireFlag(parsed.flags, "name"), parsed.flags.directory);
     return {
@@ -699,13 +777,16 @@ async function runPresetCommand(
   if (action === "bundle-export") {
     const name = requireFlag(parsed.flags, "name");
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const signingKey = parsed.flags["signing-key"]
+      ? readSigningKeyRecord(directory, parsed.flags["signing-key"])
+      : undefined;
     const signingPrivateKeyPem = parsed.flags["signing-private-key"]
       ? readTextFile(resolve(parsed.flags["signing-private-key"]))
-      : undefined;
+      : signingKey?.privateKeyPem;
     const signingPublicKeyPem = signingPrivateKeyPem
       ? (parsed.flags["signing-public-key"]
           ? readTextFile(resolve(parsed.flags["signing-public-key"]))
-          : createPublicKey(createPrivateKey(signingPrivateKeyPem)).export({ type: "spki", format: "pem" }).toString())
+          : signingKey?.publicKeyPem ?? createPublicKey(createPrivateKey(signingPrivateKeyPem)).export({ type: "spki", format: "pem" }).toString())
       : undefined;
     const bundle: ReturnType<typeof parsePresetBundle> = {
       metadata: {
@@ -713,7 +794,7 @@ async function runPresetCommand(
         glialnodeVersion: GLIALNODE_VERSION,
         nodeEngine: GLIALNODE_NODE_ENGINE,
         origin: parsed.flags.origin,
-        signer: parsed.flags.signer,
+        signer: parsed.flags.signer ?? signingKey?.signer,
         checksumAlgorithm: "sha256" as const,
         checksum: "",
         signatureAlgorithm: signingPublicKeyPem ? "ed25519" as const : undefined,
@@ -2206,6 +2287,106 @@ function writePresetChannels(directory: string, state: { name: string; channels:
   mkdirSync(channelsDirectory, { recursive: true });
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
   writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
+}
+
+function getSigningKeysDirectory(directory: string): string {
+  return join(directory, ".keys");
+}
+
+function getSigningKeyPath(directory: string, name: string): string {
+  return join(getSigningKeysDirectory(directory), `${toPresetFileName(name)}.json`);
+}
+
+function writeSigningKeyRecord(
+  directory: string,
+  record: {
+    name: string;
+    algorithm: "ed25519";
+    signer?: string;
+    keyId: string;
+    publicKeyPem: string;
+    privateKeyPem: string;
+    createdAt: string;
+    updatedAt: string;
+  },
+) {
+  const keysDirectory = getSigningKeysDirectory(directory);
+  mkdirSync(keysDirectory, { recursive: true });
+  writeFileSync(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+}
+
+function readSigningKeyRecord(directory: string, name: string): {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  publicKeyPem: string;
+  privateKeyPem: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  const recordPath = getSigningKeyPath(directory, name);
+  if (!existsSync(recordPath)) {
+    throw new Error(`Unknown signing key: ${name}`);
+  }
+
+  return parseSigningKeyRecord(readTextFile(recordPath));
+}
+
+function listSigningKeyRecords(directory: string): Array<ReturnType<typeof parseSigningKeyRecord>> {
+  const keysDirectory = getSigningKeysDirectory(directory);
+  if (!existsSync(keysDirectory)) {
+    return [];
+  }
+
+  return readdirSync(keysDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => parseSigningKeyRecord(readTextFile(join(keysDirectory, entry))))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseSigningKeyRecord(value: string): {
+  name: string;
+  algorithm: "ed25519";
+  signer?: string;
+  keyId: string;
+  publicKeyPem: string;
+  privateKeyPem: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  const parsed = JSON.parse(value) as {
+    name?: unknown;
+    algorithm?: unknown;
+    signer?: unknown;
+    keyId?: unknown;
+    publicKeyPem?: unknown;
+    privateKeyPem?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+  };
+
+  if (typeof parsed.name !== "string" || !parsed.name) {
+    throw new Error("Invalid signing key record: missing name.");
+  }
+  if (parsed.algorithm !== "ed25519") {
+    throw new Error(`Invalid signing key algorithm: ${String(parsed.algorithm ?? "undefined")}`);
+  }
+  if (typeof parsed.publicKeyPem !== "string" || typeof parsed.privateKeyPem !== "string") {
+    throw new Error("Invalid signing key record: missing PEM material.");
+  }
+
+  const timestamp = new Date().toISOString();
+  return {
+    name: parsed.name,
+    algorithm: "ed25519",
+    signer: typeof parsed.signer === "string" ? parsed.signer : undefined,
+    keyId: typeof parsed.keyId === "string" && parsed.keyId ? parsed.keyId : computeSignerKeyId(parsed.publicKeyPem),
+    publicKeyPem: parsed.publicKeyPem,
+    privateKeyPem: parsed.privateKeyPem,
+    createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+  };
 }
 
 function writePresetFiles(directory: string, preset: ReturnType<typeof parseSpacePresetDefinition>) {

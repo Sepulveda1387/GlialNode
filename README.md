@@ -193,6 +193,10 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset register --input ./execution-first.json --name team-executor --author "Memory Team" --version 2.1.0`
 - `glialnode preset local-list`
 - `glialnode preset local-show --name team-executor`
+- `glialnode preset keygen --name team-executor-key --signer "GlialNode Test"`
+- `glialnode preset key-list`
+- `glialnode preset key-show --name team-executor-key`
+- `glialnode preset key-export --name team-executor-key --output ./team-executor.public.pem`
 - `glialnode preset history --name team-executor`
 - `glialnode preset rollback --name team-executor --to-version 2.1.0`
 - `glialnode preset promote --name team-executor --channel stable --version 2.1.0`
@@ -627,11 +631,15 @@ glialnode preset show --input ./execution-first.json
 glialnode preset register --input ./execution-first.json --name team-executor
 glialnode preset local-list
 glialnode preset local-show --name team-executor
+glialnode preset keygen --name team-executor-key --signer "GlialNode Test"
+glialnode preset key-list
+glialnode preset key-show --name team-executor-key
+glialnode preset key-export --name team-executor-key --output ./team-executor.public.pem
 glialnode preset promote --name team-executor --channel stable --version 2.1.0
 glialnode preset channel-default --name team-executor --channel stable
 glialnode preset channel-export --name team-executor --output ./team-executor.channels.json
 glialnode preset channel-import --input ./team-executor.channels.json --name team-executor-copy
-glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json
+glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json --signing-key team-executor-key
 glialnode preset bundle-show --input ./team-executor.bundle.json
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signer --allow-origin local-dev --allow-signer "GlialNode Test"
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>

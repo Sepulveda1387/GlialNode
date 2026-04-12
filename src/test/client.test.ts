@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,6 +111,40 @@ test("GlialNodeClient can inspect available presets", async () => {
     const preset = client.getPreset("planning-heavy");
     assert.match(preset.summary, /planner-oriented/i);
     assert.equal(preset.settings.routing?.preferPlannerOnDistilled, true);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can manage local signing keys", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-signing-keys-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const publicKeyPath = join(tempDirectory, "team-executor.public.pem");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    const generated = client.generateSigningKey("team-executor", {
+      signer: "GlialNode Test",
+    });
+    assert.equal(generated.name, "team-executor");
+    assert.equal(generated.algorithm, "ed25519");
+    assert.equal(generated.signer, "GlialNode Test");
+    assert.ok(generated.keyId);
+
+    const listed = client.listSigningKeys();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.name, "team-executor");
+
+    const stored = client.getSigningKey("team-executor");
+    assert.equal(stored.keyId, generated.keyId);
+    assert.match(stored.publicKeyPem, /BEGIN PUBLIC KEY/);
+    assert.match(stored.privateKeyPem, /BEGIN PRIVATE KEY/);
+
+    const exported = client.exportSigningPublicKey("team-executor", publicKeyPath);
+    assert.equal(exported.keyId, generated.keyId);
+    assert.match(readFileSync(publicKeyPath, "utf8"), /BEGIN PUBLIC KEY/);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
