@@ -116,6 +116,26 @@ test("GlialNodeClient can inspect available presets", async () => {
   }
 });
 
+test("GlialNodeClient can diff preset definitions", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-diff-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const left = client.getPreset("execution-first");
+    const right = client.getPreset("conservative-review");
+    const diff = client.diffPresets(left, right);
+
+    assert.equal(diff.left.name, "execution-first");
+    assert.equal(diff.right.name, "conservative-review");
+    assert.ok(diff.metadata.some((change) => change.path === "summary"));
+    assert.ok(diff.settings.some((change) => change.path === "settings.routing.preferExecutorOnActionable"));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and load preset files for custom space setup", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-file-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

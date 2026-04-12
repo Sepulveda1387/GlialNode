@@ -25,6 +25,7 @@
 - Added a local preset registry so custom brain styles can be registered once and reused by name.
 - Added preset provenance metadata so exported and registered brain styles can carry version, author, source, and timestamp fields.
 - Added preset history snapshots and inspection so registered brain styles keep a local version trail instead of only overwriting the latest file.
+- Added preset diffing so built-in, local, and file-backed brain styles can be compared across metadata and policy settings.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

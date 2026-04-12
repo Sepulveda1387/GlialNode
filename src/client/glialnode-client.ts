@@ -11,11 +11,13 @@ import type {
 } from "../core/config.js";
 import { createId } from "../core/ids.js";
 import {
+  diffSpacePresetDefinitions,
   getSpacePreset,
   getSpacePresetDefinition,
   listSpacePresetDefinitions,
   parseSpacePresetDefinition,
   stringifySpacePresetDefinition,
+  type SpacePresetDiff,
   type SpacePresetDefinition,
   type SpacePresetName,
 } from "../core/presets.js";
@@ -224,6 +226,10 @@ export class GlialNodeClient {
 
   getPreset(name: SpacePresetName): SpacePresetDefinition {
     return getSpacePresetDefinition(name);
+  }
+
+  diffPresets(left: SpacePresetDefinition, right: SpacePresetDefinition): SpacePresetDiff {
+    return diffSpacePresetDefinitions(left, right);
   }
 
   exportPreset(name: SpacePresetName, outputPath: string): SpacePresetDefinition {

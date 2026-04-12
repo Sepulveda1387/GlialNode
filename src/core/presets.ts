@@ -17,6 +17,27 @@ export interface SpacePresetDefinition {
   settings: MemorySpaceSettings;
 }
 
+export interface SpacePresetSettingChange {
+  path: string;
+  left: unknown;
+  right: unknown;
+}
+
+export interface SpacePresetDiff {
+  left: {
+    name: string;
+    version?: string;
+    source?: string;
+  };
+  right: {
+    name: string;
+    version?: string;
+    source?: string;
+  };
+  metadata: SpacePresetSettingChange[];
+  settings: SpacePresetSettingChange[];
+}
+
 export const spacePresets: Record<SpacePresetName, MemorySpaceSettings> = {
   "balanced-default": {},
   "execution-first": {
@@ -179,4 +200,83 @@ export function parseSpacePresetDefinition(value: string): SpacePresetDefinition
 
 export function stringifySpacePresetDefinition(preset: SpacePresetDefinition): string {
   return JSON.stringify(preset, null, 2);
+}
+
+export function diffSpacePresetDefinitions(
+  left: SpacePresetDefinition,
+  right: SpacePresetDefinition,
+): SpacePresetDiff {
+  return {
+    left: {
+      name: left.name,
+      version: left.version,
+      source: left.source,
+    },
+    right: {
+      name: right.name,
+      version: right.version,
+      source: right.source,
+    },
+    metadata: collectObjectDiffs(
+      {
+        summary: left.summary,
+        version: left.version,
+        author: left.author,
+        source: left.source,
+        createdAt: left.createdAt,
+        updatedAt: left.updatedAt,
+      },
+      {
+        summary: right.summary,
+        version: right.version,
+        author: right.author,
+        source: right.source,
+        createdAt: right.createdAt,
+        updatedAt: right.updatedAt,
+      },
+    ),
+    settings: collectObjectDiffs(left.settings, right.settings, "settings"),
+  };
+}
+
+function collectObjectDiffs(
+  left: unknown,
+  right: unknown,
+  prefix = "",
+): SpacePresetSettingChange[] {
+  if (deepEqual(left, right)) {
+    return [];
+  }
+
+  if (isPlainObject(left) || isPlainObject(right)) {
+    const leftObject = isPlainObject(left) ? left : {};
+    const rightObject = isPlainObject(right) ? right : {};
+    const keys = new Set([...Object.keys(leftObject), ...Object.keys(rightObject)]);
+
+    return [...keys]
+      .sort((a, b) => a.localeCompare(b))
+      .flatMap((key) =>
+        collectObjectDiffs(
+          leftObject[key],
+          rightObject[key],
+          prefix ? `${prefix}.${key}` : key,
+        ),
+      );
+  }
+
+  return [
+    {
+      path: prefix || "value",
+      left,
+      right,
+    },
+  ];
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

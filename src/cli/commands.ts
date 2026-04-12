@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { createId } from "../core/ids.js";
 import {
+  diffSpacePresetDefinitions,
   getSpacePreset,
   getSpacePresetDefinition,
   isSpacePresetName,
@@ -135,6 +136,7 @@ export function usageText(): string {
     "  glialnode status",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
+    "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
     "  glialnode preset export --name <preset> --output <path>",
     "  glialnode preset register --input <path> [--name <name>] [--author <name>] [--version <semver>] [--directory <path>]",
     "  glialnode preset local-list [--directory <path>]",
@@ -462,6 +464,27 @@ async function runPresetCommand(
         "Preset exported.",
         `name=${preset.name}`,
         `output=${outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "diff") {
+    const left = resolvePresetReference(requireFlag(parsed.flags, "left"), parsed.flags.directory);
+    const right = resolvePresetReference(requireFlag(parsed.flags, "right"), parsed.flags.directory);
+    const diff = diffSpacePresetDefinitions(left, right);
+
+    return {
+      lines: [
+        `left=${diff.left.name}@${diff.left.version ?? ""}`,
+        `right=${diff.right.name}@${diff.right.version ?? ""}`,
+        `metadataChanges=${diff.metadata.length}`,
+        ...diff.metadata.map(
+          (change) => `metadata ${change.path}: ${formatDiffValue(change.left)} -> ${formatDiffValue(change.right)}`,
+        ),
+        `settingChanges=${diff.settings.length}`,
+        ...diff.settings.map(
+          (change) => `${change.path}: ${formatDiffValue(change.left)} -> ${formatDiffValue(change.right)}`,
+        ),
       ],
     };
   }
@@ -1754,6 +1777,29 @@ function loadPresetDefinitionFromFile(path: string) {
   return parseSpacePresetDefinition(readTextFile(resolve(path)));
 }
 
+function resolvePresetReference(reference: string, directory: string | undefined) {
+  const [kind, ...rest] = reference.split(":");
+  const value = rest.join(":");
+
+  if (!kind || !value) {
+    throw new Error(`Invalid preset reference: ${reference}`);
+  }
+
+  if (kind === "builtin") {
+    return getSpacePresetDefinition(parseRequiredSpacePreset(value));
+  }
+
+  if (kind === "local") {
+    return loadRegisteredPreset(value, directory);
+  }
+
+  if (kind === "file") {
+    return loadPresetDefinitionFromFile(value);
+  }
+
+  throw new Error(`Unsupported preset reference kind: ${kind}`);
+}
+
 function resolvePresetDirectory(directory: string | undefined): string {
   return resolve(directory ?? ".glialnode/presets");
 }
@@ -1806,6 +1852,14 @@ function toPresetFileName(name: string): string {
     .replace(/^-+|-+$/g, "");
 
   return normalized || "preset";
+}
+
+function formatDiffValue(value: unknown): string {
+  if (value === undefined) {
+    return "undefined";
+  }
+
+  return JSON.stringify(value);
 }
 
 function toPresetVersionFileName(version: string): string {

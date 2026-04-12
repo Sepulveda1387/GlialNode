@@ -146,6 +146,34 @@ test("CLI can list and show preset definitions", async () => {
   }
 });
 
+test("CLI can diff built-in preset definitions", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-diff-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const diffResult = await runCommand(
+      parseArgs([
+        "preset",
+        "diff",
+        "--left", "builtin:execution-first",
+        "--right", "builtin:conservative-review",
+      ]),
+      { repository },
+    );
+
+    const output = diffResult.lines.join("\n");
+    assert.match(output, /left=execution-first@1.0.0/);
+    assert.match(output, /right=conservative-review@1.0.0/);
+    assert.match(output, /metadataChanges=/);
+    assert.match(output, /settingChanges=/);
+    assert.match(output, /settings\.routing\.preferExecutorOnActionable/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI can export a preset file and apply it to a new space", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-file-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

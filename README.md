@@ -181,6 +181,7 @@ And you can inspect them directly before applying one:
 
 - `glialnode preset list`
 - `glialnode preset show --name planning-heavy`
+- `glialnode preset diff --left builtin:execution-first --right builtin:conservative-review`
 
 Built-in presets can also be exported to JSON and reused as custom preset files:
 
@@ -195,6 +196,8 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset history --name team-executor`
 
 Preset files and registered local presets can also carry provenance metadata like `version`, `author`, `source`, `createdAt`, and `updatedAt`, and the local registry now keeps versioned snapshot history for each registered preset. That gives a shared brain style some lineage instead of treating every update like an overwrite with no memory of what came before.
+
+You can also diff preset definitions directly to see how one brain style differs from another at the metadata and settings level. The CLI accepts `builtin:`, `local:`, and `file:` references so you can compare built-ins, registered local presets, and exported preset files with one command.
 
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
