@@ -142,6 +142,7 @@ export function usageText(): string {
     "  glialnode preset local-list [--directory <path>]",
     "  glialnode preset local-show --name <name> [--directory <path>]",
     "  glialnode preset history --name <name> [--directory <path>]",
+    "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -550,6 +551,31 @@ async function runPresetCommand(
           (preset) =>
             `${preset.version ?? ""} updatedAt=${preset.updatedAt ?? ""} source=${preset.source ?? ""} author=${preset.author ?? ""}`,
         ),
+      ],
+    };
+  }
+
+  if (action === "rollback") {
+    const name = requireFlag(parsed.flags, "name");
+    const version = requireFlag(parsed.flags, "to-version");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const target = requirePresetHistoryVersion(listRegisteredPresetHistory(name, directory), name, version);
+    const rolledBack = {
+      ...target,
+      name,
+      author: parsed.flags.author ?? target.author,
+      source: `rollback:${version}`,
+      updatedAt: new Date().toISOString(),
+    };
+    mkdirSync(directory, { recursive: true });
+    writePresetFiles(directory, rolledBack);
+
+    return {
+      lines: [
+        "Preset rolled back.",
+        `name=${rolledBack.name}`,
+        `version=${rolledBack.version ?? ""}`,
+        `source=${rolledBack.source ?? ""}`,
       ],
     };
   }
@@ -1842,6 +1868,19 @@ function listRegisteredPresetHistory(name: string, directory: string | undefined
     .filter((entry) => entry.toLowerCase().endsWith(".json"))
     .map((entry) => loadPresetDefinitionFromFile(join(historyDirectory, entry)))
     .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""));
+}
+
+function requirePresetHistoryVersion(
+  history: ReturnType<typeof listRegisteredPresetHistory>,
+  name: string,
+  version: string,
+) {
+  const match = history.find((preset) => preset.version === version);
+  if (!match) {
+    throw new Error(`Unknown preset version for ${name}: ${version}`);
+  }
+
+  return match;
 }
 
 function toPresetFileName(name: string): string {

@@ -194,10 +194,11 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset local-list`
 - `glialnode preset local-show --name team-executor`
 - `glialnode preset history --name team-executor`
+- `glialnode preset rollback --name team-executor --to-version 2.1.0`
 
 Preset files and registered local presets can also carry provenance metadata like `version`, `author`, `source`, `createdAt`, and `updatedAt`, and the local registry now keeps versioned snapshot history for each registered preset. That gives a shared brain style some lineage instead of treating every update like an overwrite with no memory of what came before.
 
-You can also diff preset definitions directly to see how one brain style differs from another at the metadata and settings level. The CLI accepts `builtin:`, `local:`, and `file:` references so you can compare built-ins, registered local presets, and exported preset files with one command.
+You can also diff preset definitions directly to see how one brain style differs from another at the metadata and settings level. The CLI accepts `builtin:`, `local:`, and `file:` references so you can compare built-ins, registered local presets, and exported preset files with one command. And if a local preset needs to move back to an earlier known-good version, rollback can restore a historical snapshot while still preserving the new restore operation in history.
 
 The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 

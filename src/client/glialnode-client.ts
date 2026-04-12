@@ -300,6 +300,30 @@ export class GlialNodeClient {
     return listRegisteredPresetHistoryFromDirectory(name, resolvedDirectory, (inputPath) => this.loadPreset(inputPath));
   }
 
+  rollbackRegisteredPreset(
+    name: string,
+    options: { version: string; directory?: string; author?: string },
+  ): SpacePresetDefinition {
+    const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    const target = requirePresetHistoryVersion(
+      this.listRegisteredPresetHistory(name, resolvedDirectory),
+      name,
+      options.version,
+    );
+    const now = new Date().toISOString();
+    const rolledBack: SpacePresetDefinition = {
+      ...target,
+      name,
+      author: options.author ?? target.author,
+      source: `rollback:${options.version}`,
+      updatedAt: now,
+    };
+
+    mkdirSync(resolvedDirectory, { recursive: true });
+    writePresetFiles(resolvedDirectory, rolledBack);
+    return rolledBack;
+  }
+
   async getSpace(spaceId: string): Promise<MemorySpace> {
     return requireSpace(this.repository, spaceId);
   }
@@ -861,6 +885,19 @@ function listRegisteredPresetHistoryFromDirectory(
     .filter((entry) => entry.toLowerCase().endsWith(".json"))
     .map((entry) => loadPreset(join(historyDirectory, entry)))
     .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""));
+}
+
+function requirePresetHistoryVersion(
+  history: SpacePresetDefinition[],
+  name: string,
+  version: string,
+): SpacePresetDefinition {
+  const match = history.find((preset) => preset.version === version);
+  if (!match) {
+    throw new Error(`Unknown preset version for ${name}: ${version}`);
+  }
+
+  return match;
 }
 
 function mergeSpaceSettings(

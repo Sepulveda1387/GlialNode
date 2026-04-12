@@ -289,6 +289,77 @@ test("CLI can register a local preset and reuse it by name", async () => {
   }
 });
 
+test("CLI can roll back a local preset to an earlier version", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-rollback-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const alternatePresetPath = join(tempDirectory, "planning-heavy.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "planning-heavy", "--output", alternatePresetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", alternatePresetPath,
+        "--name", "team-executor",
+        "--version", "2.2.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const rollbackResult = await runCommand(
+      parseArgs([
+        "preset", "rollback",
+        "--name", "team-executor",
+        "--to-version", "2.1.0",
+        "--author", "Rollback Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(rollbackResult.lines[0], "Preset rolled back.");
+    assert.match(rollbackResult.lines.join("\n"), /version=2.1.0/);
+    assert.match(rollbackResult.lines.join("\n"), /source=rollback:2.1.0/);
+
+    const current = await runCommand(
+      parseArgs(["preset", "local-show", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(current.lines.join("\n"), /version=2.1.0/);
+    assert.match(current.lines.join("\n"), /source=rollback:2.1.0/);
+
+    const history = await runCommand(
+      parseArgs(["preset", "history", "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(history.lines.join("\n"), /2.2.0/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI supports compact memory content for retrieval and inspection", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-compact-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

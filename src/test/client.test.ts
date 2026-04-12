@@ -200,6 +200,52 @@ test("GlialNodeClient can register and reload local preset files", async () => {
   }
 });
 
+test("GlialNodeClient can roll back a registered preset to an earlier version", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-rollback-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const alternatePresetPath = join(tempDirectory, "planning-heavy.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      author: "GlialNode Test",
+      version: "2.1.0",
+    });
+
+    client.exportPreset("planning-heavy", alternatePresetPath);
+    client.registerPreset(alternatePresetPath, {
+      name: "team-executor",
+      author: "GlialNode Test",
+      version: "2.2.0",
+    });
+
+    const rolledBack = client.rollbackRegisteredPreset("team-executor", {
+      version: "2.1.0",
+      author: "Rollback Test",
+    });
+
+    assert.equal(rolledBack.version, "2.1.0");
+    assert.equal(rolledBack.author, "Rollback Test");
+    assert.equal(rolledBack.source, "rollback:2.1.0");
+    assert.equal(rolledBack.settings.routing?.preferPlannerOnDistilled, false);
+
+    const current = client.getRegisteredPreset("team-executor");
+    assert.equal(current.version, "2.1.0");
+    assert.equal(current.source, "rollback:2.1.0");
+
+    const history = client.listRegisteredPresetHistory("team-executor");
+    assert.ok(history.length >= 3);
+    assert.ok(history.some((preset) => preset.version === "2.2.0"));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
