@@ -156,8 +156,8 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>]",
-    "  glialnode preset bundle-show --input <path>",
+    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--require-signer] [--allow-origin <a,b>] [--allow-signer <a,b>]",
+    "  glialnode preset bundle-show --input <path> [--require-signer] [--allow-origin <a,b>] [--allow-signer <a,b>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -733,7 +733,7 @@ async function runPresetCommand(
   if (action === "bundle-import") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const imported = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(imported);
+    const validation = validatePresetBundle(imported, parsePresetTrustPolicy(parsed.flags));
     const name = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
 
@@ -759,6 +759,7 @@ async function runPresetCommand(
         `name=${name}`,
         `versions=${imported.history.length}`,
         `defaultChannel=${imported.channels.defaultChannel ?? ""}`,
+        `trusted=${validation.trusted}`,
         ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
     };
@@ -767,7 +768,7 @@ async function runPresetCommand(
   if (action === "bundle-show") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const bundle = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(bundle);
+    const validation = validatePresetBundle(bundle, parsePresetTrustPolicy(parsed.flags));
 
     return {
       lines: [
@@ -781,6 +782,7 @@ async function runPresetCommand(
         `checksum=${bundle.metadata.checksum}`,
         `versions=${bundle.history.length}`,
         `defaultChannel=${bundle.channels.defaultChannel ?? ""}`,
+        `trusted=${validation.trusted}`,
         `warnings=${validation.warnings.length}`,
         ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
@@ -1623,6 +1625,23 @@ function requireFlag(flags: Record<string, string>, key: string): string {
   return value;
 }
 
+function parseCsvFlag(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const entries = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  return entries.length > 0 ? entries : undefined;
+}
+
+function parsePresetTrustPolicy(flags: Record<string, string>) {
+  return {
+    requireSigner: flags["require-signer"] === "true",
+    allowedOrigins: parseCsvFlag(flags["allow-origin"]),
+    allowedSigners: parseCsvFlag(flags["allow-signer"]),
+  };
+}
+
 function requireScopeType(value: string | undefined): ScopeType {
   const allowed: ScopeType[] = [
     "memory_space",
@@ -2271,7 +2290,14 @@ function parsePresetBundleMetadata(value: string): {
   };
 }
 
-function validatePresetBundle(bundle: ReturnType<typeof parsePresetBundle>) {
+function validatePresetBundle(
+  bundle: ReturnType<typeof parsePresetBundle>,
+  trustPolicy: {
+    requireSigner?: boolean;
+    allowedOrigins?: string[];
+    allowedSigners?: string[];
+  } = {},
+) {
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
     throw new Error(
       `Unsupported preset bundle format: ${bundle.metadata.bundleFormatVersion}. Expected ${PRESET_BUNDLE_FORMAT_VERSION}.`,
@@ -2279,6 +2305,7 @@ function validatePresetBundle(bundle: ReturnType<typeof parsePresetBundle>) {
   }
 
   const warnings: string[] = [];
+  const trustWarnings: string[] = [];
   if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
     warnings.push(
       `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
@@ -2296,9 +2323,35 @@ function validatePresetBundle(bundle: ReturnType<typeof parsePresetBundle>) {
     throw new Error("Preset bundle checksum verification failed.");
   }
 
+  if (trustPolicy.requireSigner && !bundle.metadata.signer) {
+    trustWarnings.push("Preset bundle is unsigned.");
+  }
+
+  if (trustPolicy.allowedOrigins?.length) {
+    if (!bundle.metadata.origin) {
+      trustWarnings.push("Preset bundle origin is missing.");
+    } else if (!trustPolicy.allowedOrigins.includes(bundle.metadata.origin)) {
+      trustWarnings.push(`Preset bundle origin is not allowed: ${bundle.metadata.origin}`);
+    }
+  }
+
+  if (trustPolicy.allowedSigners?.length) {
+    if (!bundle.metadata.signer) {
+      trustWarnings.push("Preset bundle signer is missing.");
+    } else if (!trustPolicy.allowedSigners.includes(bundle.metadata.signer)) {
+      trustWarnings.push(`Preset bundle signer is not allowed: ${bundle.metadata.signer}`);
+    }
+  }
+
+  if (trustWarnings.length > 0) {
+    throw new Error(`Preset bundle trust validation failed: ${trustWarnings.join("; ")}`);
+  }
+
   return {
     metadata: bundle.metadata,
     warnings,
+    trustWarnings,
+    trusted: true,
   };
 }
 

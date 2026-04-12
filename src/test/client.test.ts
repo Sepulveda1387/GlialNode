@@ -508,8 +508,28 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     const validation = client.validatePresetBundle(bundlePath);
     assert.equal(validation.metadata.bundleFormatVersion, 1);
     assert.equal(validation.warnings.length, 0);
+    assert.equal(validation.trusted, true);
     assert.equal(validation.metadata.origin, "local-dev");
     assert.equal(validation.metadata.signer, "GlialNode Test");
+    assert.equal(validation.trustWarnings.length, 0);
+
+    const strictValidation = client.validatePresetBundle(bundlePath, {
+      requireSigner: true,
+      allowedOrigins: ["local-dev"],
+      allowedSigners: ["GlialNode Test"],
+    });
+    assert.equal(strictValidation.trusted, true);
+
+    assert.throws(
+      () => client.validatePresetBundle(bundlePath, { allowedOrigins: ["production"] }),
+      /Preset bundle trust validation failed: Preset bundle origin is not allowed: local-dev/,
+    );
+    assert.throws(
+      () => client.importPresetBundle(bundlePath, {
+        trustPolicy: { allowedSigners: ["Trusted CI"] },
+      }),
+      /Preset bundle trust validation failed: Preset bundle signer is not allowed: GlialNode Test/,
+    );
 
     const invalidBundle = {
       ...bundle,

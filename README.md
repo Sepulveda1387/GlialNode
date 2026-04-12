@@ -632,6 +632,7 @@ glialnode preset channel-export --name team-executor --output ./team-executor.ch
 glialnode preset channel-import --input ./team-executor.channels.json --name team-executor-copy
 glialnode preset bundle-export --name team-executor --output ./team-executor.bundle.json
 glialnode preset bundle-show --input ./team-executor.bundle.json
+glialnode preset bundle-show --input ./team-executor.bundle.json --require-signer --allow-origin local-dev --allow-signer "GlialNode Test"
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor

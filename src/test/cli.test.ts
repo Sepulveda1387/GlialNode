@@ -865,6 +865,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     assert.match(shown.lines.join("\n"), /origin=local-dev/);
     assert.match(shown.lines.join("\n"), /signer=GlialNode Test/);
     assert.match(shown.lines.join("\n"), /checksumAlgorithm=sha256/);
+    assert.match(shown.lines.join("\n"), /trusted=true/);
 
     const bundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
       metadata: { bundleFormatVersion: number };
@@ -890,6 +891,25 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     await assert.rejects(
       () => runCommand(parseArgs(["preset", "bundle-show", "--input", tamperedBundlePath]), { repository }),
       /Preset bundle checksum verification failed/,
+    );
+
+    await assert.rejects(
+      () => runCommand(parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--allow-origin", "production",
+      ]), { repository }),
+      /Preset bundle trust validation failed: Preset bundle origin is not allowed: local-dev/,
+    );
+
+    await assert.rejects(
+      () => runCommand(parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--require-signer",
+        "--allow-signer", "Trusted CI",
+      ]), { repository }),
+      /Preset bundle trust validation failed: Preset bundle signer is not allowed: GlialNode Test/,
     );
   } finally {
     repository.close();

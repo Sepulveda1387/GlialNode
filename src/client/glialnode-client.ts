@@ -206,6 +206,14 @@ export interface PresetBundleMetadata {
 export interface PresetBundleValidation {
   metadata: PresetBundleMetadata;
   warnings: string[];
+  trustWarnings: string[];
+  trusted: boolean;
+}
+
+export interface PresetBundleTrustPolicy {
+  requireSigner?: boolean;
+  allowedOrigins?: string[];
+  allowedSigners?: string[];
 }
 
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
@@ -446,9 +454,12 @@ export class GlialNodeClient {
     return bundle;
   }
 
-  importPresetBundle(inputPath: string, options: { directory?: string; name?: string } = {}): PresetBundle {
+  importPresetBundle(
+    inputPath: string,
+    options: { directory?: string; name?: string; trustPolicy?: PresetBundleTrustPolicy } = {},
+  ): PresetBundle {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
-    validatePresetBundle(bundle);
+    validatePresetBundle(bundle, options.trustPolicy);
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
     const nextName = options.name ?? bundle.preset.name;
     const history = bundle.history.map((preset) => ({
@@ -479,9 +490,9 @@ export class GlialNodeClient {
     };
   }
 
-  validatePresetBundle(inputPath: string): PresetBundleValidation {
+  validatePresetBundle(inputPath: string, trustPolicy?: PresetBundleTrustPolicy): PresetBundleValidation {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
-    return validatePresetBundle(bundle);
+    return validatePresetBundle(bundle, trustPolicy);
   }
 
   promotePresetChannel(
@@ -1173,7 +1184,10 @@ function parsePresetBundleMetadata(value: string): PresetBundleMetadata {
   };
 }
 
-function validatePresetBundle(bundle: PresetBundle): PresetBundleValidation {
+function validatePresetBundle(
+  bundle: PresetBundle,
+  trustPolicy: PresetBundleTrustPolicy = {},
+): PresetBundleValidation {
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
     throw new Error(
       `Unsupported preset bundle format: ${bundle.metadata.bundleFormatVersion}. Expected ${PRESET_BUNDLE_FORMAT_VERSION}.`,
@@ -1181,6 +1195,7 @@ function validatePresetBundle(bundle: PresetBundle): PresetBundleValidation {
   }
 
   const warnings: string[] = [];
+  const trustWarnings: string[] = [];
   if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
     warnings.push(
       `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
@@ -1198,9 +1213,35 @@ function validatePresetBundle(bundle: PresetBundle): PresetBundleValidation {
     throw new Error("Preset bundle checksum verification failed.");
   }
 
+  if (trustPolicy.requireSigner && !bundle.metadata.signer) {
+    trustWarnings.push("Preset bundle is unsigned.");
+  }
+
+  if (trustPolicy.allowedOrigins?.length) {
+    if (!bundle.metadata.origin) {
+      trustWarnings.push("Preset bundle origin is missing.");
+    } else if (!trustPolicy.allowedOrigins.includes(bundle.metadata.origin)) {
+      trustWarnings.push(`Preset bundle origin is not allowed: ${bundle.metadata.origin}`);
+    }
+  }
+
+  if (trustPolicy.allowedSigners?.length) {
+    if (!bundle.metadata.signer) {
+      trustWarnings.push("Preset bundle signer is missing.");
+    } else if (!trustPolicy.allowedSigners.includes(bundle.metadata.signer)) {
+      trustWarnings.push(`Preset bundle signer is not allowed: ${bundle.metadata.signer}`);
+    }
+  }
+
+  if (trustWarnings.length > 0) {
+    throw new Error(`Preset bundle trust validation failed: ${trustWarnings.join("; ")}`);
+  }
+
   return {
     metadata: bundle.metadata,
     warnings,
+    trustWarnings,
+    trusted: true,
   };
 }
 

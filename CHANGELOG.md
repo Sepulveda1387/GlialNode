@@ -28,6 +28,7 @@
 - Added preset diffing so built-in, local, and file-backed brain styles can be compared across metadata and policy settings.
 - Added preset rollback so a registered local brain style can be restored to an earlier version from history.
 - Added preset release channels so registered brain styles can promote versions into lanes like `stable` and `candidate`.
+- Added bundle trust-policy enforcement so preset bundle inspection/import can require signers and allowlist origins or signers.
 - Added channel-based space creation and configuration so spaces can consume a named preset lane directly.
 - Added default preset channels so local preset consumers can resolve a recommended lane without specifying it every time.
 - Added preset channel export/import so channel manifests can move between machines or repos.
