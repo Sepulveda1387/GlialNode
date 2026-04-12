@@ -27,6 +27,7 @@
 - Added preset history snapshots and inspection so registered brain styles keep a local version trail instead of only overwriting the latest file.
 - Added preset diffing so built-in, local, and file-backed brain styles can be compared across metadata and policy settings.
 - Added preset rollback so a registered local brain style can be restored to an earlier version from history.
+- Added preset release channels so registered brain styles can promote versions into lanes like `stable` and `candidate`.
 - Fixed the CLI `memory add --status ...` path so non-active record states are persisted correctly.
 
 ## 0.1.0

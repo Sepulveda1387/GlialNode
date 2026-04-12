@@ -143,6 +143,9 @@ export function usageText(): string {
     "  glialnode preset local-show --name <name> [--directory <path>]",
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
+    "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
+    "  glialnode preset channel-show --name <name> --channel <name> [--directory <path>]",
+    "  glialnode preset channel-list --name <name> [--directory <path>]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-directory <path>] [--preset-file <path>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>]",
@@ -576,6 +579,67 @@ async function runPresetCommand(
         `name=${rolledBack.name}`,
         `version=${rolledBack.version ?? ""}`,
         `source=${rolledBack.source ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "promote") {
+    const name = requireFlag(parsed.flags, "name");
+    const channel = requireFlag(parsed.flags, "channel");
+    const version = requireFlag(parsed.flags, "version");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    requirePresetHistoryVersion(listRegisteredPresetHistory(name, directory), name, version);
+    const current = readPresetChannels(directory, name);
+    const next = {
+      name,
+      channels: {
+        ...current.channels,
+        [channel]: version,
+      },
+    };
+    writePresetChannels(directory, next);
+
+    return {
+      lines: [
+        "Preset promoted.",
+        `name=${name}`,
+        `channel=${channel}`,
+        `version=${version}`,
+      ],
+    };
+  }
+
+  if (action === "channel-list") {
+    const state = readPresetChannels(resolvePresetDirectory(parsed.flags.directory), requireFlag(parsed.flags, "name"));
+    return {
+      lines: [
+        `channels=${Object.keys(state.channels).length}`,
+        ...Object.entries(state.channels)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([channel, version]) => `${channel}=${version}`),
+      ],
+    };
+  }
+
+  if (action === "channel-show") {
+    const name = requireFlag(parsed.flags, "name");
+    const channel = requireFlag(parsed.flags, "channel");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const state = readPresetChannels(directory, name);
+    const version = state.channels[channel];
+    if (!version) {
+      throw new Error(`Unknown preset channel for ${name}: ${channel}`);
+    }
+    const preset = requirePresetHistoryVersion(listRegisteredPresetHistory(name, directory), name, version);
+
+    return {
+      lines: [
+        `name=${preset.name}`,
+        `channel=${channel}`,
+        `version=${preset.version ?? ""}`,
+        `author=${preset.author ?? ""}`,
+        `source=${preset.source ?? ""}`,
+        `settings=${JSON.stringify(preset.settings)}`,
       ],
     };
   }
@@ -1881,6 +1945,29 @@ function requirePresetHistoryVersion(
   }
 
   return match;
+}
+
+function readPresetChannels(directory: string, name: string): { name: string; channels: Record<string, string> } {
+  const channelsPath = join(directory, ".channels", `${toPresetFileName(name)}.json`);
+  if (!existsSync(channelsPath)) {
+    return {
+      name,
+      channels: {},
+    };
+  }
+
+  const parsed = JSON.parse(readTextFile(channelsPath)) as { channels?: Record<string, string> };
+  return {
+    name,
+    channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
+  };
+}
+
+function writePresetChannels(directory: string, state: { name: string; channels: Record<string, string> }) {
+  const channelsDirectory = join(directory, ".channels");
+  mkdirSync(channelsDirectory, { recursive: true });
+  const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
+  writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
 }
 
 function toPresetFileName(name: string): string {

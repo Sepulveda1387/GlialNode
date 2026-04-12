@@ -172,6 +172,11 @@ export interface RecallOptions {
   bundlePreferCompact?: boolean;
 }
 
+export interface PresetChannelState {
+  name: string;
+  channels: Record<string, string>;
+}
+
 export class GlialNodeClient {
   private readonly repository: MemoryRepository;
   private readonly closeRepository: (() => void) | null;
@@ -322,6 +327,47 @@ export class GlialNodeClient {
     mkdirSync(resolvedDirectory, { recursive: true });
     writePresetFiles(resolvedDirectory, rolledBack);
     return rolledBack;
+  }
+
+  listPresetChannels(name: string, directory?: string): PresetChannelState {
+    const resolvedDirectory = resolve(directory ?? this.presetDirectory);
+    return readPresetChannels(resolvedDirectory, name);
+  }
+
+  promotePresetChannel(
+    name: string,
+    options: { channel: string; version: string; directory?: string },
+  ): PresetChannelState {
+    const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    requirePresetHistoryVersion(this.listRegisteredPresetHistory(name, resolvedDirectory), name, options.version);
+    const current = readPresetChannels(resolvedDirectory, name);
+    const next: PresetChannelState = {
+      name,
+      channels: {
+        ...current.channels,
+        [options.channel]: options.version,
+      },
+    };
+    writePresetChannels(resolvedDirectory, next);
+    return next;
+  }
+
+  resolvePresetChannel(
+    name: string,
+    options: { channel: string; directory?: string },
+  ): SpacePresetDefinition {
+    const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
+    const state = readPresetChannels(resolvedDirectory, name);
+    const version = state.channels[options.channel];
+    if (!version) {
+      throw new Error(`Unknown preset channel for ${name}: ${options.channel}`);
+    }
+
+    return requirePresetHistoryVersion(
+      this.listRegisteredPresetHistory(name, resolvedDirectory),
+      name,
+      version,
+    );
   }
 
   async getSpace(spaceId: string): Promise<MemorySpace> {
@@ -898,6 +944,29 @@ function requirePresetHistoryVersion(
   }
 
   return match;
+}
+
+function readPresetChannels(directory: string, name: string): PresetChannelState {
+  const channelsPath = join(directory, ".channels", `${toPresetFileName(name)}.json`);
+  if (!existsSync(channelsPath)) {
+    return {
+      name,
+      channels: {},
+    };
+  }
+
+  const parsed = JSON.parse(readFileSync(channelsPath, "utf8")) as Partial<PresetChannelState>;
+  return {
+    name,
+    channels: parsed.channels && typeof parsed.channels === "object" ? { ...parsed.channels } : {},
+  };
+}
+
+function writePresetChannels(directory: string, state: PresetChannelState): void {
+  const channelsDirectory = join(directory, ".channels");
+  mkdirSync(channelsDirectory, { recursive: true });
+  const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
+  writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
 }
 
 function mergeSpaceSettings(

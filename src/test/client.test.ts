@@ -246,6 +246,51 @@ test("GlialNodeClient can roll back a registered preset to an earlier version", 
   }
 });
 
+test("GlialNodeClient can promote preset versions into named channels", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-preset-channel-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const alternatePresetPath = join(tempDirectory, "planning-heavy.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+
+    client.exportPreset("planning-heavy", alternatePresetPath);
+    client.registerPreset(alternatePresetPath, {
+      name: "team-executor",
+      version: "2.2.0",
+    });
+
+    const channels = client.promotePresetChannel("team-executor", {
+      channel: "stable",
+      version: "2.1.0",
+    });
+    assert.equal(channels.channels.stable, "2.1.0");
+
+    client.promotePresetChannel("team-executor", {
+      channel: "candidate",
+      version: "2.2.0",
+    });
+
+    const listed = client.listPresetChannels("team-executor");
+    assert.equal(listed.channels.stable, "2.1.0");
+    assert.equal(listed.channels.candidate, "2.2.0");
+
+    const stablePreset = client.resolvePresetChannel("team-executor", { channel: "stable" });
+    assert.equal(stablePreset.version, "2.1.0");
+    assert.equal(stablePreset.settings.routing?.preferPlannerOnDistilled, false);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
