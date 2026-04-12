@@ -373,6 +373,33 @@ test("CLI can manage trusted signers", async () => {
     );
     assert.match(shown.lines.join("\n"), /algorithm=ed25519/);
     assert.match(shown.lines.join("\n"), /source=signing-key:team-executor-key/);
+
+    const rotated = await runCommand(
+      parseArgs([
+        "preset", "trust-rotate",
+        "--name", "team-anchor",
+        "--input", publicKeyPath,
+        "--next-name", "team-anchor-v2",
+        "--signer", "GlialNode Test",
+        "--source", "rotation-test",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.equal(rotated.lines[0], "Trusted signer rotated.");
+
+    const revokedShow = await runCommand(
+      parseArgs(["preset", "trust-show", "--name", "team-anchor", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.match(revokedShow.lines.join("\n"), /replacedBy=team-anchor-v2/);
+    assert.match(revokedShow.lines.join("\n"), /revokedAt=/);
+
+    const revoked = await runCommand(
+      parseArgs(["preset", "trust-revoke", "--name", "team-public", "--directory", presetDirectory]),
+      { repository },
+    );
+    assert.equal(revoked.lines[0], "Trusted signer revoked.");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -1046,6 +1073,25 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       { repository },
     );
     assert.match(trustedByName.lines.join("\n"), /trusted=true/);
+
+    await runCommand(
+      parseArgs([
+        "preset", "trust-revoke",
+        "--name", "team-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await assert.rejects(
+      () => runCommand(parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--require-signature",
+        "--trust-signer", "team-anchor",
+        "--directory", presetDirectory,
+      ]), { repository }),
+      /Trusted signer is revoked: team-anchor/,
+    );
 
     const invalidSignatureBundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {
       metadata: { signature: string };

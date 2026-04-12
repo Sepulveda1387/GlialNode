@@ -183,6 +183,20 @@ test("GlialNodeClient can manage trusted signers", async () => {
     const stored = client.getTrustedSigner("team-anchor");
     assert.equal(stored.keyId, trustedFromLocal.keyId);
     assert.match(stored.publicKeyPem, /BEGIN PUBLIC KEY/);
+
+    const rotated = client.rotateTrustedSigner("team-anchor", publicKeyPath, {
+      nextName: "team-anchor-v2",
+      signer: "GlialNode Test",
+      source: "rotation-test",
+    });
+    assert.equal(rotated.name, "team-anchor-v2");
+
+    const revoked = client.getTrustedSigner("team-anchor");
+    assert.ok(revoked.revokedAt);
+    assert.equal(revoked.replacedBy, "team-anchor-v2");
+
+    const explicitlyRevoked = client.revokeTrustedSigner("team-public");
+    assert.ok(explicitlyRevoked.revokedAt);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -617,6 +631,15 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
       trustedSignerNames: ["team-anchor"],
     });
     assert.equal(trustedByName.trusted, true);
+
+    client.revokeTrustedSigner("team-anchor");
+    assert.throws(
+      () => client.validatePresetBundle(bundlePath, {
+        requireSignature: true,
+        trustedSignerNames: ["team-anchor"],
+      }),
+      /Trusted signer is revoked: team-anchor/,
+    );
 
     assert.throws(
       () => client.validatePresetBundle(bundlePath, { allowedOrigins: ["production"] }),

@@ -214,6 +214,8 @@ export interface TrustedSignerRecord {
   source?: string;
   createdAt: string;
   updatedAt: string;
+  revokedAt?: string;
+  replacedBy?: string;
 }
 
 export interface TrustedSignerSummary {
@@ -224,6 +226,8 @@ export interface TrustedSignerSummary {
   source?: string;
   createdAt: string;
   updatedAt: string;
+  revokedAt?: string;
+  replacedBy?: string;
 }
 
 export interface PresetBundle {
@@ -479,6 +483,42 @@ export class GlialNodeClient {
 
   getTrustedSigner(name: string, directory?: string): TrustedSignerRecord {
     return readTrustedSignerRecord(resolve(directory ?? this.presetDirectory), name);
+  }
+
+  revokeTrustedSigner(
+    name: string,
+    options: { directory?: string; replacedBy?: string } = {},
+  ): TrustedSignerSummary {
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    const record = this.getTrustedSigner(name, directory);
+    const revoked: TrustedSignerRecord = {
+      ...record,
+      revokedAt: record.revokedAt ?? new Date().toISOString(),
+      replacedBy: options.replacedBy ?? record.replacedBy,
+      updatedAt: new Date().toISOString(),
+    };
+    writeTrustedSignerRecord(directory, revoked);
+    return toTrustedSignerSummary(revoked);
+  }
+
+  rotateTrustedSigner(
+    currentName: string,
+    inputPath: string,
+    options: { nextName: string; directory?: string; signer?: string; source?: string; overwrite?: boolean },
+  ): TrustedSignerSummary {
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    const next = this.registerTrustedSignerFromPublicKey(inputPath, {
+      name: options.nextName,
+      directory,
+      signer: options.signer,
+      source: options.source,
+      overwrite: options.overwrite,
+    });
+    this.revokeTrustedSigner(currentName, {
+      directory,
+      replacedBy: next.name,
+    });
+    return next;
   }
 
   listRegisteredPresets(directory?: string): SpacePresetDefinition[] {
@@ -1462,6 +1502,8 @@ function parseTrustedSignerRecord(value: string): TrustedSignerRecord {
     source: typeof parsed.source === "string" ? parsed.source : undefined,
     createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+    revokedAt: typeof parsed.revokedAt === "string" ? parsed.revokedAt : undefined,
+    replacedBy: typeof parsed.replacedBy === "string" ? parsed.replacedBy : undefined,
   };
 }
 
@@ -1474,6 +1516,8 @@ function toTrustedSignerSummary(record: TrustedSignerRecord): TrustedSignerSumma
     source: record.source,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    revokedAt: record.revokedAt,
+    replacedBy: record.replacedBy,
   };
 }
 
@@ -1616,7 +1660,13 @@ function resolvePresetBundleTrustPolicy(
   }
 
   const trustedKeyIds = trustPolicy.trustedSignerNames
-    .map((name) => readTrustedSignerRecord(directory, name).keyId);
+    .map((name) => {
+      const record = readTrustedSignerRecord(directory, name);
+      if (record.revokedAt) {
+        throw new Error(`Trusted signer is revoked: ${name}`);
+      }
+      return record.keyId;
+    });
   const allowedSignerKeyIds = [
     ...(trustPolicy.allowedSignerKeyIds ?? []),
     ...trustedKeyIds,

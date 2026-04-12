@@ -154,6 +154,8 @@ export function usageText(): string {
     "  glialnode preset trust-register --input <path> --name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
     "  glialnode preset trust-list [--directory <path>]",
     "  glialnode preset trust-show --name <name> [--directory <path>]",
+    "  glialnode preset trust-revoke --name <name> [--replaced-by <name>] [--directory <path>]",
+    "  glialnode preset trust-rotate --name <name> --input <path> --next-name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
     "  glialnode preset history --name <name> [--directory <path>]",
     "  glialnode preset rollback --name <name> --to-version <semver> [--author <name>] [--directory <path>]",
     "  glialnode preset promote --name <name> --channel <name> --version <semver> [--directory <path>]",
@@ -738,6 +740,73 @@ async function runPresetCommand(
         `source=${record.source ?? ""}`,
         `createdAt=${record.createdAt}`,
         `updatedAt=${record.updatedAt}`,
+        `revokedAt=${record.revokedAt ?? ""}`,
+        `replacedBy=${record.replacedBy ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "trust-revoke") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const name = requireFlag(parsed.flags, "name");
+    const record = readTrustedSignerRecord(directory, name);
+    const revoked = {
+      ...record,
+      revokedAt: record.revokedAt ?? new Date().toISOString(),
+      replacedBy: parsed.flags["replaced-by"] ?? record.replacedBy,
+      updatedAt: new Date().toISOString(),
+    };
+    writeTrustedSignerRecord(directory, revoked);
+
+    return {
+      lines: [
+        "Trusted signer revoked.",
+        `name=${revoked.name}`,
+        `revokedAt=${revoked.revokedAt ?? ""}`,
+        `replacedBy=${revoked.replacedBy ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "trust-rotate") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const currentName = requireFlag(parsed.flags, "name");
+    const nextName = requireFlag(parsed.flags, "next-name");
+    const inputPath = resolve(requireFlag(parsed.flags, "input"));
+    const nextPath = getTrustedSignerPath(directory, nextName);
+    if (parsed.flags.overwrite !== "true" && existsSync(nextPath)) {
+      throw new Error(`Trusted signer already exists: ${nextName}`);
+    }
+
+    const publicKeyPem = readTextFile(inputPath);
+    const timestamp = new Date().toISOString();
+    const nextRecord = {
+      name: nextName,
+      algorithm: "ed25519" as const,
+      signer: parsed.flags.signer,
+      keyId: computeSignerKeyId(publicKeyPem),
+      publicKeyPem,
+      source: parsed.flags.source ?? requireFlag(parsed.flags, "input"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, nextRecord);
+
+    const currentRecord = readTrustedSignerRecord(directory, currentName);
+    const revoked = {
+      ...currentRecord,
+      revokedAt: currentRecord.revokedAt ?? timestamp,
+      replacedBy: nextName,
+      updatedAt: timestamp,
+    };
+    writeTrustedSignerRecord(directory, revoked);
+
+    return {
+      lines: [
+        "Trusted signer rotated.",
+        `name=${currentName}`,
+        `replacedBy=${nextName}`,
+        `keyId=${nextRecord.keyId}`,
       ],
     };
   }
@@ -2475,6 +2544,8 @@ function readTrustedSignerRecord(directory: string, name: string): {
   source?: string;
   createdAt: string;
   updatedAt: string;
+  revokedAt?: string;
+  replacedBy?: string;
 } {
   const recordPath = getTrustedSignerPath(directory, name);
   if (!existsSync(recordPath)) {
@@ -2505,6 +2576,8 @@ function parseTrustedSignerRecord(value: string): {
   source?: string;
   createdAt: string;
   updatedAt: string;
+  revokedAt?: string;
+  replacedBy?: string;
 } {
   const parsed = JSON.parse(value) as {
     name?: unknown;
@@ -2515,6 +2588,8 @@ function parseTrustedSignerRecord(value: string): {
     source?: unknown;
     createdAt?: unknown;
     updatedAt?: unknown;
+    revokedAt?: unknown;
+    replacedBy?: unknown;
   };
 
   if (typeof parsed.name !== "string" || !parsed.name) {
@@ -2537,6 +2612,8 @@ function parseTrustedSignerRecord(value: string): {
     source: typeof parsed.source === "string" ? parsed.source : undefined,
     createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+    revokedAt: typeof parsed.revokedAt === "string" ? parsed.revokedAt : undefined,
+    replacedBy: typeof parsed.replacedBy === "string" ? parsed.replacedBy : undefined,
   };
 }
 
@@ -2809,7 +2886,13 @@ function resolvePresetTrustPolicy(
   }
 
   const trustedKeyIds = trustPolicy.trustedSignerNames
-    .map((name) => readTrustedSignerRecord(directory, name).keyId);
+    .map((name) => {
+      const record = readTrustedSignerRecord(directory, name);
+      if (record.revokedAt) {
+        throw new Error(`Trusted signer is revoked: ${name}`);
+      }
+      return record.keyId;
+    });
 
   return {
     ...trustPolicy,

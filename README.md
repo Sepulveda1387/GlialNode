@@ -201,6 +201,8 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"`
 - `glialnode preset trust-list`
 - `glialnode preset trust-show --name team-anchor`
+- `glialnode preset trust-revoke --name team-anchor`
+- `glialnode preset trust-rotate --name team-anchor --input ./team-executor-v2.public.pem --next-name team-anchor-v2`
 - `glialnode preset history --name team-executor`
 - `glialnode preset rollback --name team-executor --to-version 2.1.0`
 - `glialnode preset promote --name team-executor --channel stable --version 2.1.0`
@@ -644,6 +646,8 @@ glialnode preset trust-local-key --name team-executor-key --trust-name team-anch
 glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"
 glialnode preset trust-list
 glialnode preset trust-show --name team-anchor
+glialnode preset trust-revoke --name team-anchor
+glialnode preset trust-rotate --name team-anchor --input ./team-executor-v2.public.pem --next-name team-anchor-v2
 glialnode preset promote --name team-executor --channel stable --version 2.1.0
 glialnode preset channel-default --name team-executor --channel stable
 glialnode preset channel-export --name team-executor --output ./team-executor.channels.json
