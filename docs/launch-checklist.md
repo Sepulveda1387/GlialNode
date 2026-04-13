@@ -3,6 +3,7 @@
 ## Before First Public Push
 
 - confirm `README.md` reflects the current CLI surface
+- review `docs/live-roadmap.gnl.md` and confirm all `V1/P0` items are either `D` or consciously deferred
 - run `npm run check`
 - run `npm run test`
 - run `npm run demo`

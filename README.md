@@ -749,6 +749,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `npm run demo:client`
 - `npm run pack:check`
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
+- review `docs/live-roadmap.gnl.md`
 - review `docs/launch-checklist.md`
 - follow `docs/publish-guide.md` for the first push
 
@@ -762,6 +763,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `CHANGELOG.md`: release notes
 - `SECURITY.md`: security reporting guidance
 - `.github/workflows/ci.yml`: GitHub Actions verification workflow
+- `docs/live-roadmap.gnl.md`: compact live roadmap and completion checklist in GNL
 - `docs/publish-guide.md`: first-publish handoff steps
 - `scripts/demo.mjs`: cross-platform end-to-end demo flow for Windows, Linux, and macOS
 - `scripts/client-demo.mjs`: cross-platform end-to-end client API demo flow

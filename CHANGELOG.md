@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a compact GNL live roadmap/checklist for tracking completion, best practices, and upcoming work.
 - Added provenance-aware reviewer routing policy for auto-routed bundles.
 - Added provenance-aware recall annotations and bundle hints for bundle trust summaries.
 - Added provenance audit events for space-scoped preset bundle review and import.
