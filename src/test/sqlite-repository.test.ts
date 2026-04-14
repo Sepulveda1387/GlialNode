@@ -331,3 +331,85 @@ test("SqliteMemoryRepository retrieval still surfaces specific raw records when 
 
   repository.close();
 });
+
+test("SqliteMemoryRepository safely handles punctuation-heavy FTS queries", async () => {
+  const repository = new SqliteMemoryRepository();
+  const space = createFixtureSpace();
+  const scope = createFixtureScope(space.id);
+
+  await repository.createSpace(space);
+  await repository.upsertScope(scope);
+
+  const importedRecord = createMemoryRecord({
+    spaceId: space.id,
+    tier: "mid",
+    kind: "summary",
+    content: 'Bundle import audit for team-executor-imported with trust:anchored and reviewer("strict") context.',
+    summary: "team-executor-imported bundle import audit",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["bundle-import", "team-executor-imported", "trust:anchored"],
+    importance: 0.86,
+    confidence: 0.91,
+    freshness: 0.79,
+  });
+
+  const wildcardRecord = createMemoryRecord({
+    spaceId: space.id,
+    tier: "mid",
+    kind: "fact",
+    content: "Retrieval wildcard guidance covers retrieval flows and safe query parsing.",
+    summary: "retrieval wildcard guidance",
+    scope: { id: scope.id, type: scope.type },
+    tags: ["retrieval", "query"],
+    importance: 0.7,
+    confidence: 0.82,
+    freshness: 0.73,
+  });
+
+  await repository.writeRecord(importedRecord);
+  await repository.writeRecord(wildcardRecord);
+
+  const dashedMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "team-executor-imported",
+    limit: 10,
+  });
+  assert.equal(dashedMatches[0]?.id, importedRecord.id);
+
+  const quotedMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "\"Bundle import audit\"",
+    limit: 10,
+  });
+  assert.equal(quotedMatches[0]?.id, importedRecord.id);
+
+  const colonMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "trust:anchored",
+    limit: 10,
+  });
+  assert.equal(colonMatches[0]?.id, importedRecord.id);
+
+  const parenthesisMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "reviewer(\"strict\")",
+    limit: 10,
+  });
+  assert.equal(parenthesisMatches[0]?.id, importedRecord.id);
+
+  const wildcardMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "retrieval*",
+    limit: 10,
+  });
+  assert.equal(wildcardMatches[0]?.id, wildcardRecord.id);
+
+  const whitespaceMatches = await repository.searchRecords({
+    spaceId: space.id,
+    text: "   ",
+    limit: 10,
+  });
+  assert.equal(whitespaceMatches.length, 2);
+
+  repository.close();
+});

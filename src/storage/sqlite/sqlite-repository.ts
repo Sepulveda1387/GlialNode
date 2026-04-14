@@ -375,6 +375,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
     const clauses: string[] = ["mr.space_id = ?"];
     const params: Array<string | number> = [query.spaceId];
     const statuses = query.statuses?.length ? query.statuses : ["active"];
+    const ftsQuery = buildSafeFtsQuery(query.text);
 
     if (query.scopeIds?.length) {
       clauses.push(`mr.scope_id IN (${placeholders(query.scopeIds.length)})`);
@@ -425,12 +426,12 @@ export class SqliteMemoryRepository implements MemoryRepository {
       INNER JOIN scopes s ON s.id = mr.scope_id
     `;
 
-    if (query.text?.trim()) {
+    if (ftsQuery) {
       sql += `
         INNER JOIN memory_records_fts fts ON fts.record_id = mr.id
       `;
       clauses.push("memory_records_fts MATCH ?");
-      params.push(query.text.trim());
+      params.push(ftsQuery);
     }
 
     sql += `
@@ -662,6 +663,31 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function buildSafeFtsQuery(input: string | undefined): string | undefined {
+  const trimmed = input?.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const tokenPattern = /"([^"]+)"|(\S+)/g;
+  const tokens: string[] = [];
+
+  for (const match of trimmed.matchAll(tokenPattern)) {
+    const value = (match[1] ?? match[2] ?? "").trim();
+
+    if (!value) {
+      continue;
+    }
+
+    // Treat each token as a literal phrase to avoid raw FTS operator injection
+    // or parser errors from punctuation-heavy user input.
+    tokens.push(`"${value.replace(/"/g, "\"\"")}"`);
+  }
+
+  return tokens.length ? tokens.join(" AND ") : undefined;
 }
 
 function getCount(row: unknown): number {
