@@ -1448,6 +1448,123 @@ test("GlialNodeClient can build reusable memory bundles", async () => {
   }
 });
 
+test("GlialNodeClient can prepare pre-reply memory context for host apps", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-reply-context-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Reply Context Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable reply drafting flows.",
+      summary: "Lexical retrieval decision",
+      compactContent: "U:req retrieval=lexical_first",
+      tags: ["retrieval", "reply"],
+      confidence: 0.88,
+      freshness: 0.82,
+      importance: 0.9,
+    });
+
+    const support = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval keeps reply preparation easier to audit than heavier semantic stacks.",
+      summary: "Lexical auditing benefit",
+      compactContent: "F:reply audit=easy",
+      tags: ["retrieval", "audit"],
+      confidence: 0.79,
+      freshness: 0.74,
+      importance: 0.76,
+    });
+
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: primary.id,
+      toRecordId: support.id,
+      type: "supports",
+    });
+
+    const replyContext = await client.prepareReplyContext({
+      spaceId: space.id,
+      text: "lexical retrieval for reply drafting",
+      limit: 3,
+    }, {
+      maxEntries: 1,
+      supportLimit: 2,
+      bundleConsumer: "auto",
+      bundlePreferCompact: true,
+    });
+
+    assert.equal(replyContext.entries.length, 1);
+    assert.equal(replyContext.entries[0]?.pack.primary.id, primary.id);
+    assert.match(replyContext.entries[0]?.trace.summary ?? "", /Recalled/);
+    assert.match(replyContext.entries[0]?.text ?? "", /\[GlialNode Memory\]/);
+    assert.match(replyContext.entries[0]?.text ?? "", /route=/);
+    assert.match(replyContext.text, /primary=Lexical retrieval decision/);
+    assert.ok(replyContext.entries[0]?.bundle.supporting.some((entry) => entry.recordId === support.id));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can prepare pre-reply memory context with a custom formatter", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-reply-context-custom-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Reply Context Custom Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Prefer lexical retrieval first for stable reply drafting flows.",
+      summary: "Lexical retrieval decision",
+      tags: ["retrieval", "reply"],
+      confidence: 0.88,
+      freshness: 0.82,
+      importance: 0.9,
+    });
+
+    const replyContext = await client.prepareReplyContext({
+      spaceId: space.id,
+      text: "lexical retrieval",
+      limit: 2,
+    }, {
+      maxEntries: 1,
+      formatter: (entry, index) =>
+        `ctx${index + 1}:${entry.bundle.primary.summary}|${entry.trace.citations[0]?.reason}`,
+    });
+
+    assert.equal(replyContext.entries.length, 1);
+    assert.match(replyContext.entries[0]?.text ?? "", /^ctx1:Lexical retrieval decision\|/);
+    assert.equal(replyContext.text, replyContext.entries[0]?.text ?? "");
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient bundle policies can prune and compact handoff payloads", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-policy-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

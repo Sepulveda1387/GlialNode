@@ -63,10 +63,13 @@ import {
   buildMemoryBundle,
   buildRecallPack,
   buildRecallTrace,
+  formatReplyContextBlock,
+  formatReplyContextText,
   type MemoryBundle,
   type MemoryBundleConsumer,
   type MemoryBundleProfile,
   type RecallPack,
+  type ReplyContextFormatOptions,
   type RecallTrace,
 } from "../memory/retrieval.js";
 import {
@@ -177,6 +180,24 @@ export interface RecallOptions {
   bundleMaxSupporting?: number;
   bundleMaxContentChars?: number;
   bundlePreferCompact?: boolean;
+}
+
+export interface PrepareReplyContextOptions extends RecallOptions, ReplyContextFormatOptions {
+  maxEntries?: number;
+  formatter?: (entry: PreparedReplyContextEntry, index: number) => string;
+}
+
+export interface PreparedReplyContextEntry {
+  pack: RecallPack;
+  trace: RecallTrace;
+  bundle: MemoryBundle;
+  text: string;
+}
+
+export interface PreparedReplyContext {
+  queryText?: string;
+  entries: PreparedReplyContextEntry[];
+  text: string;
 }
 
 export interface PresetChannelState {
@@ -1038,6 +1059,57 @@ export class GlialNodeClient {
       maxContentChars: options.bundleMaxContentChars,
       preferCompact: options.bundlePreferCompact,
     }));
+  }
+
+  async prepareReplyContext(
+    query: Parameters<MemoryRepository["searchRecords"]>[0],
+    options: PrepareReplyContextOptions = {},
+  ): Promise<PreparedReplyContext> {
+    const space = await requireSpace(this.repository, query.spaceId);
+    const primaryLimit = options.maxEntries ?? options.primaryLimit ?? 1;
+    const packs = await this.recallRecords(query, {
+      ...options,
+      primaryLimit,
+    });
+
+    const entries = packs.map((pack, index) => {
+      const trace = buildRecallTrace(pack, query.text);
+      const bundle = buildMemoryBundle(pack, {
+        queryText: query.text,
+        profile: options.bundleProfile,
+        consumer: options.bundleConsumer,
+        routingPolicy: space.settings?.routing,
+        maxSupporting: options.bundleMaxSupporting,
+        maxContentChars: options.bundleMaxContentChars,
+        preferCompact: options.bundlePreferCompact,
+      });
+
+      const entry: PreparedReplyContextEntry = {
+        pack,
+        trace,
+        bundle,
+        text: "",
+      };
+
+      entry.text = options.formatter
+        ? options.formatter(entry, index)
+        : formatReplyContextBlock(bundle, options);
+
+      return entry;
+    });
+
+    return {
+      queryText: query.text,
+      entries,
+      text: entries.length > 0
+        ? options.formatter
+          ? entries.map((entry) => entry.text).join("\n\n")
+          : formatReplyContextText(
+              entries.map((entry) => entry.bundle),
+              options,
+            )
+        : "",
+    };
   }
 
   async promoteRecord(recordId: string): Promise<MemoryRecord> {

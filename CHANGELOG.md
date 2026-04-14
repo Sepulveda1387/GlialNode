@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `prepareReplyContext(...)` so host apps can build pre-reply memory injection context from GlialNode's recall, trace, and bundle layers without manual orchestration.
 - Added a compact GNL live roadmap/checklist for tracking completion, best practices, and upcoming work.
 - Added provenance-aware reviewer routing policy for auto-routed bundles.
 - Added provenance-aware recall annotations and bundle hints for bundle trust summaries.

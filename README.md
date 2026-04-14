@@ -441,6 +441,30 @@ const bundles = await client.bundleRecall(
 console.log(bundles[0]?.route);
 ```
 
+For host apps that want a single pre-reply memory injection path, GlialNode can also prepare reply context directly from recall and bundle logic:
+
+```ts
+const replyContext = await client.prepareReplyContext(
+  {
+    spaceId: space.id,
+    text: "lexical retrieval for reply drafting",
+    limit: 3,
+  },
+  {
+    maxEntries: 1,
+    supportLimit: 2,
+    bundleConsumer: "auto",
+    bundlePreferCompact: true,
+  },
+);
+
+console.log(replyContext.text);
+console.log(replyContext.entries[0]?.trace.summary);
+console.log(replyContext.entries[0]?.bundle.route);
+```
+
+If a host runtime wants a different injection shape, it can also provide a custom formatter while still reusing GlialNode's recall, trace, and routing layers.
+
 ## Compact Memory
 
 GlialNode now supports a compact internal memory encoding layer so the system can preserve high-signal structure in fewer tokens.

@@ -120,6 +120,13 @@ export interface MemoryBundle {
   route: MemoryBundleRoute;
 }
 
+export interface ReplyContextFormatOptions {
+  includeTraceSummary?: boolean;
+  includeCitationReasons?: boolean;
+  includeRoute?: boolean;
+  maxSupportingCitations?: number;
+}
+
 export type MemoryBundleHint =
   | "actionable_primary"
   | "contains_contested_memory"
@@ -266,6 +273,56 @@ export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOp
     hints: buildBundleHints(pack.primary, supporting, pack.links),
     route,
   };
+}
+
+export function formatReplyContextBlock(
+  bundle: MemoryBundle,
+  options: ReplyContextFormatOptions = {},
+): string {
+  const includeTraceSummary = options.includeTraceSummary ?? true;
+  const includeCitationReasons = options.includeCitationReasons ?? true;
+  const includeRoute = options.includeRoute ?? true;
+  const maxSupportingCitations = Math.max(options.maxSupportingCitations ?? 2, 0);
+
+  const lines = ["[GlialNode Memory]"];
+
+  if (includeRoute) {
+    lines.push(`route=${bundle.route.resolvedConsumer}; why=${bundle.route.reason}`);
+  }
+
+  if (includeTraceSummary) {
+    lines.push(`summary=${bundle.trace.summary}`);
+  }
+
+  lines.push(`primary=${bundle.primary.summary ?? bundle.primary.content}`);
+
+  const supporting = bundle.supporting.slice(0, maxSupportingCitations);
+  if (supporting.length > 0) {
+    lines.push(
+      `support=${supporting
+        .map((entry) => entry.summary ?? entry.content)
+        .join(" | ")}`,
+    );
+  }
+
+  if (includeCitationReasons) {
+    const citationReasons = bundle.trace.citations
+      .slice(0, 1 + maxSupportingCitations)
+      .map((citation) => `${citation.role}:${citation.reason}`);
+
+    if (citationReasons.length > 0) {
+      lines.push(`why=${citationReasons.join(" | ")}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function formatReplyContextText(
+  bundles: MemoryBundle[],
+  options: ReplyContextFormatOptions = {},
+): string {
+  return bundles.map((bundle) => formatReplyContextBlock(bundle, options)).join("\n\n");
 }
 
 function isContextuallyRelated(primary: MemoryRecord, candidate: MemoryRecord, queryText?: string): boolean {

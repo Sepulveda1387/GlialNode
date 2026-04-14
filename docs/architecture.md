@@ -110,6 +110,12 @@ The bundle layer should also support intent routing:
 - route warnings derived from stale, superseded, contested, or provenance memory hints
 - per-space routing policy so different memory spaces can adjust how aggressively they favor review, planning, or execution
 
+For host applications that need to inject memory before response generation, the same retrieval stack should also expose a pre-reply context builder:
+
+- it should reuse recall packs, traces, and bundles instead of creating a second reply-specific retrieval path
+- it should return both structured reply-context entries and ready-to-inject text
+- it should remain formatter-friendly so hosts can shape the final prompt block without rebuilding recall logic themselves
+
 ### Conflict Handling
 
 New durable memory can also trigger contradiction detection against older durable memory in the same scope.
