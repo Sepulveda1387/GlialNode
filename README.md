@@ -1,7 +1,7 @@
 # GlialNode
 
 <p align="center">
-  <img src="./assets/glialnode-banner.svg" alt="GlialNode banner" width="100%" />
+  <img src="./assets/glialnode-banner.png" alt="GlialNode banner" width="100%" />
 </p>
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
@@ -779,8 +779,8 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 
 ## Project Files
 
-- `assets/glialnode-banner.svg`: repository banner
-- `assets/glialnode-mark.svg`: project mark
+- `assets/glialnode-banner.png`: repository banner
+- `assets/glialnode-mark.png`: project mark
 - `LICENSE`: MIT license
 - `CODE_OF_CONDUCT.md`: collaboration expectations
 - `CONTRIBUTING.md`: contributor workflow and expectations
