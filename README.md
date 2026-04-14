@@ -19,6 +19,14 @@ It is built around three ideas:
 - scoped memory: separate spaces for different orchestrators, projects, and agents
 - retrieval over replay: search and inject only the memory that matters now
 
+## Why It Saves Tokens
+
+GlialNode is built to reduce context waste.
+
+Instead of replaying whole transcripts or injecting large raw logs back into a model, it keeps operational history separate from curated memory, retrieves only relevant records, and supports compact internal memory text for lower-token recall and handoff flows.
+
+That makes it a better fit for long-running agent systems where context quality and token cost matter at the same time.
+
 ## Why GlialNode
 
 Most agent memory attempts fall into one of two traps:
