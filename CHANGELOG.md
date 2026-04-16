@@ -11,6 +11,7 @@
 - Hardened local signing-key and trusted-signer writes with atomic file updates and restrictive private-key file mode hints.
 - Tightened trusted-signer reporting so validation surfaces the actual matched anchor names instead of over-reporting requested trust names.
 - Hardened preset registry directories with safer mode hints and atomic writes for preset/channel/history files.
+- Added `glialnode doctor` with JSON-capable operator diagnostics for runtime, schema, database path, preset registry, signing keys, and trusted signers.
 - Added stable `--json` output for high-value CLI read/report flows including `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
 - Added `prepareReplyContext(...)` so host apps can build pre-reply memory injection context from GlialNode's recall, trace, and bundle layers without manual orchestration.
 - Added a compact GNL live roadmap/checklist for tracking completion, best practices, and upcoming work.

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -80,6 +80,132 @@ test("CLI status reports the SQLite write-mode contract", async () => {
     assert.match(result.lines.join("\n"), /writeMode=single_writer/);
     assert.match(result.lines.join("\n"), /writeGuarantee=One writer should own durable mutations/);
     assert.match(result.lines.join("\n"), /writeNonGoal=GlialNode does not provide a cross-process write broker/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI status supports machine-readable JSON runtime output", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-status-json-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const result = await runCommand(
+      parseArgs(["status", "--json"]),
+      {
+        repository,
+        databasePath,
+        databaseExistedAtStartup: true,
+        databaseParentExistedAtStartup: true,
+      },
+    );
+
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      status: string;
+      storage: string;
+      database: { path: string; existedAtStartup: boolean; parentExistedAtStartup: boolean };
+      schema: { upToDate: boolean; latest: number; version: number };
+      runtime: { writeMode: string };
+    };
+
+    assert.equal(parsed.status, "ready");
+    assert.equal(parsed.storage, "sqlite");
+    assert.equal(parsed.database.path, databasePath);
+    assert.equal(parsed.database.existedAtStartup, true);
+    assert.equal(parsed.database.parentExistedAtStartup, true);
+    assert.equal(parsed.schema.upToDate, true);
+    assert.equal(parsed.runtime.writeMode, "single_writer");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI doctor reports runtime and registry health in JSON", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-doctor-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "keygen", "--name", "doctor-key", "--signer", "GlialNode Test", "--directory", presetDirectory]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["preset", "trust-local-key", "--name", "doctor-key", "--trust-name", "doctor-anchor", "--directory", presetDirectory]),
+      { repository },
+    );
+
+    const result = await runCommand(
+      parseArgs(["doctor", "--preset-directory", presetDirectory, "--json"]),
+      {
+        repository,
+        databasePath,
+        databaseExistedAtStartup: true,
+        databaseParentExistedAtStartup: true,
+      },
+    );
+
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      status: string;
+      database: { kind: string; walSidecarPresent: boolean; shmSidecarPresent: boolean };
+      schema: { upToDate: boolean };
+      presetRegistry: { kind: string; presetFileCount: number };
+      signerStore: { kind: string; fileCount: number };
+      trustStore: { kind: string; fileCount: number; revokedCount: number };
+      warnings: string[];
+    };
+
+    assert.equal(parsed.status, "ready");
+    assert.equal(parsed.database.kind, "file");
+    assert.equal(parsed.schema.upToDate, true);
+    assert.equal(parsed.presetRegistry.kind, "directory");
+    assert.equal(parsed.presetRegistry.presetFileCount, 0);
+    assert.equal(parsed.signerStore.kind, "directory");
+    assert.equal(parsed.signerStore.fileCount, 1);
+    assert.equal(parsed.trustStore.kind, "directory");
+    assert.equal(parsed.trustStore.fileCount, 1);
+    assert.equal(parsed.trustStore.revokedCount, 0);
+    assert.deepEqual(parsed.warnings, []);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI doctor flags invalid trusted signer store paths", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-doctor-invalid-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    mkdirSync(presetDirectory, { recursive: true });
+    writeFileSync(join(presetDirectory, ".trusted"), "not-a-directory", "utf8");
+
+    const result = await runCommand(
+      parseArgs(["doctor", "--preset-directory", presetDirectory, "--json"]),
+      {
+        repository,
+        databasePath,
+        databaseExistedAtStartup: true,
+        databaseParentExistedAtStartup: true,
+      },
+    );
+
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      status: string;
+      trustStore: { kind: string; fileCount: number };
+      warnings: string[];
+    };
+
+    assert.equal(parsed.status, "attention");
+    assert.equal(parsed.trustStore.kind, "file");
+    assert.equal(parsed.trustStore.fileCount, 0);
+    assert.match(parsed.warnings.join("\n"), /Trusted signer store path is not a directory/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

@@ -15,6 +15,32 @@ GlialNode full-space snapshots now carry:
 
 That means snapshot portability is no longer "raw JSON only." Imports can now reject corrupted or incompatible files before writing them into a database.
 
+## Diagnostics First
+
+Before backup, restore, or trust changes, run:
+
+```bash
+glialnode doctor
+```
+
+For automation or CI-style verification, prefer:
+
+```bash
+glialnode doctor --json
+```
+
+The doctor report checks:
+
+- SQLite runtime hardening state
+- applied vs latest schema version
+- database path and WAL sidecars
+- preset registry path
+- signing-key store path and file counts
+- trusted-signer store path, file counts, and revoked-anchor count
+- common path-sanity problems such as a store path being a file instead of a directory
+
+If `doctor` reports `status=attention`, inspect the warnings before you proceed with import, export, rotation, or restore workflows.
+
 ## Recommended Backup Flow
 
 For a normal local backup:

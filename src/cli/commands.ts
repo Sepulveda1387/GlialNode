@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
@@ -68,7 +68,7 @@ import {
   summarizeRetentionPlan,
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
-import { SqliteMemoryRepository } from "../storage/index.js";
+import { SqliteMemoryRepository, sqliteAdapter } from "../storage/index.js";
 import type { MemoryRepository } from "../storage/repository.js";
 import type { ParsedArgs } from "./args.js";
 
@@ -78,6 +78,9 @@ export interface CommandResult {
 
 export interface CommandContext {
   repository: SqliteMemoryRepository;
+  databasePath?: string;
+  databaseExistedAtStartup?: boolean;
+  databaseParentExistedAtStartup?: boolean;
 }
 
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
@@ -94,7 +97,11 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
   const [resource = "status", action = "show"] = parsed.positional;
 
   if (resource === "status") {
-    return runStatusCommand(context);
+    return runStatusCommand(parsed, context);
+  }
+
+  if (resource === "doctor") {
+    return runDoctorCommand(parsed, context);
   }
 
   if (resource === "space") {
@@ -141,6 +148,7 @@ export function usageText(): string {
   return [
     "Usage:",
     "  glialnode status",
+    "  glialnode doctor [--preset-directory <path>] [--db <path>] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -211,23 +219,179 @@ function jsonResult(payload: unknown): CommandResult {
   };
 }
 
-async function runStatusCommand(context: CommandContext): Promise<CommandResult> {
+async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Promise<CommandResult> {
+  const payload = await buildStatusPayload(context);
+
+  if (wantsJson(parsed)) {
+    return jsonResult(payload);
+  }
+
+  return {
+    lines: [
+      `spaces=${payload.spaces}`,
+      `status=${payload.status}`,
+      `database=${payload.database.path ?? ""}`,
+      `databaseExistedAtStartup=${formatOptionalBoolean(payload.database.existedAtStartup)}`,
+      `databaseParentExistedAtStartup=${formatOptionalBoolean(payload.database.parentExistedAtStartup)}`,
+      `schemaVersion=${payload.schema.version}`,
+      `schemaLatest=${payload.schema.latest}`,
+      `schemaUpToDate=${payload.schema.upToDate ? "yes" : "no"}`,
+      `writeMode=${payload.runtime.writeMode}`,
+      `journalMode=${payload.runtime.journalMode.toLowerCase()}`,
+      `synchronous=${payload.runtime.synchronous.toLowerCase()}`,
+      `busyTimeoutMs=${payload.runtime.busyTimeoutMs}`,
+      `foreignKeys=${payload.runtime.foreignKeys ? "on" : "off"}`,
+      `defensive=${payload.runtime.defensive === null ? "unsupported" : payload.runtime.defensive ? "on" : "off"}`,
+      ...payload.runtime.writeGuarantees.map((guarantee) => `writeGuarantee=${guarantee}`),
+      ...payload.runtime.writeNonGoals.map((nonGoal) => `writeNonGoal=${nonGoal}`),
+    ],
+  };
+}
+
+async function buildStatusPayload(context: CommandContext) {
   const spaces = await context.repository.listSpaces();
   const runtime = context.repository.getRuntimeSettings();
 
   return {
+    status: "ready" as const,
+    storage: sqliteAdapter.name,
+    spaces: spaces.length,
+    database: {
+      path: context.databasePath ?? runtime.filename,
+      existedAtStartup: context.databaseExistedAtStartup ?? null,
+      parentExistedAtStartup: context.databaseParentExistedAtStartup ?? null,
+    },
+    schema: {
+      version: context.repository.getSchemaVersion(),
+      latest: sqliteAdapter.schemaVersion,
+      upToDate: context.repository.getSchemaVersion() === sqliteAdapter.schemaVersion,
+    },
+    runtime: {
+      writeMode: runtime.writeMode,
+      journalMode: runtime.journalMode,
+      synchronous: runtime.synchronous,
+      busyTimeoutMs: runtime.busyTimeoutMs,
+      foreignKeys: runtime.foreignKeys,
+      defensive: runtime.defensive,
+      writeGuarantees: runtime.writeGuarantees,
+      writeNonGoals: runtime.writeNonGoals,
+    },
+  };
+}
+
+function runDoctorCommand(parsed: ParsedArgs, context: CommandContext): CommandResult {
+  const report = buildDoctorReport(parsed, context);
+
+  if (wantsJson(parsed)) {
+    return jsonResult(report);
+  }
+
+  return {
     lines: [
-      `spaces=${spaces.length}`,
-      "status=ready",
-      `writeMode=${runtime.writeMode}`,
-      `journalMode=${runtime.journalMode.toLowerCase()}`,
-      `synchronous=${runtime.synchronous.toLowerCase()}`,
-      `busyTimeoutMs=${runtime.busyTimeoutMs}`,
-      `foreignKeys=${runtime.foreignKeys ? "on" : "off"}`,
-      `defensive=${runtime.defensive === null ? "unsupported" : runtime.defensive ? "on" : "off"}`,
-      ...runtime.writeGuarantees.map((guarantee) => `writeGuarantee=${guarantee}`),
-      ...runtime.writeNonGoals.map((nonGoal) => `writeNonGoal=${nonGoal}`),
+      `status=${report.status}`,
+      `storage=${report.storage}`,
+      `databasePath=${report.database.path ?? ""}`,
+      `databaseExistedAtStartup=${formatOptionalBoolean(report.database.existedAtStartup)}`,
+      `databaseParentExistedAtStartup=${formatOptionalBoolean(report.database.parentExistedAtStartup)}`,
+      `databaseKind=${report.database.kind}`,
+      `databaseSizeBytes=${report.database.sizeBytes ?? 0}`,
+      `databaseWalSidecar=${report.database.walSidecarPresent ? "present" : "absent"}`,
+      `databaseShmSidecar=${report.database.shmSidecarPresent ? "present" : "absent"}`,
+      `schemaVersion=${report.schema.version}`,
+      `schemaLatest=${report.schema.latest}`,
+      `schemaUpToDate=${report.schema.upToDate ? "yes" : "no"}`,
+      `writeMode=${report.runtime.writeMode}`,
+      `journalMode=${report.runtime.journalMode.toLowerCase()}`,
+      `synchronous=${report.runtime.synchronous.toLowerCase()}`,
+      `busyTimeoutMs=${report.runtime.busyTimeoutMs}`,
+      `foreignKeys=${report.runtime.foreignKeys ? "on" : "off"}`,
+      `defensive=${report.runtime.defensive === null ? "unsupported" : report.runtime.defensive ? "on" : "off"}`,
+      `presetDirectory=${report.presetRegistry.path}`,
+      `presetDirectoryKind=${report.presetRegistry.kind}`,
+      `presetFiles=${report.presetRegistry.presetFileCount}`,
+      `presetHistorySnapshots=${report.presetRegistry.historySnapshotCount}`,
+      `presetChannelFiles=${report.presetRegistry.channelFileCount}`,
+      `signingKeysDirectory=${report.signerStore.path}`,
+      `signingKeysDirectoryKind=${report.signerStore.kind}`,
+      `signingKeys=${report.signerStore.fileCount}`,
+      `trustedSignersDirectory=${report.trustStore.path}`,
+      `trustedSignersDirectoryKind=${report.trustStore.kind}`,
+      `trustedSigners=${report.trustStore.fileCount}`,
+      `revokedTrustedSigners=${report.trustStore.revokedCount ?? 0}`,
+      ...report.warnings.map((warning) => `warning=${warning}`),
     ],
+  };
+}
+
+function buildDoctorReport(parsed: ParsedArgs, context: CommandContext) {
+  const runtime = context.repository.getRuntimeSettings();
+  const databasePath = context.databasePath ?? runtime.filename ?? null;
+  const database = inspectDatabasePath(databasePath, {
+    existedAtStartup: context.databaseExistedAtStartup,
+    parentExistedAtStartup: context.databaseParentExistedAtStartup,
+  });
+  const presetDirectory = resolvePresetDirectory(parsed.flags["preset-directory"]);
+  const presetRegistry = inspectPresetRegistry(presetDirectory);
+  const signerStore = inspectJsonStoreDirectory(getSigningKeysDirectory(presetDirectory), {
+    label: "Signing key store",
+    modePolicy: "private",
+    parseRecord: parseSigningKeyRecord,
+  });
+  const trustStore = inspectJsonStoreDirectory(getTrustedSignersDirectory(presetDirectory), {
+    label: "Trusted signer store",
+    modePolicy: "shared",
+    parseRecord: parseTrustedSignerRecord,
+    countRevoked: true,
+  });
+
+  const warnings = [
+    ...database.warnings,
+    ...presetRegistry.warnings,
+    ...signerStore.warnings,
+    ...trustStore.warnings,
+  ];
+
+  if (context.repository.getSchemaVersion() !== sqliteAdapter.schemaVersion) {
+    warnings.push(
+      `SQLite schema version ${context.repository.getSchemaVersion()} does not match latest ${sqliteAdapter.schemaVersion}.`,
+    );
+  }
+
+  if (!runtime.foreignKeys) {
+    warnings.push("SQLite foreign key enforcement is disabled.");
+  }
+
+  if (runtime.journalMode !== "WAL" && runtime.filename) {
+    warnings.push(`SQLite journal mode is ${runtime.journalMode}; expected WAL for the default hardening contract.`);
+  }
+
+  if (runtime.busyTimeoutMs < 5000) {
+    warnings.push(`SQLite busy timeout is ${runtime.busyTimeoutMs}ms; default hardened runtime uses at least 5000ms.`);
+  }
+
+  return {
+    status: warnings.length > 0 ? "attention" as const : "ready" as const,
+    storage: sqliteAdapter.name,
+    database,
+    schema: {
+      version: context.repository.getSchemaVersion(),
+      latest: sqliteAdapter.schemaVersion,
+      upToDate: context.repository.getSchemaVersion() === sqliteAdapter.schemaVersion,
+    },
+    runtime: {
+      writeMode: runtime.writeMode,
+      journalMode: runtime.journalMode,
+      synchronous: runtime.synchronous,
+      busyTimeoutMs: runtime.busyTimeoutMs,
+      foreignKeys: runtime.foreignKeys,
+      defensive: runtime.defensive,
+      writeGuarantees: runtime.writeGuarantees,
+      writeNonGoals: runtime.writeNonGoals,
+    },
+    presetRegistry,
+    signerStore,
+    trustStore,
+    warnings,
   };
 }
 
@@ -3425,6 +3589,261 @@ function toPresetHistoryTimestamp(value: string | undefined): string {
     .replace(/[^0-9a-zA-Z-]/g, "");
 
   return normalized || "snapshot";
+}
+
+function formatOptionalBoolean(value: boolean | null | undefined): string {
+  if (value === undefined || value === null) {
+    return "unknown";
+  }
+
+  return value ? "yes" : "no";
+}
+
+function inspectDatabasePath(
+  databasePath: string | null,
+  options: {
+    existedAtStartup?: boolean;
+    parentExistedAtStartup?: boolean;
+  },
+) {
+  if (!databasePath || databasePath === ":memory:") {
+    return {
+      path: databasePath,
+      existedAtStartup: options.existedAtStartup ?? null,
+      parentExistedAtStartup: options.parentExistedAtStartup ?? null,
+      kind: "memory" as const,
+      sizeBytes: null,
+      walSidecarPresent: false,
+      shmSidecarPresent: false,
+      warnings: [] as string[],
+    };
+  }
+
+  const entry = inspectFilesystemEntry(databasePath);
+  const warnings = [...entry.warnings];
+
+  if (entry.kind !== "file") {
+    warnings.push(`Database path is not a regular file: ${databasePath}`);
+  }
+
+  return {
+    path: databasePath,
+    existedAtStartup: options.existedAtStartup ?? null,
+    parentExistedAtStartup: options.parentExistedAtStartup ?? null,
+    kind: entry.kind,
+    sizeBytes: entry.sizeBytes,
+    walSidecarPresent: existsSync(`${databasePath}-wal`),
+    shmSidecarPresent: existsSync(`${databasePath}-shm`),
+    warnings,
+  };
+}
+
+function inspectPresetRegistry(directory: string) {
+  const entry = inspectFilesystemEntry(directory);
+  const warnings = [...entry.warnings];
+
+  if (entry.kind !== "missing" && entry.kind !== "directory") {
+    warnings.push(`Preset directory path is not a directory: ${directory}`);
+  }
+
+  return {
+    path: directory,
+    kind: entry.kind,
+    presetFileCount: entry.kind === "directory" ? countJsonFilesInDirectory(directory) : 0,
+    historySnapshotCount: countJsonFilesRecursive(join(directory, ".versions")),
+    channelFileCount: countJsonFilesInDirectory(join(directory, ".channels")),
+    warnings,
+  };
+}
+
+function inspectJsonStoreDirectory(
+  directory: string,
+  options: {
+    label: string;
+    modePolicy: "private" | "shared";
+    parseRecord?: (value: string) => unknown;
+    countRevoked?: boolean;
+  },
+) {
+  const entry = inspectFilesystemEntry(directory);
+  const warnings = [...entry.warnings];
+
+  if (entry.kind === "missing") {
+    return {
+      path: directory,
+      kind: "missing" as const,
+      fileCount: 0,
+      revokedCount: options.countRevoked ? 0 : undefined,
+      warnings,
+    };
+  }
+
+  if (entry.kind !== "directory") {
+    warnings.push(`${options.label} path is not a directory: ${directory}`);
+    return {
+      path: directory,
+      kind: entry.kind,
+      fileCount: 0,
+      revokedCount: options.countRevoked ? 0 : undefined,
+      warnings,
+    };
+  }
+
+  warnings.push(...describeModeWarnings(options.label, directory, entry.mode, options.modePolicy, true));
+
+  let revokedCount = 0;
+  const fileNames = readdirSync(directory)
+    .filter((entryName) => entryName.toLowerCase().endsWith(".json"))
+    .sort((left, right) => left.localeCompare(right));
+
+  for (const fileName of fileNames) {
+    const filePath = join(directory, fileName);
+    const fileEntry = inspectFilesystemEntry(filePath);
+    warnings.push(...fileEntry.warnings);
+    warnings.push(...describeModeWarnings(`${options.label} file`, filePath, fileEntry.mode, options.modePolicy, false));
+
+    if (fileEntry.kind !== "file") {
+      warnings.push(`${options.label} entry is not a regular file: ${filePath}`);
+      continue;
+    }
+
+    if (options.parseRecord) {
+      try {
+        const record = options.parseRecord(readTextFile(filePath));
+        if (options.countRevoked && record && typeof record === "object" && "revokedAt" in record && record.revokedAt) {
+          revokedCount += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`${options.label} file is invalid: ${fileName} (${message})`);
+      }
+    }
+  }
+
+  return {
+    path: directory,
+    kind: "directory" as const,
+    fileCount: fileNames.length,
+    revokedCount: options.countRevoked ? revokedCount : undefined,
+    warnings,
+  };
+}
+
+function inspectFilesystemEntry(path: string): {
+  kind: "missing" | "file" | "directory" | "other";
+  mode?: number;
+  sizeBytes?: number;
+  warnings: string[];
+} {
+  if (!existsSync(path)) {
+    return {
+      kind: "missing",
+      warnings: [],
+    };
+  }
+
+  try {
+    const stats = statSync(path);
+    if (stats.isFile()) {
+      return {
+        kind: "file",
+        mode: stats.mode,
+        sizeBytes: stats.size,
+        warnings: [],
+      };
+    }
+
+    if (stats.isDirectory()) {
+      return {
+        kind: "directory",
+        mode: stats.mode,
+        sizeBytes: stats.size,
+        warnings: [],
+      };
+    }
+
+    return {
+      kind: "other",
+      mode: stats.mode,
+      sizeBytes: stats.size,
+      warnings: [`Path is neither a regular file nor a directory: ${path}`],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      kind: "other",
+      warnings: [`Unable to inspect path ${path}: ${message}`],
+    };
+  }
+}
+
+function describeModeWarnings(
+  label: string,
+  path: string,
+  mode: number | undefined,
+  policy: "private" | "shared",
+  isDirectory: boolean,
+): string[] {
+  if (process.platform === "win32" || mode === undefined) {
+    return [];
+  }
+
+  const maskedMode = mode & 0o777;
+  if (policy === "private" && (maskedMode & 0o077) !== 0) {
+    return [`${label} is more permissive than expected (${formatUnixMode(maskedMode)}) at ${path}`];
+  }
+
+  if (policy === "shared" && (maskedMode & 0o022) !== 0) {
+    return [`${label} allows group/other writes (${formatUnixMode(maskedMode)}) at ${path}`];
+  }
+
+  if (isDirectory && policy === "private" && maskedMode !== 0o700) {
+    return [`${label} should ideally use mode 700; found ${formatUnixMode(maskedMode)} at ${path}`];
+  }
+
+  if (!isDirectory && policy === "private" && maskedMode !== 0o600) {
+    return [`${label} should ideally use mode 600; found ${formatUnixMode(maskedMode)} at ${path}`];
+  }
+
+  return [];
+}
+
+function formatUnixMode(mode: number): string {
+  return (mode & 0o777).toString(8).padStart(3, "0");
+}
+
+function countJsonFilesInDirectory(directory: string): number {
+  const entry = inspectFilesystemEntry(directory);
+  if (entry.kind !== "directory") {
+    return 0;
+  }
+
+  return readdirSync(directory)
+    .filter((fileName) => fileName.toLowerCase().endsWith(".json"))
+    .length;
+}
+
+function countJsonFilesRecursive(directory: string): number {
+  const entry = inspectFilesystemEntry(directory);
+  if (entry.kind !== "directory") {
+    return 0;
+  }
+
+  let count = 0;
+  for (const child of readdirSync(directory)) {
+    const childPath = join(directory, child);
+    const childEntry = inspectFilesystemEntry(childPath);
+    if (childEntry.kind === "file" && child.toLowerCase().endsWith(".json")) {
+      count += 1;
+      continue;
+    }
+
+    if (childEntry.kind === "directory") {
+      count += countJsonFilesRecursive(childPath);
+    }
+  }
+
+  return count;
 }
 
 interface SpaceExport {

@@ -37,6 +37,8 @@ The goal is not just to save facts. The goal is to manage memory as a living sys
 
 For automation and integrations, GlialNode also supports stable `--json` output on key read/report flows such as `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
 
+For operator diagnostics, GlialNode also includes `glialnode doctor`, which inspects the live SQLite runtime, schema version, database path, preset registry, signing-key store, and trusted-signer store in one health report. Use `glialnode doctor --json` when you want a machine-readable readiness check.
+
 ## Why It Saves Tokens
 
 GlialNode is built to reduce context waste.
@@ -215,6 +217,7 @@ npm run test
 npm run demo
 npm run demo:client
 npm run pack:check
+glialnode doctor --json
 ```
 
 You can also start a space from a preset brain style:

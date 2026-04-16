@@ -2,6 +2,28 @@
 
 This guide collects the most common GlialNode operational failures and the fastest way to diagnose them.
 
+## Start With Doctor
+
+Before chasing a specific failure, run:
+
+```bash
+glialnode doctor
+```
+
+Or for scripts and CI-style checks:
+
+```bash
+glialnode doctor --json
+```
+
+That report gives you one place to inspect:
+
+- SQLite runtime and write-mode contract
+- current vs latest schema version
+- database file and WAL sidecars
+- preset directory, signing-key store, and trusted-signer store
+- basic path-sanity issues such as a store path being a file instead of a directory
+
 ## SQLite Lock Contention
 
 Symptoms:

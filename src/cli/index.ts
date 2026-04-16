@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 import { sqliteAdapter } from "../storage/index.js";
 import { parseArgs } from "./args.js";
@@ -9,10 +10,18 @@ import { createRepository, runCommand, usageText } from "./commands.js";
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   const databasePath = resolve(parsed.flags.db ?? ".glialnode/glialnode.sqlite");
-  const repository = createRepository(databasePath);
+  const databaseExistedAtStartup = existsSync(databasePath);
+  const databaseParentExistedAtStartup = existsSync(dirname(databasePath));
+  let repository: ReturnType<typeof createRepository> | undefined;
 
   try {
-    const result = await runCommand(parsed, { repository });
+    repository = createRepository(databasePath);
+    const result = await runCommand(parsed, {
+      repository,
+      databasePath,
+      databaseExistedAtStartup,
+      databaseParentExistedAtStartup,
+    });
     const wantsJson = parsed.flags.json === "true";
 
     if (wantsJson) {
@@ -34,6 +43,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const wantsJson = parsed.flags.json === "true";
+    const schemaVersion = repository ? repository.getSchemaVersion() : "unavailable";
 
     if (wantsJson) {
       console.error(
@@ -41,8 +51,9 @@ async function main(): Promise<void> {
           {
             error: message,
             storage: sqliteAdapter.name,
-            schemaVersion: repository.getSchemaVersion(),
+            schemaVersion,
             schemaLatest: sqliteAdapter.schemaVersion,
+            database: databasePath,
           },
           null,
           2,
@@ -54,13 +65,14 @@ async function main(): Promise<void> {
 
     console.error("GlialNode CLI");
     console.error(`storage=${sqliteAdapter.name}`);
-    console.error(`schemaVersion=${repository.getSchemaVersion()}`);
+    console.error(`schemaVersion=${schemaVersion}`);
     console.error(`schemaLatest=${sqliteAdapter.schemaVersion}`);
+    console.error(`database=${databasePath}`);
     console.error(`error=${message}`);
     console.error(usageText());
     process.exitCode = 1;
   } finally {
-    repository.close();
+    repository?.close();
   }
 }
 

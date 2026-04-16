@@ -257,7 +257,7 @@ if (mode === "holder") {
     "utf8",
   );
 
-  const holder = spawn(process.execPath, [helperPath, "holder", databasePath, "75", "300"], {
+  const holder = spawn(process.execPath, [helperPath, "holder", databasePath, "75", "1000"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
   });
