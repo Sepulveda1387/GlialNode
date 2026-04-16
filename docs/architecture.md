@@ -162,7 +162,7 @@ The client layer should:
 - create and configure spaces
 - manage scopes, records, events, and links
 - run compaction, retention, and maintenance workflows
-- import and export space snapshots
+- import and export versioned space snapshots with checksum validation and optional signing
 - provide a stable package surface so other systems do not need to shell out to the CLI
 
 ## Scopes
@@ -196,9 +196,11 @@ GlialNode v1 is SQLite-first and lexical-first:
 
 The configuration layer now also supports named space presets so new memory spaces can start with a coherent policy posture before finer overrides are applied, and those presets can be inspected, exported, registered locally, and reapplied through the library and CLI before use. Preset files and registered local presets now carry lightweight provenance metadata such as `version`, `author`, `source`, `createdAt`, and `updatedAt`, the local preset registry keeps versioned snapshots for each registered preset so shared brain styles retain simple lineage over time, preset diffing can compare metadata and policy changes across built-in, local, and file-backed brain styles, rollback can restore an earlier local preset version while preserving that restoration as another tracked history point, simple release channels can map names like `stable` or `candidate` onto known preset versions for downstream consumers, spaces can now be created or reconfigured directly from those channels without first resolving the underlying version manually, a registered preset can mark one of those channels as its default lane for lower-friction consumption, channel manifests can now be exported or imported so those lanes remain portable across installations, and full preset bundles can package the current preset, its history, and its channel state together for portable exchange. Those bundles now include explicit compatibility metadata for bundle format, GlialNode version, and Node runtime requirements, deterministic checksums for tamper detection, optional trust-policy enforcement for signer and origin allowlists during inspection or import, and Ed25519 signatures with public-key fingerprints for stronger authenticity checks. To make that usable in practice, the same local preset directory can now also hold a signer-key registry under `.keys`, letting operators generate, inspect, export, and reuse local signing keys by stable name instead of passing raw PEM files around for every bundle export. A separate trust-anchor registry under `.trusted` now lets operators register trusted public keys by name and validate bundle provenance against named trust anchors instead of only raw key fingerprints, and those anchors can now be explicitly revoked or rotated so trust policies do not silently keep relying on stale keys. On top of the raw flags, GlialNode now also exposes built-in trust profiles such as `permissive`, `signed`, and `anchored` so provenance enforcement can be selected as a reusable mode instead of rebuilt ad hoc on every bundle inspection or import, and bundle validation now returns a compact provenance report describing the selected profile, effective policy, signer key id, and matched trust anchors. Memory spaces can now persist their own provenance defaults, so bundle review/import workflows can inherit a space-specific trust profile and trusted signer list through `space` settings instead of always spelling them out on each command, and the programmatic client mirrors that behavior through async `validatePresetBundleForSpace(...)` and `importPresetBundleForSpace(...)` helpers. When those space-aware review/import paths are used, GlialNode also emits `bundle_reviewed` and `bundle_imported` events under a dedicated space-audit scope so provenance decisions become visible through `space report` rather than disappearing into ephemeral command output, and it writes matching audit summary records so those trust decisions stay searchable and recallable like other durable memory.
 
+The same portability model now applies to full memory snapshots as well. Space export/import now uses an explicit snapshot format with `snapshotFormatVersion`, runtime metadata, deterministic checksum verification, and optional Ed25519 signatures plus trust-policy enforcement on import. That makes full-memory backup and restore closer to a real portable artifact workflow rather than a raw JSON dump, while still allowing older unversioned snapshots to come through as legacy imports with warnings.
+
 ## V1 Operational Note
 
-The current SQLite-first implementation is best treated as a local single-writer foundation.
+The current SQLite-first implementation is best treated as an explicit write-mode contract, not an implicit concurrency promise.
 
 The storage layer now applies a first hardening pass:
 
@@ -209,6 +211,17 @@ The storage layer now applies a first hardening pass:
 - defensive mode is enabled when the runtime exposes it
 
 This improves resilience for local agents and repeated process restarts, but it does not change the broader recommendation: heavier concurrent writers may still need a later backing-store boundary or a different database.
+
+The current contract is:
+
+- default `writeMode=single_writer`
+- optional `writeMode=serialized_local` when the host system already serializes writes through one local queue or coordination boundary
+
+The current non-goals are also explicit:
+
+- no built-in cross-process write broker
+- no distributed or high-concurrency multi-writer guarantee
+- snapshots improve portability and recovery, but they do not change the underlying SQLite write-concurrency contract
 
 ## Current CLI Lifecycle Support
 

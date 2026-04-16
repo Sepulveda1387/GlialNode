@@ -4,6 +4,7 @@ import { ConfigurationError } from "../../core/errors.js";
 
 export type SqliteJournalMode = "WAL" | "DELETE";
 export type SqliteSynchronousMode = "NORMAL" | "FULL";
+export type SqliteWriteMode = "single_writer" | "serialized_local";
 
 export interface SqliteConnectionPolicy {
   enableForeignKeys: boolean;
@@ -11,6 +12,7 @@ export interface SqliteConnectionPolicy {
   journalMode: SqliteJournalMode;
   synchronous: SqliteSynchronousMode;
   enableDefensive: boolean;
+  writeMode: SqliteWriteMode;
 }
 
 export interface SqliteRuntimeSettings {
@@ -20,6 +22,9 @@ export interface SqliteRuntimeSettings {
   journalMode: string;
   synchronous: string;
   defensive: boolean | null;
+  writeMode: SqliteWriteMode;
+  writeGuarantees: string[];
+  writeNonGoals: string[];
 }
 
 export const defaultSqliteConnectionPolicy: SqliteConnectionPolicy = {
@@ -28,6 +33,7 @@ export const defaultSqliteConnectionPolicy: SqliteConnectionPolicy = {
   journalMode: "WAL",
   synchronous: "NORMAL",
   enableDefensive: true,
+  writeMode: "single_writer",
 };
 
 export function resolveSqliteConnectionPolicy(
@@ -85,7 +91,7 @@ export function applySqliteConnectionPolicy(
 
   db.exec(`PRAGMA synchronous = ${policy.synchronous}`);
   const defensive = applyDefensiveMode(db, policy.enableDefensive);
-  const runtime = readSqliteRuntimeSettings(db, defensive);
+  const runtime = readSqliteRuntimeSettings(db, defensive, policy.writeMode);
 
   if (runtime.foreignKeys !== policy.enableForeignKeys) {
     throw new ConfigurationError("SQLite foreign key enforcement did not match the requested policy.");
@@ -107,6 +113,7 @@ export function applySqliteConnectionPolicy(
 export function readSqliteRuntimeSettings(
   db: DatabaseSync,
   defensive: boolean | null = null,
+  writeMode: SqliteWriteMode = defaultSqliteConnectionPolicy.writeMode,
 ): SqliteRuntimeSettings {
   const filename = typeof db.location === "function" ? db.location() : null;
   const foreignKeys = readPragmaNumber(db, "PRAGMA foreign_keys", "foreign_keys") === 1;
@@ -121,7 +128,31 @@ export function readSqliteRuntimeSettings(
     journalMode,
     synchronous: mapSynchronousMode(synchronousCode),
     defensive,
+    writeMode,
+    writeGuarantees: describeWriteGuarantees(writeMode),
+    writeNonGoals: describeWriteNonGoals(),
   };
+}
+
+function describeWriteGuarantees(writeMode: SqliteWriteMode): string[] {
+  if (writeMode === "serialized_local") {
+    return [
+      "Caller serializes writes within one local coordination boundary.",
+      "WAL plus busy timeout reduces immediate lock failures during local handoff.",
+    ];
+  }
+
+  return [
+    "One writer should own durable mutations for the database at a time.",
+    "Readers remain safe, but concurrent writers are outside the default contract.",
+  ];
+}
+
+function describeWriteNonGoals(): string[] {
+  return [
+    "GlialNode does not provide a cross-process write broker.",
+    "SQLite mode here is not a distributed or high-concurrency multi-writer contract.",
+  ];
 }
 
 function applyDefensiveMode(db: DatabaseSync, active: boolean): boolean | null {

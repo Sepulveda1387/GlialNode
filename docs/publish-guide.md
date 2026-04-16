@@ -89,6 +89,7 @@ After the first push:
 - confirm the banner and Mermaid diagram display as expected
 - confirm the `CI` workflow runs
 - confirm the issue templates and PR template appear
+- review `docs/operator-guide.md` and `docs/compatibility.md`
 - set the repo description and topics from `docs/launch-checklist.md`
 
 ## 8. Optional First Tag

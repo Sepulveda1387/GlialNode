@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added an explicit SQLite write-mode contract with runtime/status reporting for `single_writer` and host-managed `serialized_local` usage.
+- Added versioned, checksummed full-space snapshot export/import with compatibility validation and legacy import warnings.
+- Added optional Ed25519 signing and trust-policy validation for full-space snapshot restore workflows.
+- Added an operator guide for safe backup, restore, trust, signing, and rotation workflows.
+- Added a compatibility policy for CLI/API/schema/snapshot/preset bundle expectations during the `0.x` phase.
+- Hardened local signing-key and trusted-signer writes with atomic file updates and restrictive private-key file mode hints.
 - Added stable `--json` output for high-value CLI read/report flows including `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
 - Added `prepareReplyContext(...)` so host apps can build pre-reply memory injection context from GlialNode's recall, trace, and bundle layers without manual orchestration.
 - Added a compact GNL live roadmap/checklist for tracking completion, best practices, and upcoming work.

@@ -90,7 +90,8 @@ flowchart TD
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
 - inspect memory health through reporting and maintenance commands
-- import and export full space snapshots
+- import and export versioned full-space snapshots with checksum validation
+- optionally sign full-space snapshots and enforce trust policies during restore
 
 ## How It Fits
 
@@ -165,7 +166,41 @@ File-backed SQLite connections now default to:
 - foreign key enforcement enabled
 - defensive mode enabled when the runtime supports it
 
+GlialNode now treats that explicitly as a write-mode contract:
+
+- default `writeMode=single_writer`
+- optional `writeMode=serialized_local` for host applications that already serialize writes through one local queue or coordination boundary
+
+What GlialNode does guarantee:
+
+- the default runtime is tuned for local durability and reduced immediate lock failures
+- the status surface reports the active write-mode contract and its guarantees
+
+What GlialNode does not guarantee:
+
+- no built-in cross-process write broker
+- no distributed or high-concurrency multi-writer contract
+
 These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
+
+## Portable Snapshots
+
+GlialNode full-space snapshots are now versioned portable artifacts, not just raw JSON dumps.
+
+Each snapshot can carry:
+
+- `snapshotFormatVersion`
+- `glialnodeVersion`
+- `nodeEngine`
+- `checksum`
+- optional signer and Ed25519 signature metadata
+
+That means export/import can now:
+
+- detect corruption before restore
+- reject unsupported snapshot formats
+- warn on runtime mismatches
+- optionally require signed or anchored imports for stricter operational workflows
 
 GlialNode also records applied SQLite migrations inside the database so bootstrap stays idempotent and the runtime can report the actual schema version that has been applied.
 
@@ -765,7 +800,11 @@ glialnode space maintain --id <space-id> --apply
 glialnode memory retain --space-id <space-id>
 glialnode memory retain --space-id <space-id> --apply
 glialnode export --space-id <space-id> --output ./exports/team-memory.json
-glialnode import --input ./exports/team-memory.json
+glialnode preset keygen --name ops-snapshot-key --signer "Ops Team"
+glialnode preset trust-local-key --name ops-snapshot-key --trust-name ops-anchor
+glialnode export --space-id <space-id> --output ./exports/team-memory.json --origin local-backup --signing-key ops-snapshot-key
+glialnode import --input ./exports/team-memory.json --trust-profile anchored --trust-signer ops-anchor
+glialnode import --input ./exports/team-memory.json --trust-profile anchored --trust-signer ops-anchor --json
 ```
 
 ## Comparison
@@ -793,6 +832,8 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
 - review `docs/live-roadmap.gnl.md`
 - review `docs/launch-checklist.md`
+- review `docs/operator-guide.md`
+- review `docs/compatibility.md`
 - follow `docs/publish-guide.md` for the first push
 
 ## Project Files
@@ -806,6 +847,8 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `SECURITY.md`: security reporting guidance
 - `.github/workflows/ci.yml`: GitHub Actions verification workflow
 - `docs/live-roadmap.gnl.md`: compact live roadmap and completion checklist in GNL
+- `docs/operator-guide.md`: safe backup, restore, trust, signing, and rotation workflows
+- `docs/compatibility.md`: versioning and compatibility expectations for CLI, API, schema, and portable formats
 - `docs/publish-guide.md`: first-publish handoff steps
 - `scripts/demo.mjs`: cross-platform end-to-end demo flow for Windows, Linux, and macOS
 - `scripts/client-demo.mjs`: cross-platform end-to-end client API demo flow

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
+import { GlialNodeClient } from "../client/glialnode-client.js";
 import { createId } from "../core/ids.js";
 import {
   diffSpacePresetDefinitions,
@@ -192,8 +193,8 @@ export function usageText(): string {
     "  glialnode event list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode link add --space-id <id> --from-record-id <id> --to-record-id <id> --type <relation> [--db <path>]",
     "  glialnode link list --space-id <id> [--record-id <id>] [--limit 10] [--db <path>]",
-    "  glialnode export --space-id <id> [--output <path>] [--db <path>]",
-    "  glialnode import --input <path> [--db <path>]",
+    "  glialnode export --space-id <id> [--output <path>] [--origin <name>] [--signer <name>] [--signing-private-key <path>] [--signing-key <name>] [--preset-directory <path>] [--db <path>]",
+    "  glialnode import --input <path> [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--preset-directory <path>] [--json] [--db <path>]",
     "  glialnode memory promote --record-id <id> [--db <path>]",
     "  glialnode memory archive --record-id <id> [--db <path>]",
     "  glialnode memory show --record-id <id> [--db <path>]",
@@ -218,11 +219,14 @@ async function runStatusCommand(context: CommandContext): Promise<CommandResult>
     lines: [
       `spaces=${spaces.length}`,
       "status=ready",
+      `writeMode=${runtime.writeMode}`,
       `journalMode=${runtime.journalMode.toLowerCase()}`,
       `synchronous=${runtime.synchronous.toLowerCase()}`,
       `busyTimeoutMs=${runtime.busyTimeoutMs}`,
       `foreignKeys=${runtime.foreignKeys ? "on" : "off"}`,
       `defensive=${runtime.defensive === null ? "unsupported" : runtime.defensive ? "on" : "off"}`,
+      ...runtime.writeGuarantees.map((guarantee) => `writeGuarantee=${guarantee}`),
+      ...runtime.writeNonGoals.map((nonGoal) => `writeNonGoal=${nonGoal}`),
     ],
   };
 }
@@ -1941,30 +1945,21 @@ async function runExportCommand(
   context: CommandContext,
 ): Promise<CommandResult> {
   const spaceId = requireFlag(parsed.flags, "space-id");
-  const spaces = await context.repository.listSpaces();
-  const space = spaces.find((entry) => entry.id === spaceId);
-
-  if (!space) {
-    throw new Error(`Unknown space: ${spaceId}`);
-  }
-
-  const scopes = await context.repository.listScopes(spaceId);
-  const events = await context.repository.listEvents(spaceId, Number.MAX_SAFE_INTEGER);
-  const records = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
-  const links = await context.repository.listLinks(spaceId, Number.MAX_SAFE_INTEGER);
-
-  const output = JSON.stringify(
-    {
-      exportedAt: new Date().toISOString(),
-      space,
-      scopes,
-      events,
-      records,
-      links,
-    },
-    null,
-    2,
-  );
+  const client = new GlialNodeClient({ repository: context.repository });
+  const presetDirectory = resolvePresetDirectory(parsed.flags["preset-directory"]);
+  const signingKeyRecord = parsed.flags["signing-key"]
+    ? readSigningKeyRecord(presetDirectory, parsed.flags["signing-key"])
+    : undefined;
+  const signingPrivateKeyPem = parsed.flags["signing-private-key"]
+    ? readTextFile(resolve(parsed.flags["signing-private-key"]))
+    : signingKeyRecord?.privateKeyPem;
+  const signer = parsed.flags.signer ?? signingKeyRecord?.signer;
+  const snapshot = await client.exportSpace(spaceId, {
+    origin: parsed.flags.origin,
+    signer,
+    signingPrivateKeyPem,
+  });
+  const output = JSON.stringify(snapshot, null, 2);
 
   if (parsed.flags.output) {
     const outputPath = resolve(parsed.flags.output);
@@ -1989,34 +1984,51 @@ async function runImportCommand(
   context: CommandContext,
 ): Promise<CommandResult> {
   const inputPath = resolve(requireFlag(parsed.flags, "input"));
-  const imported = JSON.parse(readTextFile(inputPath)) as SpaceExport;
+  const client = new GlialNodeClient({ repository: context.repository });
+  const presetDirectory = resolvePresetDirectory(parsed.flags["preset-directory"]);
+  const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"]);
+  const trustPolicy = parsePresetTrustPolicy(parsed.flags);
+  const validation = await client.validateSnapshot(
+    JSON.parse(readTextFile(inputPath)) as Parameters<typeof client.validateSnapshot>[0],
+    trustPolicy,
+    trustProfile,
+    presetDirectory,
+  );
+  const imported = await client.importSnapshotFromFile(inputPath, {
+    trustPolicy,
+    trustProfile,
+    directory: presetDirectory,
+  });
 
-  await context.repository.createSpace(imported.space);
-
-  for (const scope of imported.scopes) {
-    await context.repository.upsertScope(scope);
-  }
-
-  for (const event of imported.events) {
-    await context.repository.appendEvent(event);
-  }
-
-  for (const record of imported.records) {
-    await context.repository.writeRecord(record);
-  }
-
-  for (const link of imported.links ?? []) {
-    await context.repository.linkRecords(link);
+  if (parsed.flags.json === "true") {
+    return {
+      lines: [
+        JSON.stringify({
+          spaceId: imported.space.id,
+          importedCounts: {
+            scopes: imported.scopes.length,
+            events: imported.events.length,
+            records: imported.records.length,
+            links: imported.links.length,
+          },
+          validation,
+        }, null, 2),
+      ],
+    };
   }
 
   return {
     lines: [
       "Import completed.",
       `spaceId=${imported.space.id}`,
+      `snapshotFormatVersion=${imported.metadata.snapshotFormatVersion}`,
+      `signed=${Boolean(imported.metadata.signature)}`,
+      `trusted=${validation.trusted}`,
+      `warnings=${validation.warnings.join(" | ") || "none"}`,
       `scopes=${imported.scopes.length}`,
       `events=${imported.events.length}`,
       `records=${imported.records.length}`,
-      `links=${imported.links?.length ?? 0}`,
+      `links=${imported.links.length}`,
     ],
   };
 }
@@ -2682,7 +2694,7 @@ function writeSigningKeyRecord(
 ) {
   const keysDirectory = getSigningKeysDirectory(directory);
   mkdirSync(keysDirectory, { recursive: true });
-  writeFileSync(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+  writeJsonFileAtomic(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), 0o600);
 }
 
 function readSigningKeyRecord(directory: string, name: string): {
@@ -2738,7 +2750,7 @@ function writeTrustedSignerRecord(
 ) {
   const trustDirectory = getTrustedSignersDirectory(directory);
   mkdirSync(trustDirectory, { recursive: true });
-  writeFileSync(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+  writeJsonFileAtomic(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), 0o644);
 }
 
 function readTrustedSignerRecord(directory: string, name: string): {
@@ -3292,6 +3304,19 @@ function createPresetBundleSignaturePayload(bundle: ReturnType<typeof parsePrese
       signature: undefined,
     },
   }));
+}
+
+function writeJsonFileAtomic(outputPath: string, contents: string, mode?: number): void {
+  const tempPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, contents, { encoding: "utf8", mode });
+    renameSync(tempPath, outputPath);
+  } catch (error) {
+    if (existsSync(tempPath)) {
+      unlinkSync(tempPath);
+    }
+    throw error;
+  }
 }
 
 function computeSignerKeyId(publicKeyPem: string): string {

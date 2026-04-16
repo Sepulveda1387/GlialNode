@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
@@ -143,13 +143,67 @@ export interface AddLinkInput {
   type: MemoryRecordLink["type"];
 }
 
+export interface SpaceSnapshotMetadata {
+  snapshotFormatVersion: number;
+  glialnodeVersion: string;
+  nodeEngine: string;
+  origin?: string;
+  signer?: string;
+  checksumAlgorithm: "sha256";
+  checksum: string;
+  signatureAlgorithm?: "ed25519";
+  signerKeyId?: string;
+  signerPublicKey?: string;
+  signature?: string;
+}
+
 export interface SpaceSnapshot {
+  metadata: SpaceSnapshotMetadata;
   exportedAt: string;
   space: MemorySpace;
   scopes: ScopeRecord[];
   events: MemoryEvent[];
   records: MemoryRecord[];
   links: MemoryRecordLink[];
+}
+
+export interface ExportSpaceSnapshotOptions {
+  origin?: string;
+  signer?: string;
+  signingPrivateKeyPem?: string;
+}
+
+export interface SpaceSnapshotTrustPolicy {
+  requireSigner?: boolean;
+  requireSignature?: boolean;
+  allowedOrigins?: string[];
+  allowedSigners?: string[];
+  allowedSignerKeyIds?: string[];
+  trustedSignerNames?: string[];
+}
+
+export type SpaceSnapshotTrustProfile = "permissive" | "signed" | "anchored";
+
+export interface SpaceSnapshotValidationResult {
+  metadata: SpaceSnapshotMetadata;
+  warnings: string[];
+  trustWarnings: string[];
+  trusted: boolean;
+  report: {
+    trustProfile: SpaceSnapshotTrustProfile;
+    effectivePolicy: SpaceSnapshotTrustPolicy;
+    signerKeyId?: string;
+    matchedTrustedSignerNames: string[];
+    revokedTrustedSignerNames: string[];
+    signed: boolean;
+    legacySnapshot: boolean;
+  };
+}
+
+export interface ImportSpaceSnapshotOptions {
+  trustPolicy?: SpaceSnapshotTrustPolicy;
+  trustProfile?: SpaceSnapshotTrustProfile;
+  directory?: string;
 }
 
 export interface MaintenanceResult {
@@ -300,6 +354,7 @@ export interface PresetBundleTrustPolicy {
 export type PresetBundleTrustProfileName = "permissive" | "signed" | "anchored";
 
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
+const SPACE_SNAPSHOT_FORMAT_VERSION = 1;
 const GLIALNODE_VERSION = "0.1.0";
 const GLIALNODE_NODE_ENGINE = ">=24";
 
@@ -1393,7 +1448,7 @@ export class GlialNodeClient {
     return this.repository.getSpaceReport(spaceId, recentEventLimit);
   }
 
-  async exportSpace(spaceId: string): Promise<SpaceSnapshot> {
+  async exportSpace(spaceId: string, options: ExportSpaceSnapshotOptions = {}): Promise<SpaceSnapshot> {
     const space = await requireSpace(this.repository, spaceId);
     const [scopes, events, records, links] = await Promise.all([
       this.repository.listScopes(spaceId),
@@ -1402,7 +1457,23 @@ export class GlialNodeClient {
       this.repository.listLinks(spaceId, Number.MAX_SAFE_INTEGER),
     ]);
 
-    return {
+    const signerPublicKeyPem = options.signingPrivateKeyPem
+      ? createPublicKey(createPrivateKey(options.signingPrivateKeyPem)).export({ type: "spki", format: "pem" }).toString()
+      : undefined;
+    const snapshot: SpaceSnapshot = {
+      metadata: {
+        snapshotFormatVersion: SPACE_SNAPSHOT_FORMAT_VERSION,
+        glialnodeVersion: GLIALNODE_VERSION,
+        nodeEngine: GLIALNODE_NODE_ENGINE,
+        origin: options.origin,
+        signer: options.signer,
+        checksumAlgorithm: "sha256",
+        checksum: "",
+        signatureAlgorithm: signerPublicKeyPem ? "ed25519" : undefined,
+        signerKeyId: signerPublicKeyPem ? computeSignerKeyId(signerPublicKeyPem) : undefined,
+        signerPublicKey: signerPublicKeyPem,
+        signature: undefined,
+      },
       exportedAt: new Date().toISOString(),
       space,
       scopes,
@@ -1410,41 +1481,76 @@ export class GlialNodeClient {
       records,
       links,
     };
+
+    snapshot.metadata.checksum = computeSpaceSnapshotChecksum(snapshot);
+    if (options.signingPrivateKeyPem) {
+      snapshot.metadata.signature = computeSpaceSnapshotSignature(snapshot, options.signingPrivateKeyPem);
+    }
+
+    return snapshot;
   }
 
-  async exportSpaceToFile(spaceId: string, outputPath: string): Promise<string> {
-    const snapshot = await this.exportSpace(spaceId);
+  async exportSpaceToFile(
+    spaceId: string,
+    outputPath: string,
+    options: ExportSpaceSnapshotOptions = {},
+  ): Promise<string> {
+    const snapshot = await this.exportSpace(spaceId, options);
     const resolvedOutputPath = resolve(outputPath);
     mkdirSync(dirname(resolvedOutputPath), { recursive: true });
     writeFileSync(resolvedOutputPath, JSON.stringify(snapshot, null, 2), "utf8");
     return resolvedOutputPath;
   }
 
-  async importSnapshot(snapshot: SpaceSnapshot): Promise<SpaceSnapshot> {
-    await this.repository.createSpace(snapshot.space);
+  async validateSnapshot(
+    snapshot: SpaceSnapshot,
+    trustPolicy: SpaceSnapshotTrustPolicy = {},
+    trustProfile: SpaceSnapshotTrustProfile = "permissive",
+    directory?: string,
+  ): Promise<SpaceSnapshotValidationResult> {
+    const effectiveTrustPolicy = resolveSpaceSnapshotTrustPolicy(trustPolicy, directory, trustProfile);
+    return validateSpaceSnapshot(snapshot, effectiveTrustPolicy, trustProfile);
+  }
 
-    for (const scope of snapshot.scopes) {
+  async importSnapshot(
+    snapshot: SpaceSnapshot,
+    options: ImportSpaceSnapshotOptions = {},
+  ): Promise<SpaceSnapshot> {
+    const normalizedSnapshot = normalizeSpaceSnapshot(snapshot);
+    await this.validateSnapshot(
+      normalizedSnapshot,
+      options.trustPolicy,
+      options.trustProfile,
+      options.directory,
+    );
+
+    await this.repository.createSpace(normalizedSnapshot.space);
+
+    for (const scope of normalizedSnapshot.scopes) {
       await this.repository.upsertScope(scope);
     }
 
-    for (const event of snapshot.events) {
+    for (const event of normalizedSnapshot.events) {
       await this.repository.appendEvent(event);
     }
 
-    for (const record of snapshot.records) {
+    for (const record of normalizedSnapshot.records) {
       await this.repository.writeRecord(record);
     }
 
-    for (const link of snapshot.links) {
+    for (const link of normalizedSnapshot.links) {
       await this.repository.linkRecords(link);
     }
 
-    return snapshot;
+    return normalizedSnapshot;
   }
 
-  async importSnapshotFromFile(inputPath: string): Promise<SpaceSnapshot> {
-    const snapshot = JSON.parse(readFileSync(resolve(inputPath), "utf8")) as SpaceSnapshot;
-    return this.importSnapshot(snapshot);
+  async importSnapshotFromFile(
+    inputPath: string,
+    options: ImportSpaceSnapshotOptions = {},
+  ): Promise<SpaceSnapshot> {
+    const snapshot = parseSpaceSnapshot(readFileSync(resolve(inputPath), "utf8"));
+    return this.importSnapshot(snapshot, options);
   }
 
   close(): void {
@@ -1560,7 +1666,7 @@ function getSigningKeyPath(directory: string, name: string): string {
 function writeSigningKeyRecord(directory: string, record: SigningKeyRecord): void {
   const keysDirectory = getSigningKeysDirectory(directory);
   mkdirSync(keysDirectory, { recursive: true });
-  writeFileSync(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+  writeJsonFileAtomic(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), 0o600);
 }
 
 function readSigningKeyRecord(directory: string, name: string): SigningKeyRecord {
@@ -1635,7 +1741,7 @@ function getTrustedSignerPath(directory: string, name: string): string {
 function writeTrustedSignerRecord(directory: string, record: TrustedSignerRecord): void {
   const trustDirectory = getTrustedSignersDirectory(directory);
   mkdirSync(trustDirectory, { recursive: true });
-  writeFileSync(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), "utf8");
+  writeJsonFileAtomic(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), 0o644);
 }
 
 function readTrustedSignerRecord(directory: string, name: string): TrustedSignerRecord {
@@ -2044,6 +2150,272 @@ function createPresetBundleSignaturePayload(bundle: PresetBundle): Buffer {
       signature: undefined,
     },
   }));
+}
+
+function parseSpaceSnapshot(value: string): SpaceSnapshot {
+  return normalizeSpaceSnapshot(JSON.parse(value) as Partial<SpaceSnapshot>);
+}
+
+function normalizeSpaceSnapshot(value: Partial<SpaceSnapshot>): SpaceSnapshot {
+  const parsed = value as Partial<SpaceSnapshot> & {
+    metadata?: Partial<SpaceSnapshotMetadata>;
+  };
+
+  return {
+    metadata: {
+      snapshotFormatVersion: typeof parsed.metadata?.snapshotFormatVersion === "number"
+        ? parsed.metadata.snapshotFormatVersion
+        : 0,
+      glialnodeVersion: typeof parsed.metadata?.glialnodeVersion === "string"
+        ? parsed.metadata.glialnodeVersion
+        : "legacy",
+      nodeEngine: typeof parsed.metadata?.nodeEngine === "string"
+        ? parsed.metadata.nodeEngine
+        : "unknown",
+      origin: typeof parsed.metadata?.origin === "string" ? parsed.metadata.origin : undefined,
+      signer: typeof parsed.metadata?.signer === "string" ? parsed.metadata.signer : undefined,
+      checksumAlgorithm: parsed.metadata?.checksumAlgorithm === "sha256" ? "sha256" : "sha256",
+      checksum: typeof parsed.metadata?.checksum === "string" ? parsed.metadata.checksum : "",
+      signatureAlgorithm: parsed.metadata?.signatureAlgorithm === "ed25519" ? "ed25519" : undefined,
+      signerKeyId: typeof parsed.metadata?.signerKeyId === "string" ? parsed.metadata.signerKeyId : undefined,
+      signerPublicKey: typeof parsed.metadata?.signerPublicKey === "string" ? parsed.metadata.signerPublicKey : undefined,
+      signature: typeof parsed.metadata?.signature === "string" ? parsed.metadata.signature : undefined,
+    },
+    exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : new Date().toISOString(),
+    space: parsed.space as MemorySpace,
+    scopes: Array.isArray(parsed.scopes) ? parsed.scopes as ScopeRecord[] : [],
+    events: Array.isArray(parsed.events) ? parsed.events as MemoryEvent[] : [],
+    records: Array.isArray(parsed.records) ? parsed.records as MemoryRecord[] : [],
+    links: Array.isArray(parsed.links) ? parsed.links as MemoryRecordLink[] : [],
+  };
+}
+
+function validateSpaceSnapshot(
+  snapshot: SpaceSnapshot,
+  trustPolicy: SpaceSnapshotTrustPolicy = {},
+  trustProfile: SpaceSnapshotTrustProfile = "permissive",
+): SpaceSnapshotValidationResult {
+  const warnings: string[] = [];
+  const trustWarnings: string[] = [];
+  const matchedTrustedSignerNames: string[] = [];
+  const revokedTrustedSignerNames: string[] = [];
+  const isLegacySnapshot = snapshot.metadata.snapshotFormatVersion === 0;
+
+  if (isLegacySnapshot) {
+    warnings.push("Snapshot has no format metadata; treating it as a legacy import without checksum verification.");
+  } else if (snapshot.metadata.snapshotFormatVersion !== SPACE_SNAPSHOT_FORMAT_VERSION) {
+    throw new Error(
+      `Unsupported space snapshot format: ${snapshot.metadata.snapshotFormatVersion}. Expected ${SPACE_SNAPSHOT_FORMAT_VERSION}.`,
+    );
+  }
+
+  if (!isLegacySnapshot && snapshot.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
+    warnings.push(
+      `Snapshot was exported by GlialNode ${snapshot.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
+    );
+  }
+
+  if (!isLegacySnapshot && snapshot.metadata.nodeEngine !== GLIALNODE_NODE_ENGINE) {
+    warnings.push(
+      `Snapshot targets Node ${snapshot.metadata.nodeEngine}; current package requires ${GLIALNODE_NODE_ENGINE}.`,
+    );
+  }
+
+  if (!isLegacySnapshot) {
+    const expectedChecksum = computeSpaceSnapshotChecksum(snapshot);
+    if (snapshot.metadata.checksum !== expectedChecksum) {
+      throw new Error("Space snapshot checksum verification failed.");
+    }
+  }
+
+  if (trustPolicy.requireSigner && !snapshot.metadata.signer) {
+    trustWarnings.push("Space snapshot signer is missing.");
+  }
+
+  if (trustPolicy.requireSignature && !snapshot.metadata.signature) {
+    trustWarnings.push("Space snapshot is unsigned by key.");
+  }
+
+  if (trustPolicy.allowedOrigins?.length) {
+    if (!snapshot.metadata.origin) {
+      trustWarnings.push("Space snapshot origin is missing.");
+    } else if (!trustPolicy.allowedOrigins.includes(snapshot.metadata.origin)) {
+      trustWarnings.push(`Space snapshot origin is not allowed: ${snapshot.metadata.origin}`);
+    }
+  }
+
+  if (trustPolicy.allowedSigners?.length) {
+    if (!snapshot.metadata.signer) {
+      trustWarnings.push("Space snapshot signer is missing.");
+    } else if (!trustPolicy.allowedSigners.includes(snapshot.metadata.signer)) {
+      trustWarnings.push(`Space snapshot signer is not allowed: ${snapshot.metadata.signer}`);
+    }
+  }
+
+  if (snapshot.metadata.signature) {
+    if (snapshot.metadata.signatureAlgorithm !== "ed25519") {
+      throw new Error(`Unsupported space snapshot signature algorithm: ${snapshot.metadata.signatureAlgorithm ?? "unknown"}.`);
+    }
+
+    if (!snapshot.metadata.signerPublicKey) {
+      throw new Error("Space snapshot signature is missing signer public key.");
+    }
+
+    const signerKeyId = computeSignerKeyId(snapshot.metadata.signerPublicKey);
+    if (snapshot.metadata.signerKeyId && snapshot.metadata.signerKeyId !== signerKeyId) {
+      throw new Error("Space snapshot signer key id verification failed.");
+    }
+
+    if (!verifySpaceSnapshotSignature(snapshot)) {
+      throw new Error("Space snapshot signature verification failed.");
+    }
+
+    if (trustPolicy.allowedSignerKeyIds?.length && !trustPolicy.allowedSignerKeyIds.includes(signerKeyId)) {
+      trustWarnings.push(`Space snapshot signer key id is not allowed: ${signerKeyId}`);
+    }
+
+    if (trustPolicy.trustedSignerNames?.length && trustPolicy.allowedSignerKeyIds?.includes(signerKeyId)) {
+      matchedTrustedSignerNames.push(...trustPolicy.trustedSignerNames);
+    }
+  } else if (trustPolicy.allowedSignerKeyIds?.length) {
+    trustWarnings.push("Space snapshot signer key id is missing.");
+  }
+
+  if (trustWarnings.length > 0) {
+    throw new Error(`Space snapshot trust validation failed: ${trustWarnings.join("; ")}`);
+  }
+
+  return {
+    metadata: snapshot.metadata,
+    warnings,
+    trustWarnings,
+    trusted: true,
+    report: {
+      trustProfile,
+      effectivePolicy: trustPolicy,
+      signerKeyId: snapshot.metadata.signerKeyId
+        ?? (snapshot.metadata.signerPublicKey ? computeSignerKeyId(snapshot.metadata.signerPublicKey) : undefined),
+      matchedTrustedSignerNames,
+      revokedTrustedSignerNames,
+      signed: Boolean(snapshot.metadata.signature),
+      legacySnapshot: isLegacySnapshot,
+    },
+  };
+}
+
+function resolveSpaceSnapshotTrustPolicy(
+  trustPolicy: SpaceSnapshotTrustPolicy,
+  directory: string | undefined,
+  trustProfile: SpaceSnapshotTrustProfile = "permissive",
+): SpaceSnapshotTrustPolicy {
+  const profilePolicy = getSpaceSnapshotTrustProfile(trustProfile);
+  const basePolicy = {
+    ...profilePolicy,
+    ...trustPolicy,
+    allowedOrigins: mergeStringArrays(profilePolicy.allowedOrigins, trustPolicy.allowedOrigins),
+    allowedSigners: mergeStringArrays(profilePolicy.allowedSigners, trustPolicy.allowedSigners),
+    allowedSignerKeyIds: mergeStringArrays(profilePolicy.allowedSignerKeyIds, trustPolicy.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringArrays(profilePolicy.trustedSignerNames, trustPolicy.trustedSignerNames),
+  };
+
+  if (!basePolicy.trustedSignerNames?.length) {
+    if (trustProfile === "anchored" && !basePolicy.allowedSignerKeyIds?.length) {
+      throw new Error("Snapshot trust profile 'anchored' requires trusted signers or allowed signer key ids.");
+    }
+    return basePolicy;
+  }
+
+  if (!directory) {
+    throw new Error("Snapshot trust resolution requires a preset directory when trusted signer names are used.");
+  }
+
+  const trustedKeyIds = basePolicy.trustedSignerNames.map((name) => {
+    const record = readTrustedSignerRecord(directory, name);
+    if (record.revokedAt) {
+      throw new Error(`Trusted signer is revoked: ${name}`);
+    }
+    return record.keyId;
+  });
+
+  return {
+    ...basePolicy,
+    allowedSignerKeyIds: Array.from(new Set([
+      ...(basePolicy.allowedSignerKeyIds ?? []),
+      ...trustedKeyIds,
+    ])),
+  };
+}
+
+function getSpaceSnapshotTrustProfile(profile: SpaceSnapshotTrustProfile): SpaceSnapshotTrustPolicy {
+  switch (profile) {
+    case "permissive":
+      return {};
+    case "signed":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+    case "anchored":
+      return {
+        requireSigner: true,
+        requireSignature: true,
+      };
+  }
+}
+
+function computeSpaceSnapshotChecksum(snapshot: SpaceSnapshot): string {
+  const checksumPayload = {
+    ...snapshot,
+    metadata: {
+      ...snapshot.metadata,
+      checksum: "",
+      signature: undefined,
+    },
+  };
+
+  return createHash("sha256")
+    .update(stableStringify(checksumPayload))
+    .digest("hex");
+}
+
+function computeSpaceSnapshotSignature(snapshot: SpaceSnapshot, privateKeyPem: string): string {
+  return sign(null, createSpaceSnapshotSignaturePayload(snapshot), createPrivateKey(privateKeyPem)).toString("base64");
+}
+
+function verifySpaceSnapshotSignature(snapshot: SpaceSnapshot): boolean {
+  if (!snapshot.metadata.signature || !snapshot.metadata.signerPublicKey) {
+    return false;
+  }
+
+  return verify(
+    null,
+    createSpaceSnapshotSignaturePayload(snapshot),
+    createPublicKey(snapshot.metadata.signerPublicKey),
+    Buffer.from(snapshot.metadata.signature, "base64"),
+  );
+}
+
+function createSpaceSnapshotSignaturePayload(snapshot: SpaceSnapshot): Buffer {
+  return Buffer.from(stableStringify({
+    ...snapshot,
+    metadata: {
+      ...snapshot.metadata,
+      signature: undefined,
+    },
+  }));
+}
+
+function writeJsonFileAtomic(outputPath: string, contents: string, mode?: number): void {
+  const tempPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, contents, { encoding: "utf8", mode });
+    renameSync(tempPath, outputPath);
+  } catch (error) {
+    if (existsSync(tempPath)) {
+      unlinkSync(tempPath);
+    }
+    throw error;
+  }
 }
 
 function computeSignerKeyId(publicKeyPem: string): string {

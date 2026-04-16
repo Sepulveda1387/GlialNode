@@ -139,6 +139,9 @@ test("SqliteMemoryRepository applies durable defaults for file-backed databases"
     assert.equal(runtime.synchronous, "NORMAL");
     assert.equal(runtime.busyTimeoutMs, 5000);
     assert.equal(runtime.foreignKeys, true);
+    assert.equal(runtime.writeMode, "single_writer");
+    assert.match(runtime.writeGuarantees.join(" "), /One writer should own durable mutations/i);
+    assert.match(runtime.writeNonGoals.join(" "), /does not provide a cross-process write broker/i);
 
     if (runtime.defensive !== null) {
       assert.equal(runtime.defensive, true);
@@ -191,6 +194,28 @@ test("SqliteMemoryRepository honors busy timeout during write contention", async
 
     firstRepository.close();
     secondRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("SqliteMemoryRepository can expose a serialized-local write contract without changing SQLite semantics", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-sqlite-write-mode-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = new SqliteMemoryRepository({
+    filename: databasePath,
+    connection: {
+      writeMode: "serialized_local",
+    },
+  });
+
+  try {
+    const runtime = repository.getRuntimeSettings();
+
+    assert.equal(runtime.writeMode, "serialized_local");
+    assert.match(runtime.writeGuarantees.join(" "), /Caller serializes writes within one local coordination boundary/i);
+    assert.equal(runtime.journalMode, "WAL");
+  } finally {
+    repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });

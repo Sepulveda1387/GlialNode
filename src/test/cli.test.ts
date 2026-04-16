@@ -66,6 +66,26 @@ test("CLI commands create and query persisted memory", async () => {
   }
 });
 
+test("CLI status reports the SQLite write-mode contract", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-status-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const result = await runCommand(
+      parseArgs(["status"]),
+      { repository },
+    );
+
+    assert.match(result.lines.join("\n"), /writeMode=single_writer/);
+    assert.match(result.lines.join("\n"), /writeGuarantee=One writer should own durable mutations/);
+    assert.match(result.lines.join("\n"), /writeNonGoal=GlialNode does not provide a cross-process write broker/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI can create and configure spaces from presets with explicit overrides", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -1671,12 +1691,15 @@ test("CLI commands append events and export a full space snapshot", async () => 
     );
 
     const exported = JSON.parse(readFileSync(exportPath, "utf8")) as {
+      metadata: { snapshotFormatVersion: number; checksum: string };
       space: { id: string };
       scopes: Array<{ id: string }>;
       events: Array<{ type: string }>;
       records: unknown[];
     };
 
+    assert.equal(exported.metadata.snapshotFormatVersion, 1);
+    assert.ok(exported.metadata.checksum);
     assert.equal(exported.space.id, spaceId);
     assert.equal(exported.scopes.length, 1);
     assert.equal(exported.events[0]?.type, "decision_made");
@@ -1757,6 +1780,8 @@ test("CLI commands import exported data and support record promotion and archivi
     });
 
     assert.equal(importResult.lines[0], "Import completed.");
+    assert.match(importResult.lines.join("\n"), /snapshotFormatVersion=1/);
+    assert.match(importResult.lines.join("\n"), /trusted=true/);
 
     const importedSearch = await runCommand(
       parseArgs(["memory", "search", "--space-id", spaceId, "--status", "archived", "--text", "Promote"]),
@@ -1765,6 +1790,105 @@ test("CLI commands import exported data and support record promotion and archivi
 
     assert.equal(importedSearch.lines[0], "records=1");
     assert.match(importedSearch.lines[1] ?? "", /Promotion candidate/);
+  } finally {
+    sourceRepository.close();
+    targetRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI export and import can sign and trust a snapshot", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-snapshot-trust-"));
+  const sourceDbPath = join(tempDirectory, "source.sqlite");
+  const targetDbPath = join(tempDirectory, "target.sqlite");
+  const exportPath = join(tempDirectory, "signed-space-export.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const sourceRepository = createRepository(sourceDbPath);
+  const targetRepository = createRepository(targetDbPath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Signed Lifecycle Space"]),
+      { repository: sourceRepository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository: sourceRepository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Snapshots should support trust validation.",
+        "--summary", "Signed snapshot preference",
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "snapshot-key",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "snapshot-key",
+        "--trust-name", "snapshot-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "export",
+        "--space-id", spaceId,
+        "--output", exportPath,
+        "--origin", "cli-test",
+        "--signing-key", "snapshot-key",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+
+    const importResult = await runCommand(
+      parseArgs([
+        "import",
+        "--input", exportPath,
+        "--trust-profile", "anchored",
+        "--trust-signer", "snapshot-anchor",
+        "--preset-directory", presetDirectory,
+        "--json",
+      ]),
+      { repository: targetRepository },
+    );
+
+    const parsedImport = JSON.parse(importResult.lines.join("\n")) as {
+      spaceId: string;
+      validation: {
+        trusted: boolean;
+        report: { signed: boolean; matchedTrustedSignerNames: string[] };
+      };
+    };
+    assert.equal(parsedImport.spaceId, spaceId);
+    assert.equal(parsedImport.validation.trusted, true);
+    assert.equal(parsedImport.validation.report.signed, true);
+    assert.deepEqual(parsedImport.validation.report.matchedTrustedSignerNames, ["snapshot-anchor"]);
   } finally {
     sourceRepository.close();
     targetRepository.close();

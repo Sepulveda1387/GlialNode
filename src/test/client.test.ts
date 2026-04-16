@@ -796,7 +796,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
   }
 });
 
-test("GlialNodeClient can export and import a snapshot without the CLI", async () => {
+test("GlialNodeClient can export and import a versioned snapshot without the CLI", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-export-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
   const targetPath = join(tempDirectory, "target.sqlite");
@@ -829,7 +829,12 @@ test("GlialNodeClient can export and import a snapshot without the CLI", async (
       summary: "Captured a durable retrieval preference.",
     });
 
-    const snapshot = await sourceClient.exportSpace(space.id);
+    const snapshot = await sourceClient.exportSpace(space.id, {
+      origin: "client-test",
+    });
+    assert.equal(snapshot.metadata.snapshotFormatVersion, 1);
+    assert.equal(snapshot.metadata.origin, "client-test");
+    assert.ok(snapshot.metadata.checksum);
     assert.equal(snapshot.records.length, 1);
     assert.equal(snapshot.events.length, 1);
 
@@ -844,6 +849,110 @@ test("GlialNodeClient can export and import a snapshot without the CLI", async (
 
     assert.equal(importedRecords.length, 1);
     assert.equal(importedRecords[0]?.id, record.id);
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient validates signed snapshots against trusted signers", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-signed-"));
+  const sourcePath = join(tempDirectory, "source.sqlite");
+  const targetPath = join(tempDirectory, "target.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const sourceClient = new GlialNodeClient({ filename: sourcePath, presetDirectory });
+  const targetClient = new GlialNodeClient({ filename: targetPath, presetDirectory });
+
+  try {
+    const signingKey = sourceClient.generateSigningKey("snapshot-key", {
+      signer: "GlialNode Test",
+    });
+    sourceClient.trustSigningKey("snapshot-key", {
+      trustName: "snapshot-anchor",
+    });
+
+    const space = await sourceClient.createSpace({ name: "Signed Portable Space" });
+    const scope = await sourceClient.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+
+    await sourceClient.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Signed snapshots should validate against trusted anchors.",
+      summary: "Signed snapshot rule",
+    });
+
+    const snapshot = await sourceClient.exportSpace(space.id, {
+      origin: "client-test",
+      signer: signingKey.signer,
+      signingPrivateKeyPem: sourceClient.getSigningKey("snapshot-key").privateKeyPem,
+    });
+    const validation = await targetClient.validateSnapshot(
+      snapshot,
+      { trustedSignerNames: ["snapshot-anchor"] },
+      "anchored",
+      presetDirectory,
+    );
+
+    assert.equal(validation.trusted, true);
+    assert.equal(validation.report.signed, true);
+    assert.deepEqual(validation.report.matchedTrustedSignerNames, ["snapshot-anchor"]);
+
+    await targetClient.importSnapshot(snapshot, {
+      trustPolicy: { trustedSignerNames: ["snapshot-anchor"] },
+      trustProfile: "anchored",
+      directory: presetDirectory,
+    });
+
+    const importedSpace = await targetClient.getSpace(space.id);
+    assert.equal(importedSpace.name, "Signed Portable Space");
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient rejects tampered snapshots", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-tamper-"));
+  const sourcePath = join(tempDirectory, "source.sqlite");
+  const targetPath = join(tempDirectory, "target.sqlite");
+  const sourceClient = new GlialNodeClient({ filename: sourcePath });
+  const targetClient = new GlialNodeClient({ filename: targetPath });
+
+  try {
+    const space = await sourceClient.createSpace({ name: "Tamper Space" });
+    const scope = await sourceClient.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+
+    await sourceClient.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Original export content.",
+      summary: "Tamper target",
+    });
+
+    const snapshot = await sourceClient.exportSpace(space.id);
+    snapshot.records[0] = {
+      ...snapshot.records[0]!,
+      content: "Tampered export content.",
+    };
+
+    await assert.rejects(
+      () => targetClient.importSnapshot(snapshot),
+      /Space snapshot checksum verification failed/,
+    );
   } finally {
     sourceClient.close();
     targetClient.close();
