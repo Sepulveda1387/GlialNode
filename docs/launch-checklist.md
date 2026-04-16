@@ -10,6 +10,7 @@
 - review `CHANGELOG.md`
 - review `docs/operator-guide.md`
 - review `docs/compatibility.md`
+- review `docs/troubleshooting.md`
 - review `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`
 - confirm `.gitignore` excludes local demo artifacts
 

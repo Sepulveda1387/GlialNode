@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -651,6 +651,7 @@ test("CLI can manage local signing keys", async () => {
       { repository },
     );
     assert.equal(generated.lines[0], "Signing key generated.");
+    assert.doesNotMatch(generated.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
     const keyId = generated.lines.find((line) => line.startsWith("keyId="))?.slice(6);
     assert.ok(keyId);
 
@@ -660,6 +661,7 @@ test("CLI can manage local signing keys", async () => {
     );
     assert.match(listed.lines.join("\n"), /keys=1/);
     assert.match(listed.lines.join("\n"), /team-executor/);
+    assert.doesNotMatch(listed.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
 
     const shown = await runCommand(
       parseArgs(["preset", "key-show", "--name", "team-executor", "--directory", presetDirectory]),
@@ -667,12 +669,21 @@ test("CLI can manage local signing keys", async () => {
     );
     assert.match(shown.lines.join("\n"), /algorithm=ed25519/);
     assert.match(shown.lines.join("\n"), /signer=GlialNode Test/);
+    assert.doesNotMatch(shown.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
+
+    const keyPath = join(presetDirectory, ".keys", "team-executor.json");
+    assert.match(readFileSync(keyPath, "utf8"), /BEGIN PRIVATE KEY/);
+    if (process.platform !== "win32") {
+      const mode = statSync(keyPath).mode & 0o777;
+      assert.equal(mode & 0o077, 0, `expected private key file to hide group/other bits, got ${mode.toString(8)}`);
+    }
 
     const exported = await runCommand(
       parseArgs(["preset", "key-export", "--name", "team-executor", "--output", publicKeyPath, "--directory", presetDirectory]),
       { repository },
     );
     assert.equal(exported.lines[0], "Signing public key exported.");
+    assert.doesNotMatch(exported.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
     assert.match(readFileSync(publicKeyPath, "utf8"), /BEGIN PUBLIC KEY/);
   } finally {
     repository.close();
@@ -697,6 +708,7 @@ test("CLI can manage trusted signers", async () => {
       { repository },
     );
     assert.equal(trustedFromLocal.lines[0], "Trusted signer registered from local key.");
+    assert.doesNotMatch(trustedFromLocal.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
 
     await runCommand(
       parseArgs(["preset", "key-export", "--name", "team-executor-key", "--output", publicKeyPath, "--directory", presetDirectory]),
@@ -707,6 +719,7 @@ test("CLI can manage trusted signers", async () => {
       { repository },
     );
     assert.equal(trustedFromFile.lines[0], "Trusted signer registered.");
+    assert.doesNotMatch(trustedFromFile.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
 
     const listed = await runCommand(
       parseArgs(["preset", "trust-list", "--directory", presetDirectory]),
@@ -715,6 +728,7 @@ test("CLI can manage trusted signers", async () => {
     assert.match(listed.lines.join("\n"), /trustedSigners=2/);
     assert.match(listed.lines.join("\n"), /team-anchor/);
     assert.match(listed.lines.join("\n"), /team-public/);
+    assert.doesNotMatch(listed.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
 
     const shown = await runCommand(
       parseArgs(["preset", "trust-show", "--name", "team-anchor", "--directory", presetDirectory]),
@@ -722,6 +736,14 @@ test("CLI can manage trusted signers", async () => {
     );
     assert.match(shown.lines.join("\n"), /algorithm=ed25519/);
     assert.match(shown.lines.join("\n"), /source=signing-key:team-executor-key/);
+    assert.doesNotMatch(shown.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
+
+    const trustedPath = join(presetDirectory, ".trusted", "team-anchor.json");
+    assert.doesNotMatch(readFileSync(trustedPath, "utf8"), /BEGIN PRIVATE KEY/);
+    if (process.platform !== "win32") {
+      const mode = statSync(trustedPath).mode & 0o777;
+      assert.equal(mode & 0o022, 0, `expected trusted signer file to avoid group/other write bits, got ${mode.toString(8)}`);
+    }
 
     const rotated = await runCommand(
       parseArgs([
@@ -736,6 +758,7 @@ test("CLI can manage trusted signers", async () => {
       { repository },
     );
     assert.equal(rotated.lines[0], "Trusted signer rotated.");
+    assert.doesNotMatch(rotated.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
 
     const revokedShow = await runCommand(
       parseArgs(["preset", "trust-show", "--name", "team-anchor", "--directory", presetDirectory]),
@@ -749,6 +772,7 @@ test("CLI can manage trusted signers", async () => {
       { repository },
     );
     assert.equal(revoked.lines[0], "Trusted signer revoked.");
+    assert.doesNotMatch(revoked.lines.join("\n"), /BEGIN (PRIVATE|PUBLIC) KEY/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

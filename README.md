@@ -834,6 +834,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - review `docs/launch-checklist.md`
 - review `docs/operator-guide.md`
 - review `docs/compatibility.md`
+- review `docs/troubleshooting.md`
 - follow `docs/publish-guide.md` for the first push
 
 ## Project Files
@@ -849,6 +850,7 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `docs/live-roadmap.gnl.md`: compact live roadmap and completion checklist in GNL
 - `docs/operator-guide.md`: safe backup, restore, trust, signing, and rotation workflows
 - `docs/compatibility.md`: versioning and compatibility expectations for CLI, API, schema, and portable formats
+- `docs/troubleshooting.md`: fast diagnosis for lock contention, trust failures, signer rotation, and snapshot import issues
 - `docs/publish-guide.md`: first-publish handoff steps
 - `scripts/demo.mjs`: cross-platform end-to-end demo flow for Windows, Linux, and macOS
 - `scripts/client-demo.mjs`: cross-platform end-to-end client API demo flow

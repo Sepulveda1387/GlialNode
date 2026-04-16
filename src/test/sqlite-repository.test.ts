@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   createId,
@@ -194,6 +196,107 @@ test("SqliteMemoryRepository honors busy timeout during write contention", async
 
     firstRepository.close();
     secondRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("SqliteMemoryRepository surfaces the single-writer contract under two-process contention", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-sqlite-2proc-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const helperPath = join(tempDirectory, "sqlite-contention-helper.mjs");
+  const indexUrl = pathToFileURL(join(process.cwd(), "dist", "index.js")).href;
+
+  writeFileSync(
+    helperPath,
+    `
+import { SqliteMemoryRepository, createId } from ${JSON.stringify(indexUrl)};
+
+const [, , mode, filename, busyTimeoutText, holdMsText] = process.argv;
+const busyTimeoutMs = Number(busyTimeoutText ?? "75");
+const holdMs = Number(holdMsText ?? "250");
+const repository = new SqliteMemoryRepository({
+  filename,
+  connection: { busyTimeoutMs },
+});
+
+const now = new Date().toISOString();
+const space = {
+  id: createId("space"),
+  name: mode === "holder" ? "Holder Space" : "Contender Space",
+  createdAt: now,
+  updatedAt: now,
+};
+
+if (mode === "holder") {
+  await repository.createSpace(space);
+  repository.db.exec("BEGIN IMMEDIATE");
+  process.stdout.write("locked\\n");
+  setTimeout(() => {
+    try {
+      repository.db.exec("ROLLBACK");
+    } catch {}
+    repository.close();
+    process.exit(0);
+  }, holdMs);
+} else {
+  const startedAt = Date.now();
+  try {
+    await repository.createSpace(space);
+    process.stdout.write(JSON.stringify({ ok: true, elapsedMs: Date.now() - startedAt }) + "\\n");
+  } catch (error) {
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      elapsedMs: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : String(error),
+    }) + "\\n");
+  } finally {
+    repository.close();
+  }
+}
+`,
+    "utf8",
+  );
+
+  const holder = spawn(process.execPath, [helperPath, "holder", databasePath, "75", "300"], {
+    cwd: process.cwd(),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onStdout = (chunk: Buffer | string) => {
+        if (chunk.toString().includes("locked")) {
+          holder.stdout?.off("data", onStdout);
+          resolve();
+        }
+      };
+      holder.stdout?.on("data", onStdout);
+      holder.once("error", reject);
+      holder.once("exit", (code) => {
+        reject(new Error(`Holder process exited before locking the database (code=${code ?? "null"}).`));
+      });
+    });
+
+    const contender = spawnSync(process.execPath, [helperPath, "contender", databasePath, "75", "0"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 5000,
+    });
+
+    assert.equal(contender.status, 0, contender.stderr);
+    const result = JSON.parse(contender.stdout.trim()) as {
+      ok: boolean;
+      elapsedMs: number;
+      message?: string;
+    };
+    assert.equal(result.ok, false);
+    assert.match(result.message ?? "", /database is locked|SQLITE_BUSY/i);
+    assert.ok(result.elapsedMs >= 40, `expected busy timeout delay, got ${result.elapsedMs}ms`);
+  } finally {
+    if (holder.exitCode === null && holder.signalCode === null) {
+      holder.kill();
+      await new Promise((resolve) => holder.once("exit", resolve));
+    }
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });

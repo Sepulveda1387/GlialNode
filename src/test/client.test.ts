@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,6 +167,14 @@ test("GlialNodeClient can manage local signing keys", async () => {
     assert.match(stored.publicKeyPem, /BEGIN PUBLIC KEY/);
     assert.match(stored.privateKeyPem, /BEGIN PRIVATE KEY/);
 
+    const keyPath = join(presetDirectory, ".keys", "team-executor.json");
+    const keyFile = readFileSync(keyPath, "utf8");
+    assert.match(keyFile, /BEGIN PRIVATE KEY/);
+    if (process.platform !== "win32") {
+      const mode = statSync(keyPath).mode & 0o777;
+      assert.equal(mode & 0o077, 0, `expected private key file to hide group/other bits, got ${mode.toString(8)}`);
+    }
+
     const exported = client.exportSigningPublicKey("team-executor", publicKeyPath);
     assert.equal(exported.keyId, generated.keyId);
     assert.match(readFileSync(publicKeyPath, "utf8"), /BEGIN PUBLIC KEY/);
@@ -208,6 +216,14 @@ test("GlialNodeClient can manage trusted signers", async () => {
     const stored = client.getTrustedSigner("team-anchor");
     assert.equal(stored.keyId, trustedFromLocal.keyId);
     assert.match(stored.publicKeyPem, /BEGIN PUBLIC KEY/);
+
+    const trustedPath = join(presetDirectory, ".trusted", "team-anchor.json");
+    const trustedFile = readFileSync(trustedPath, "utf8");
+    assert.doesNotMatch(trustedFile, /BEGIN PRIVATE KEY/);
+    if (process.platform !== "win32") {
+      const mode = statSync(trustedPath).mode & 0o777;
+      assert.equal(mode & 0o022, 0, `expected trusted signer file to avoid group/other write bits, got ${mode.toString(8)}`);
+    }
 
     const rotated = client.rotateTrustedSigner("team-anchor", publicKeyPath, {
       nextName: "team-anchor-v2",

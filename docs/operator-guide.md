@@ -114,6 +114,7 @@ Best practices:
 - back up `.keys/` separately from portable snapshots
 - share only exported public keys, not the local key JSON file
 - keep `.trusted/` under review, because trust anchors are policy, not just data
+- normal key-management CLI output does not print PEM material; inspect files directly when needed
 
 Platform notes:
 
