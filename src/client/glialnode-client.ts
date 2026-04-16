@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
@@ -1588,19 +1588,20 @@ function toPresetHistoryTimestamp(value: string | undefined): string {
 
 function writePresetFiles(directory: string, preset: SpacePresetDefinition): void {
   const outputPath = join(directory, `${toPresetFileName(preset.name)}.json`);
-  writeFileSync(outputPath, stringifySpacePresetDefinition(preset), "utf8");
+  ensureDirectoryWithMode(directory, 0o755);
+  writeJsonFileAtomic(outputPath, stringifySpacePresetDefinition(preset), 0o644);
 
   writePresetHistoryFile(directory, preset);
 }
 
 function writePresetHistoryFile(directory: string, preset: SpacePresetDefinition): void {
   const historyDirectory = join(directory, ".versions", toPresetFileName(preset.name));
-  mkdirSync(historyDirectory, { recursive: true });
+  ensureDirectoryWithMode(historyDirectory, 0o755);
   const historyPath = join(
     historyDirectory,
     `${toPresetHistoryTimestamp(preset.updatedAt)}--${toPresetVersionFileName(preset.version ?? "1.0.0")}.json`,
   );
-  writeFileSync(historyPath, stringifySpacePresetDefinition(preset), "utf8");
+  writeJsonFileAtomic(historyPath, stringifySpacePresetDefinition(preset), 0o644);
 }
 
 function listRegisteredPresetHistoryFromDirectory(
@@ -1650,9 +1651,9 @@ function readPresetChannels(directory: string, name: string): PresetChannelState
 
 function writePresetChannels(directory: string, state: PresetChannelState): void {
   const channelsDirectory = join(directory, ".channels");
-  mkdirSync(channelsDirectory, { recursive: true });
+  ensureDirectoryWithMode(channelsDirectory, 0o755);
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
-  writeFileSync(channelsPath, JSON.stringify(state, null, 2), "utf8");
+  writeJsonFileAtomic(channelsPath, JSON.stringify(state, null, 2), 0o644);
 }
 
 function getSigningKeysDirectory(directory: string): string {
@@ -1665,7 +1666,7 @@ function getSigningKeyPath(directory: string, name: string): string {
 
 function writeSigningKeyRecord(directory: string, record: SigningKeyRecord): void {
   const keysDirectory = getSigningKeysDirectory(directory);
-  mkdirSync(keysDirectory, { recursive: true });
+  ensureDirectoryWithMode(keysDirectory, 0o700);
   writeJsonFileAtomic(getSigningKeyPath(directory, record.name), JSON.stringify(record, null, 2), 0o600);
 }
 
@@ -1740,7 +1741,7 @@ function getTrustedSignerPath(directory: string, name: string): string {
 
 function writeTrustedSignerRecord(directory: string, record: TrustedSignerRecord): void {
   const trustDirectory = getTrustedSignersDirectory(directory);
-  mkdirSync(trustDirectory, { recursive: true });
+  ensureDirectoryWithMode(trustDirectory, 0o755);
   writeJsonFileAtomic(getTrustedSignerPath(directory, record.name), JSON.stringify(record, null, 2), 0o644);
 }
 
@@ -1845,11 +1846,28 @@ function parsePresetBundleMetadata(value: string): PresetBundleMetadata {
   };
 }
 
+interface TrustedSignerNameResolution {
+  allowedSignerKeyIds: string[];
+  trustedSignerNamesByKeyId: Record<string, string[]>;
+  revokedTrustedSignerNames: string[];
+}
+
+interface ResolvedPresetBundleTrustPolicy extends PresetBundleTrustPolicy {
+  trustedSignerNamesByKeyId?: Record<string, string[]>;
+  revokedTrustedSignerNames?: string[];
+}
+
+interface ResolvedSpaceSnapshotTrustPolicy extends SpaceSnapshotTrustPolicy {
+  trustedSignerNamesByKeyId?: Record<string, string[]>;
+  revokedTrustedSignerNames?: string[];
+}
+
 function validatePresetBundle(
   bundle: PresetBundle,
   trustPolicy: PresetBundleTrustPolicy = {},
   trustProfile: PresetBundleTrustProfileName = "permissive",
 ): PresetBundleValidation {
+  const resolvedTrustPolicy = trustPolicy as ResolvedPresetBundleTrustPolicy;
   if (bundle.metadata.bundleFormatVersion !== PRESET_BUNDLE_FORMAT_VERSION) {
     throw new Error(
       `Unsupported preset bundle format: ${bundle.metadata.bundleFormatVersion}. Expected ${PRESET_BUNDLE_FORMAT_VERSION}.`,
@@ -1859,7 +1877,7 @@ function validatePresetBundle(
   const warnings: string[] = [];
   const trustWarnings: string[] = [];
   const matchedTrustedSignerNames: string[] = [];
-  const revokedTrustedSignerNames: string[] = [];
+  const revokedTrustedSignerNames = [...(resolvedTrustPolicy.revokedTrustedSignerNames ?? [])];
   if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
     warnings.push(
       `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
@@ -1924,8 +1942,9 @@ function validatePresetBundle(
       trustWarnings.push(`Preset bundle signer key id is not allowed: ${signerKeyId}`);
     }
 
-    if (trustPolicy.trustedSignerNames?.length && trustPolicy.allowedSignerKeyIds?.includes(signerKeyId)) {
-      matchedTrustedSignerNames.push(...trustPolicy.trustedSignerNames);
+    const matchedTrustedSignerNamesForKey = resolvedTrustPolicy.trustedSignerNamesByKeyId?.[signerKeyId] ?? [];
+    if (matchedTrustedSignerNamesForKey.length > 0) {
+      matchedTrustedSignerNames.push(...matchedTrustedSignerNamesForKey);
     }
   } else if (trustPolicy.allowedSignerKeyIds?.length) {
     trustWarnings.push("Preset bundle signer key id is missing.");
@@ -1956,7 +1975,7 @@ function resolvePresetBundleTrustPolicy(
   trustPolicy: PresetBundleTrustPolicy | undefined,
   directory: string,
   trustProfile: PresetBundleTrustProfileName = "permissive",
-): PresetBundleTrustPolicy {
+): ResolvedPresetBundleTrustPolicy {
   const profilePolicy = getPresetBundleTrustProfile(trustProfile);
   const basePolicy: PresetBundleTrustPolicy = {
     ...profilePolicy,
@@ -1974,22 +1993,20 @@ function resolvePresetBundleTrustPolicy(
     return basePolicy;
   }
 
-  const trustedKeyIds = basePolicy.trustedSignerNames
-    .map((name) => {
-      const record = readTrustedSignerRecord(directory, name);
-      if (record.revokedAt) {
-        throw new Error(`Trusted signer is revoked: ${name}`);
-      }
-      return record.keyId;
-    });
+  const trustedSignerResolution = resolveTrustedSignerNames(basePolicy.trustedSignerNames, directory);
+  if (trustedSignerResolution.revokedTrustedSignerNames.length > 0) {
+    throw new Error(`Trusted signers are revoked: ${trustedSignerResolution.revokedTrustedSignerNames.join(", ")}`);
+  }
   const allowedSignerKeyIds = [
     ...(basePolicy.allowedSignerKeyIds ?? []),
-    ...trustedKeyIds,
+    ...trustedSignerResolution.allowedSignerKeyIds,
   ];
 
   return {
     ...basePolicy,
     allowedSignerKeyIds: Array.from(new Set(allowedSignerKeyIds)),
+    trustedSignerNamesByKeyId: trustedSignerResolution.trustedSignerNamesByKeyId,
+    revokedTrustedSignerNames: trustedSignerResolution.revokedTrustedSignerNames,
   };
 }
 
@@ -2008,6 +2025,32 @@ function mergePresetBundleTrustPolicyFromSettings(
     allowedSignerKeyIds: mergeStringArrays(provenanceSettings?.allowedSignerKeyIds, trustPolicy?.allowedSignerKeyIds),
     trustedSignerNames: mergeStringArrays(provenanceSettings?.trustedSignerNames, trustPolicy?.trustedSignerNames),
   };
+}
+
+function resolveTrustedSignerNames(
+  trustedSignerNames: string[] | undefined,
+  directory: string,
+): TrustedSignerNameResolution {
+  const resolution: TrustedSignerNameResolution = {
+    allowedSignerKeyIds: [],
+    trustedSignerNamesByKeyId: {},
+    revokedTrustedSignerNames: [],
+  };
+
+  for (const name of trustedSignerNames ?? []) {
+    const record = readTrustedSignerRecord(directory, name);
+    if (record.revokedAt) {
+      resolution.revokedTrustedSignerNames.push(name);
+      continue;
+    }
+
+    resolution.allowedSignerKeyIds.push(record.keyId);
+    resolution.trustedSignerNamesByKeyId[record.keyId] ??= [];
+    resolution.trustedSignerNamesByKeyId[record.keyId]!.push(name);
+  }
+
+  resolution.allowedSignerKeyIds = Array.from(new Set(resolution.allowedSignerKeyIds));
+  return resolution;
 }
 
 function createPresetBundleAuditEvent(
@@ -2195,10 +2238,11 @@ function validateSpaceSnapshot(
   trustPolicy: SpaceSnapshotTrustPolicy = {},
   trustProfile: SpaceSnapshotTrustProfile = "permissive",
 ): SpaceSnapshotValidationResult {
+  const resolvedTrustPolicy = trustPolicy as ResolvedSpaceSnapshotTrustPolicy;
   const warnings: string[] = [];
   const trustWarnings: string[] = [];
   const matchedTrustedSignerNames: string[] = [];
-  const revokedTrustedSignerNames: string[] = [];
+  const revokedTrustedSignerNames = [...(resolvedTrustPolicy.revokedTrustedSignerNames ?? [])];
   const isLegacySnapshot = snapshot.metadata.snapshotFormatVersion === 0;
 
   if (isLegacySnapshot) {
@@ -2274,8 +2318,9 @@ function validateSpaceSnapshot(
       trustWarnings.push(`Space snapshot signer key id is not allowed: ${signerKeyId}`);
     }
 
-    if (trustPolicy.trustedSignerNames?.length && trustPolicy.allowedSignerKeyIds?.includes(signerKeyId)) {
-      matchedTrustedSignerNames.push(...trustPolicy.trustedSignerNames);
+    const matchedTrustedSignerNamesForKey = resolvedTrustPolicy.trustedSignerNamesByKeyId?.[signerKeyId] ?? [];
+    if (matchedTrustedSignerNamesForKey.length > 0) {
+      matchedTrustedSignerNames.push(...matchedTrustedSignerNamesForKey);
     }
   } else if (trustPolicy.allowedSignerKeyIds?.length) {
     trustWarnings.push("Space snapshot signer key id is missing.");
@@ -2307,7 +2352,7 @@ function resolveSpaceSnapshotTrustPolicy(
   trustPolicy: SpaceSnapshotTrustPolicy,
   directory: string | undefined,
   trustProfile: SpaceSnapshotTrustProfile = "permissive",
-): SpaceSnapshotTrustPolicy {
+): ResolvedSpaceSnapshotTrustPolicy {
   const profilePolicy = getSpaceSnapshotTrustProfile(trustProfile);
   const basePolicy = {
     ...profilePolicy,
@@ -2329,20 +2374,19 @@ function resolveSpaceSnapshotTrustPolicy(
     throw new Error("Snapshot trust resolution requires a preset directory when trusted signer names are used.");
   }
 
-  const trustedKeyIds = basePolicy.trustedSignerNames.map((name) => {
-    const record = readTrustedSignerRecord(directory, name);
-    if (record.revokedAt) {
-      throw new Error(`Trusted signer is revoked: ${name}`);
-    }
-    return record.keyId;
-  });
+  const trustedSignerResolution = resolveTrustedSignerNames(basePolicy.trustedSignerNames, directory);
+  if (trustedSignerResolution.revokedTrustedSignerNames.length > 0) {
+    throw new Error(`Trusted signers are revoked: ${trustedSignerResolution.revokedTrustedSignerNames.join(", ")}`);
+  }
 
   return {
     ...basePolicy,
     allowedSignerKeyIds: Array.from(new Set([
       ...(basePolicy.allowedSignerKeyIds ?? []),
-      ...trustedKeyIds,
+      ...trustedSignerResolution.allowedSignerKeyIds,
     ])),
+    trustedSignerNamesByKeyId: trustedSignerResolution.trustedSignerNamesByKeyId,
+    revokedTrustedSignerNames: trustedSignerResolution.revokedTrustedSignerNames,
   };
 }
 
@@ -2403,6 +2447,17 @@ function createSpaceSnapshotSignaturePayload(snapshot: SpaceSnapshot): Buffer {
       signature: undefined,
     },
   }));
+}
+
+function ensureDirectoryWithMode(directory: string, mode: number): void {
+  mkdirSync(directory, { recursive: true, mode });
+  if (process.platform !== "win32") {
+    try {
+      chmodSync(directory, mode);
+    } catch {
+      // Best-effort hardening: some filesystems may ignore or reject chmod.
+    }
+  }
 }
 
 function writeJsonFileAtomic(outputPath: string, contents: string, mode?: number): void {

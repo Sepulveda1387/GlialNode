@@ -674,6 +674,8 @@ test("CLI can manage local signing keys", async () => {
     const keyPath = join(presetDirectory, ".keys", "team-executor.json");
     assert.match(readFileSync(keyPath, "utf8"), /BEGIN PRIVATE KEY/);
     if (process.platform !== "win32") {
+      const keyDirectoryMode = statSync(join(presetDirectory, ".keys")).mode & 0o777;
+      assert.equal(keyDirectoryMode & 0o077, 0, `expected private key directory to hide group/other bits, got ${keyDirectoryMode.toString(8)}`);
       const mode = statSync(keyPath).mode & 0o777;
       assert.equal(mode & 0o077, 0, `expected private key file to hide group/other bits, got ${mode.toString(8)}`);
     }
@@ -741,6 +743,8 @@ test("CLI can manage trusted signers", async () => {
     const trustedPath = join(presetDirectory, ".trusted", "team-anchor.json");
     assert.doesNotMatch(readFileSync(trustedPath, "utf8"), /BEGIN PRIVATE KEY/);
     if (process.platform !== "win32") {
+      const trustedDirectoryMode = statSync(join(presetDirectory, ".trusted")).mode & 0o777;
+      assert.equal(trustedDirectoryMode & 0o022, 0, `expected trusted signer directory to avoid group/other write bits, got ${trustedDirectoryMode.toString(8)}`);
       const mode = statSync(trustedPath).mode & 0o777;
       assert.equal(mode & 0o022, 0, `expected trusted signer file to avoid group/other write bits, got ${mode.toString(8)}`);
     }
@@ -1472,6 +1476,38 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     assert.match(trustedByName.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
     assert.match(trustedByName.lines.join("\n"), /effectivePolicy=/);
 
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "alternate-executor-key",
+        "--signer", "Another Signer",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "alternate-executor-key",
+        "--trust-name", "other-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    const multiAnchorTrust = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--trust-profile", "anchored",
+        "--require-signature",
+        "--trust-signer", "team-anchor,other-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    assert.match(multiAnchorTrust.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
+    assert.doesNotMatch(multiAnchorTrust.lines.join("\n"), /matchedTrustedSigners=.*other-anchor/);
+
     await assert.rejects(
       () => runCommand(parseArgs([
         "preset", "bundle-show",
@@ -1498,7 +1534,7 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
         "--trust-signer", "team-anchor",
         "--directory", presetDirectory,
       ]), { repository }),
-      /Trusted signer is revoked: team-anchor/,
+      /Trusted signers are revoked: team-anchor/,
     );
 
     const invalidSignatureBundle = JSON.parse(readFileSync(bundlePath, "utf8")) as {

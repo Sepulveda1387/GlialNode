@@ -171,6 +171,8 @@ test("GlialNodeClient can manage local signing keys", async () => {
     const keyFile = readFileSync(keyPath, "utf8");
     assert.match(keyFile, /BEGIN PRIVATE KEY/);
     if (process.platform !== "win32") {
+      const keyDirectoryMode = statSync(join(presetDirectory, ".keys")).mode & 0o777;
+      assert.equal(keyDirectoryMode & 0o077, 0, `expected private key directory to hide group/other bits, got ${keyDirectoryMode.toString(8)}`);
       const mode = statSync(keyPath).mode & 0o777;
       assert.equal(mode & 0o077, 0, `expected private key file to hide group/other bits, got ${mode.toString(8)}`);
     }
@@ -221,6 +223,8 @@ test("GlialNodeClient can manage trusted signers", async () => {
     const trustedFile = readFileSync(trustedPath, "utf8");
     assert.doesNotMatch(trustedFile, /BEGIN PRIVATE KEY/);
     if (process.platform !== "win32") {
+      const trustedDirectoryMode = statSync(join(presetDirectory, ".trusted")).mode & 0o777;
+      assert.equal(trustedDirectoryMode & 0o022, 0, `expected trusted signer directory to avoid group/other write bits, got ${trustedDirectoryMode.toString(8)}`);
       const mode = statSync(trustedPath).mode & 0o777;
       assert.equal(mode & 0o022, 0, `expected trusted signer file to avoid group/other write bits, got ${mode.toString(8)}`);
     }
@@ -677,6 +681,20 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     assert.equal(trustedByName.trusted, true);
     assert.deepEqual(trustedByName.report.matchedTrustedSignerNames, ["team-anchor"]);
 
+    const alternateKeyPair = generateKeyPairSync("ed25519");
+    const alternatePublicKeyPem = alternateKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
+    writeFileSync(signerPublicKeyPath, alternatePublicKeyPem, "utf8");
+    client.registerTrustedSignerFromPublicKey(signerPublicKeyPath, {
+      name: "other-anchor",
+      signer: "Another Signer",
+      source: "bundle-test-alt",
+    });
+    const multiAnchorValidation = client.validatePresetBundle(bundlePath, {
+      requireSignature: true,
+      trustedSignerNames: ["team-anchor", "other-anchor"],
+    });
+    assert.deepEqual(multiAnchorValidation.report.matchedTrustedSignerNames, ["team-anchor"]);
+
     const provenanceSpace = await client.createSpace({
       name: "Trusted Bundle Review",
       settings: {
@@ -738,7 +756,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
         requireSignature: true,
         trustedSignerNames: ["team-anchor"],
       }),
-      /Trusted signer is revoked: team-anchor/,
+      /Trusted signers are revoked: team-anchor/,
     );
     assert.throws(
       () => client.validatePresetBundle(bundlePath, undefined, "anchored"),

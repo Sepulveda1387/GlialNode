@@ -119,6 +119,7 @@ Best practices:
 Platform notes:
 
 - on Unix-like systems, GlialNode attempts restrictive file modes for private key records
+- GlialNode also applies restrictive directory-mode hints to `.keys/` and non-world-writable hints to `.trusted/` where the filesystem supports it
 - Windows ACLs still matter; use OS-level account and directory protections
 - private key material is never echoed by normal CLI output
 
@@ -135,6 +136,11 @@ Recommended usage:
 - local backup/restore on one machine: `permissive` or `signed`
 - cross-machine restore inside one team: `signed`
 - shared/team-controlled restore workflows: `anchored`
+
+Trust reports now distinguish:
+
+- which trusted signer names were actually matched by the artifact signer key
+- which requested signer names were revoked and therefore unusable
 
 ## Operational Notes
 

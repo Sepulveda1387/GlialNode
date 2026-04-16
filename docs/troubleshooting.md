@@ -75,6 +75,7 @@ What to do:
 - register the expected signer as a trusted anchor
 - rotate or replace revoked anchors intentionally
 - do not weaken trust policy just to force an import unless that is a conscious operational decision
+- inspect matched vs revoked trusted signer names in validation output to confirm which anchor actually satisfied policy
 
 ## Signer Or Key Rotation Confusion
 
