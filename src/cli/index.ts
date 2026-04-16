@@ -13,6 +13,15 @@ async function main(): Promise<void> {
 
   try {
     const result = await runCommand(parsed, { repository });
+    const wantsJson = parsed.flags.json === "true";
+
+    if (wantsJson) {
+      for (const line of result.lines) {
+        console.log(line);
+      }
+      return;
+    }
+
     console.log("GlialNode CLI");
     console.log(`storage=${sqliteAdapter.name}`);
     console.log(`schemaVersion=${repository.getSchemaVersion()}`);
@@ -24,6 +33,24 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const wantsJson = parsed.flags.json === "true";
+
+    if (wantsJson) {
+      console.error(
+        JSON.stringify(
+          {
+            error: message,
+            storage: sqliteAdapter.name,
+            schemaVersion: repository.getSchemaVersion(),
+            schemaLatest: sqliteAdapter.schemaVersion,
+          },
+          null,
+          2,
+        ),
+      );
+      process.exitCode = 1;
+      return;
+    }
 
     console.error("GlialNode CLI");
     console.error(`storage=${sqliteAdapter.name}`);

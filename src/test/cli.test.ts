@@ -250,6 +250,204 @@ test("CLI can store provenance settings on a space and use them for bundle valid
   }
 });
 
+test("CLI supports stable machine-readable JSON output for space and memory read flows", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-json-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "JSON Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "writer"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id",
+        spaceId,
+        "--scope-id",
+        scopeId,
+        "--scope-type",
+        "agent",
+        "--tier",
+        "mid",
+        "--kind",
+        "decision",
+        "--content",
+        "Keep working memory small and focused.",
+        "--summary",
+        "Working memory guideline",
+        "--tags",
+        "memory,policy",
+      ]),
+      { repository },
+    );
+
+    const showResult = await runCommand(
+      parseArgs(["space", "show", "--id", spaceId, "--json"]),
+      { repository },
+    );
+    const parsedShow = JSON.parse(showResult.lines.join("\n")) as {
+      space: { id: string; name: string };
+    };
+    assert.equal(parsedShow.space.id, spaceId);
+    assert.equal(parsedShow.space.name, "JSON Space");
+
+    const reportResult = await runCommand(
+      parseArgs(["space", "report", "--id", spaceId, "--json"]),
+      { repository },
+    );
+    const parsedReport = JSON.parse(reportResult.lines.join("\n")) as {
+      report: { spaceId: string; recordCount: number };
+    };
+    assert.equal(parsedReport.report.spaceId, spaceId);
+    assert.equal(parsedReport.report.recordCount, 1);
+
+    const searchResult = await runCommand(
+      parseArgs(["memory", "search", "--space-id", spaceId, "--text", "working memory", "--json"]),
+      { repository },
+    );
+    const parsedSearch = JSON.parse(searchResult.lines.join("\n")) as {
+      count: number;
+      records: Array<{ summary?: string }>;
+    };
+    assert.equal(parsedSearch.count, 1);
+    assert.equal(parsedSearch.records[0]?.summary, "Working memory guideline");
+
+    const recallResult = await runCommand(
+      parseArgs(["memory", "recall", "--space-id", spaceId, "--text", "working memory", "--json"]),
+      { repository },
+    );
+    const parsedRecall = JSON.parse(recallResult.lines.join("\n")) as {
+      count: number;
+      packs: Array<{ primary: { summary?: string } }>;
+    };
+    assert.equal(parsedRecall.count, 1);
+    assert.equal(parsedRecall.packs[0]?.primary.summary, "Working memory guideline");
+
+    const traceResult = await runCommand(
+      parseArgs(["memory", "trace", "--space-id", spaceId, "--text", "working memory", "--json"]),
+      { repository },
+    );
+    const parsedTrace = JSON.parse(traceResult.lines.join("\n")) as {
+      count: number;
+      traces: Array<{ summary: string }>;
+    };
+    assert.equal(parsedTrace.count, 1);
+    assert.match(parsedTrace.traces[0]?.summary ?? "", /Recalled/);
+
+    const bundleResult = await runCommand(
+      parseArgs(["memory", "bundle", "--space-id", spaceId, "--text", "working memory", "--json"]),
+      { repository },
+    );
+    const parsedBundle = JSON.parse(bundleResult.lines.join("\n")) as {
+      count: number;
+      bundles: Array<{ primary: { summary?: string } }>;
+    };
+    assert.equal(parsedBundle.count, 1);
+    assert.equal(parsedBundle.bundles[0]?.primary.summary, "Working memory guideline");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI supports stable machine-readable JSON output for preset bundle review and import", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-json-bundle-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--version", "2.1.0",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "team-executor-key",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "bundle-export",
+        "--name", "team-executor",
+        "--output", bundlePath,
+        "--directory", presetDirectory,
+        "--signing-key", "team-executor-key",
+      ]),
+      { repository },
+    );
+
+    const showResult = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedShow = JSON.parse(showResult.lines.join("\n")) as {
+      bundle: { preset: { name: string } };
+      validation: { trusted: boolean };
+    };
+    assert.equal(parsedShow.bundle.preset.name, "team-executor");
+    assert.equal(parsedShow.validation.trusted, true);
+
+    const importResult = await runCommand(
+      parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--name", "team-executor-imported",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedImport = JSON.parse(importResult.lines.join("\n")) as {
+      importedPresetName: string;
+      bundleName: string;
+      versions: number;
+      validation: { trusted: boolean };
+    };
+    assert.equal(parsedImport.importedPresetName, "team-executor-imported");
+    assert.equal(parsedImport.bundleName, "team-executor");
+    assert.equal(parsedImport.versions, 1);
+    assert.equal(parsedImport.validation.trusted, true);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI can list and show preset definitions", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-preset-show-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

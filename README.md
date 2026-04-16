@@ -19,14 +19,6 @@ It is built around three ideas:
 - scoped memory: separate spaces for different orchestrators, projects, and agents
 - retrieval over replay: search and inject only the memory that matters now
 
-## Why It Saves Tokens
-
-GlialNode is built to reduce context waste.
-
-Instead of replaying whole transcripts or injecting large raw logs back into a model, it keeps operational history separate from curated memory, retrieves only relevant records, and supports compact internal memory text for lower-token recall and handoff flows.
-
-That makes it a better fit for long-running agent systems where context quality and token cost matter at the same time.
-
 ## Why GlialNode
 
 Most agent memory attempts fall into one of two traps:
@@ -42,6 +34,16 @@ GlialNode takes a different path:
 - it stays local and inspectable with a SQLite-first architecture
 
 The goal is not just to save facts. The goal is to manage memory as a living system.
+
+For automation and integrations, GlialNode also supports stable `--json` output on key read/report flows such as `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
+
+## Why It Saves Tokens
+
+GlialNode is built to reduce context waste.
+
+Instead of replaying whole transcripts or injecting large raw logs back into a model, it keeps operational history separate from curated memory, retrieves only relevant records, and supports compact internal memory text for lower-token recall and handoff flows.
+
+That makes it a better fit for long-running agent systems where context quality and token cost matter at the same time.
 
 ## Vision
 
@@ -713,20 +715,28 @@ glialnode preset bundle-show --input ./team-executor.bundle.json --require-signa
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor
 glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor
 glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>
+glialnode preset bundle-show --input ./team-executor.bundle.json --json
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
+glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy --json
 glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable
 glialnode space create --name "Default Stable Memory" --preset-local team-executor
 glialnode space configure --id <space-id> --preset-local team-executor --preset-channel stable
 glialnode space create --name "Registry Memory" --preset-local team-executor
 glialnode space create --name "Custom Memory" --preset-file ./execution-first.json
 glialnode scope add --space-id <space-id> --type agent --label planner
+glialnode space show --id <space-id> --json
+glialnode space report --id <space-id> --json
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
 glialnode memory search --space-id <space-id> --text lexical
+glialnode memory search --space-id <space-id> --text lexical --json
 glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory bundle --space-id <space-id> --text lexical --bundle-profile executor --bundle-max-supporting 1 --bundle-max-content-chars 160 --bundle-prefer-compact true
 glialnode memory bundle --space-id <space-id> --text lexical --bundle-consumer auto
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."

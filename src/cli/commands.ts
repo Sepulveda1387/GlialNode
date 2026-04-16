@@ -168,21 +168,21 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--name <name>] [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
-    "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>]",
+    "  glialnode preset bundle-import --input <path> [--directory <path>] [--name <name>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
+    "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--db <path>]",
     "  glialnode space list [--db <path>]",
-    "  glialnode space show --id <id> [--db <path>]",
-    "  glialnode space report --id <id> [--recent-events 10] [--db <path>]",
+    "  glialnode space show --id <id> [--db <path>] [--json]",
+    "  glialnode space report --id <id> [--recent-events 10] [--db <path>] [--json]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
     "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-prefer-reviewer-on-provenance true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
-    "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
-    "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
-    "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
-    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--bundle-profile balanced|planner|executor|reviewer] [--bundle-consumer auto|balanced|planner|executor|reviewer] [--bundle-max-supporting 3] [--bundle-max-content-chars 240] [--bundle-prefer-compact true] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>]",
+    "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--bundle-profile balanced|planner|executor|reviewer] [--bundle-consumer auto|balanced|planner|executor|reviewer] [--bundle-max-supporting 3] [--bundle-max-content-chars 240] [--bundle-prefer-compact true] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
     "  glialnode memory list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
@@ -198,6 +198,16 @@ export function usageText(): string {
     "  glialnode memory archive --record-id <id> [--db <path>]",
     "  glialnode memory show --record-id <id> [--db <path>]",
   ].join("\n");
+}
+
+function wantsJson(parsed: ParsedArgs): boolean {
+  return parsed.flags.json === "true";
+}
+
+function jsonResult(payload: unknown): CommandResult {
+  return {
+    lines: JSON.stringify(payload, null, 2).split(/\r?\n/),
+  };
 }
 
 async function runStatusCommand(context: CommandContext): Promise<CommandResult> {
@@ -279,6 +289,12 @@ async function runSpaceCommand(
     const spaceId = requireFlag(parsed.flags, "id");
     const space = await requireSpace(context.repository, spaceId);
 
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        space,
+      });
+    }
+
     return {
       lines: [
         `id=${space.id}`,
@@ -348,6 +364,12 @@ async function runSpaceCommand(
       spaceId,
       parsed.flags["recent-events"] ? Number(parsed.flags["recent-events"]) : 10,
     );
+
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        report,
+      });
+    }
 
     return {
       lines: [
@@ -1061,6 +1083,17 @@ async function runPresetCommand(
       await context.repository.writeRecord(createPresetBundleAuditSummaryRecord(space.id, event));
     }
 
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        importedPresetName: name,
+        bundleName: imported.preset.name,
+        versions: imported.history.length,
+        defaultChannel: imported.channels.defaultChannel,
+        trusted: validation.trusted,
+        validation,
+      });
+    }
+
     return {
       lines: [
         "Preset bundle imported.",
@@ -1105,6 +1138,13 @@ async function runPresetCommand(
       });
       await context.repository.appendEvent(event);
       await context.repository.writeRecord(createPresetBundleAuditSummaryRecord(space.id, event));
+    }
+
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        bundle,
+        validation,
+      });
     }
 
     return {
@@ -1308,6 +1348,23 @@ async function runMemoryCommand(
       }
     }
 
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        query: {
+          spaceId,
+          text: parsed.flags.text,
+          scopeIds: parsed.flags["scope-id"] ? [parsed.flags["scope-id"]] : undefined,
+          tiers: parsed.flags.tier ? [requireTier(parsed.flags.tier)] : undefined,
+          kinds: parsed.flags.kind ? [requireKind(parsed.flags.kind)] : undefined,
+          visibility: parsed.flags.visibility ? [requireVisibility(parsed.flags.visibility)] : undefined,
+          statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
+          limit: parsed.flags.limit ? Number(parsed.flags.limit) : 10,
+        },
+        count: records.length,
+        records,
+      });
+    }
+
     return {
       lines: [
         `records=${records.length}`,
@@ -1321,7 +1378,7 @@ async function runMemoryCommand(
 
   if (action === "recall") {
     const spaceId = requireFlag(parsed.flags, "space-id");
-    const records = await context.repository.searchRecords({
+    const query = {
       spaceId,
       text: parsed.flags.text,
       scopeIds: parsed.flags["scope-id"] ? [parsed.flags["scope-id"]] : undefined,
@@ -1330,7 +1387,8 @@ async function runMemoryCommand(
       visibility: parsed.flags.visibility ? [requireVisibility(parsed.flags.visibility)] : undefined,
       statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
       limit: parsed.flags.limit ? Number(parsed.flags.limit) : 3,
-    });
+    };
+    const records = await context.repository.searchRecords(query);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
       const space = await requireSpace(context.repository, spaceId);
@@ -1362,14 +1420,26 @@ async function runMemoryCommand(
     }
 
     const allRecords = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
-    const lines = [`packs=${records.length}`];
+    const packs = [];
     for (const primary of records) {
       const links = await context.repository.listLinksForRecord(primary.id);
       const pack = buildRecallPack(primary, allRecords, links, {
         queryText: parsed.flags.text,
         supportLimit: parsed.flags["support-limit"] ? Number(parsed.flags["support-limit"]) : 3,
       });
+      packs.push(pack);
+    }
 
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        query,
+        count: packs.length,
+        packs,
+      });
+    }
+
+    const lines = [`packs=${packs.length}`];
+    for (const pack of packs) {
       lines.push(
         `primary=${pack.primary.id} ${pack.primary.tier} ${pack.primary.kind} ${truncate(pack.primary.summary ?? pack.primary.content, 80)}`,
       );
@@ -1438,6 +1508,14 @@ async function runMemoryCommand(
         supportLimit: parsed.flags["support-limit"] ? Number(parsed.flags["support-limit"]) : 3,
       });
       traces.push(buildRecallTrace(pack, parsed.flags.text));
+    }
+
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        query,
+        count: traces.length,
+        traces,
+      });
     }
 
     const lines = [`traces=${traces.length}`];
@@ -1515,6 +1593,14 @@ async function runMemoryCommand(
           ? parseOptionalBoolean(parsed.flags["bundle-prefer-compact"])
           : undefined,
       }));
+    }
+
+    if (wantsJson(parsed)) {
+      return jsonResult({
+        query,
+        count: bundles.length,
+        bundles,
+      });
     }
 
     return {
