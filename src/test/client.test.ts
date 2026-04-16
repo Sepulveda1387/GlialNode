@@ -616,6 +616,43 @@ test("GlialNodeClient can export and import full preset bundles", async () => {
   }
 });
 
+test("GlialNodeClient importPresetBundle enforces explicit collision policy", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-collision-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    client.exportPreset("execution-first", presetPath);
+    client.registerPreset(presetPath, {
+      name: "team-executor",
+      version: "2.1.0",
+    });
+    client.exportPresetBundle("team-executor", bundlePath);
+
+    assert.throws(
+      () => client.importPresetBundle(bundlePath),
+      /Preset already exists: team-executor\. Use collisionPolicy=overwrite or collisionPolicy=rename\./,
+    );
+
+    const overwritten = client.importPresetBundle(bundlePath, {
+      collisionPolicy: "overwrite",
+    });
+    assert.equal(overwritten.preset.name, "team-executor");
+
+    const renamed = client.importPresetBundle(bundlePath, {
+      collisionPolicy: "rename",
+    });
+    assert.equal(renamed.preset.name, "team-executor imported");
+    assert.equal(client.getRegisteredPreset("team-executor imported").name, "team-executor imported");
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient validates preset bundle metadata and rejects unsupported formats", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-validation-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -883,6 +920,62 @@ test("GlialNodeClient can export and import a versioned snapshot without the CLI
 
     assert.equal(importedRecords.length, 1);
     assert.equal(importedRecords[0]?.id, record.id);
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient importSnapshot enforces explicit collision policy", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-collision-"));
+  const sourcePath = join(tempDirectory, "source.sqlite");
+  const targetPath = join(tempDirectory, "target.sqlite");
+  const sourceClient = new GlialNodeClient({ filename: sourcePath });
+  const targetClient = new GlialNodeClient({ filename: targetPath });
+
+  try {
+    const space = await sourceClient.createSpace({ name: "Collision Space" });
+    const scope = await sourceClient.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+    const record = await sourceClient.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Snapshot import should not overwrite silently.",
+      summary: "Collision rule",
+    });
+
+    const snapshot = await sourceClient.exportSpace(space.id);
+    await targetClient.importSnapshot(snapshot);
+
+    await assert.rejects(
+      () => targetClient.importSnapshot(snapshot),
+      /Space already exists: .*Use collisionPolicy=overwrite or collisionPolicy=rename\./,
+    );
+
+    const overwritten = await targetClient.importSnapshot(snapshot, {
+      collisionPolicy: "overwrite",
+    });
+    assert.equal(overwritten.space.id, space.id);
+
+    const renamed = await targetClient.importSnapshot(snapshot, {
+      collisionPolicy: "rename",
+    });
+    assert.notEqual(renamed.space.id, space.id);
+    assert.equal(renamed.space.name, "Collision Space (imported)");
+
+    const renamedRecords = await targetClient.searchRecords({
+      spaceId: renamed.space.id,
+      text: "overwrite silently",
+      limit: 10,
+    });
+    assert.equal(renamedRecords.length, 1);
+    assert.notEqual(renamedRecords[0]?.id, record.id);
   } finally {
     sourceClient.close();
     targetClient.close();

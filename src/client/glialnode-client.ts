@@ -204,6 +204,17 @@ export interface ImportSpaceSnapshotOptions {
   trustPolicy?: SpaceSnapshotTrustPolicy;
   trustProfile?: SpaceSnapshotTrustProfile;
   directory?: string;
+  collisionPolicy?: ImportCollisionPolicy;
+}
+
+export type ImportCollisionPolicy = "error" | "overwrite" | "rename";
+
+export interface ImportPresetBundleOptions {
+  directory?: string;
+  name?: string;
+  trustPolicy?: PresetBundleTrustPolicy;
+  trustProfile?: PresetBundleTrustProfileName;
+  collisionPolicy?: ImportCollisionPolicy;
 }
 
 export interface MaintenanceResult {
@@ -766,12 +777,7 @@ export class GlialNodeClient {
 
   importPresetBundle(
     inputPath: string,
-    options: {
-      directory?: string;
-      name?: string;
-      trustPolicy?: PresetBundleTrustPolicy;
-      trustProfile?: PresetBundleTrustProfileName;
-    } = {},
+    options: ImportPresetBundleOptions = {},
   ): PresetBundle {
     const bundle = parsePresetBundle(readFileSync(resolve(inputPath), "utf8"));
     const resolvedDirectory = resolve(options.directory ?? this.presetDirectory);
@@ -780,7 +786,12 @@ export class GlialNodeClient {
       resolvePresetBundleTrustPolicy(options.trustPolicy, resolvedDirectory, options.trustProfile),
       options.trustProfile ?? "permissive",
     );
-    const nextName = options.name ?? bundle.preset.name;
+    const requestedName = options.name ?? bundle.preset.name;
+    const nextName = resolvePresetImportName(
+      resolvedDirectory,
+      requestedName,
+      options.collisionPolicy ?? "error",
+    );
     const history = bundle.history.map((preset) => ({
       ...preset,
       name: nextName,
@@ -817,6 +828,7 @@ export class GlialNodeClient {
       name?: string;
       trustPolicy?: PresetBundleTrustPolicy;
       trustProfile?: PresetBundleTrustProfileName;
+      collisionPolicy?: ImportCollisionPolicy;
     },
   ): Promise<PresetBundle> {
     const space = await requireSpace(this.repository, options.spaceId);
@@ -829,6 +841,7 @@ export class GlialNodeClient {
       name: options.name,
       trustPolicy: mergePresetBundleTrustPolicyFromSettings(options.trustPolicy, provenanceSettings),
       trustProfile,
+      collisionPolicy: options.collisionPolicy,
     });
 
     await ensureSpaceAuditScope(this.repository, space.id);
@@ -1524,25 +1537,31 @@ export class GlialNodeClient {
       options.directory,
     );
 
-    await this.repository.createSpace(normalizedSnapshot.space);
+    const preparedSnapshot = await prepareSnapshotForImport(
+      this.repository,
+      normalizedSnapshot,
+      options.collisionPolicy ?? "error",
+    );
 
-    for (const scope of normalizedSnapshot.scopes) {
+    await this.repository.createSpace(preparedSnapshot.space);
+
+    for (const scope of preparedSnapshot.scopes) {
       await this.repository.upsertScope(scope);
     }
 
-    for (const event of normalizedSnapshot.events) {
+    for (const event of preparedSnapshot.events) {
       await this.repository.appendEvent(event);
     }
 
-    for (const record of normalizedSnapshot.records) {
+    for (const record of preparedSnapshot.records) {
       await this.repository.writeRecord(record);
     }
 
-    for (const link of normalizedSnapshot.links) {
+    for (const link of preparedSnapshot.links) {
       await this.repository.linkRecords(link);
     }
 
-    return normalizedSnapshot;
+    return preparedSnapshot;
   }
 
   async importSnapshotFromFile(
@@ -1654,6 +1673,41 @@ function writePresetChannels(directory: string, state: PresetChannelState): void
   ensureDirectoryWithMode(channelsDirectory, 0o755);
   const channelsPath = join(channelsDirectory, `${toPresetFileName(state.name)}.json`);
   writeJsonFileAtomic(channelsPath, JSON.stringify(state, null, 2), 0o644);
+}
+
+function resolvePresetImportName(
+  directory: string,
+  requestedName: string,
+  collisionPolicy: ImportCollisionPolicy,
+): string {
+  const candidatePath = join(directory, `${toPresetFileName(requestedName)}.json`);
+  if (!existsSync(candidatePath)) {
+    return requestedName;
+  }
+
+  if (collisionPolicy === "overwrite") {
+    return requestedName;
+  }
+
+  if (collisionPolicy === "rename") {
+    return findAvailablePresetImportName(directory, requestedName);
+  }
+
+  throw new Error(`Preset already exists: ${requestedName}. Use collisionPolicy=overwrite or collisionPolicy=rename.`);
+}
+
+function findAvailablePresetImportName(directory: string, baseName: string): string {
+  const normalizedBase = `${baseName} imported`;
+  let suffix = 1;
+
+  while (true) {
+    const candidate = suffix === 1 ? normalizedBase : `${normalizedBase} ${suffix}`;
+    const candidatePath = join(directory, `${toPresetFileName(candidate)}.json`);
+    if (!existsSync(candidatePath)) {
+      return candidate;
+    }
+    suffix += 1;
+  }
 }
 
 function getSigningKeysDirectory(directory: string): string {
@@ -2230,6 +2284,85 @@ function normalizeSpaceSnapshot(value: Partial<SpaceSnapshot>): SpaceSnapshot {
     events: Array.isArray(parsed.events) ? parsed.events as MemoryEvent[] : [],
     records: Array.isArray(parsed.records) ? parsed.records as MemoryRecord[] : [],
     links: Array.isArray(parsed.links) ? parsed.links as MemoryRecordLink[] : [],
+  };
+}
+
+async function prepareSnapshotForImport(
+  repository: MemoryRepository,
+  snapshot: SpaceSnapshot,
+  collisionPolicy: ImportCollisionPolicy,
+): Promise<SpaceSnapshot> {
+  const existingSpace = await repository.getSpace(snapshot.space.id);
+  if (!existingSpace) {
+    return snapshot;
+  }
+
+  if (collisionPolicy === "overwrite") {
+    return snapshot;
+  }
+
+  if (collisionPolicy === "rename") {
+    return remapSnapshotIdentity(snapshot);
+  }
+
+  throw new Error(`Space already exists: ${snapshot.space.id}. Use collisionPolicy=overwrite or collisionPolicy=rename.`);
+}
+
+function remapSnapshotIdentity(snapshot: SpaceSnapshot): SpaceSnapshot {
+  const nextSpaceId = createId("space");
+  const nextScopeIds = new Map(snapshot.scopes.map((scope) => [scope.id, createId("scope")]));
+  const nextEventIds = new Map(snapshot.events.map((event) => [event.id, createId("event")]));
+  const nextRecordIds = new Map(snapshot.records.map((record) => [record.id, createId("record")]));
+  const nextLinkIds = new Map(snapshot.links.map((link) => [link.id, createId("link")]));
+  const nextSpaceName = `${snapshot.space.name} (imported)`;
+
+  const remappedScopes = snapshot.scopes.map((scope) => ({
+    ...scope,
+    id: nextScopeIds.get(scope.id) ?? scope.id,
+    spaceId: nextSpaceId,
+    parentScopeId: scope.parentScopeId ? (nextScopeIds.get(scope.parentScopeId) ?? scope.parentScopeId) : undefined,
+  }));
+
+  const remappedEvents = snapshot.events.map((event) => ({
+    ...event,
+    id: nextEventIds.get(event.id) ?? event.id,
+    spaceId: nextSpaceId,
+    scope: {
+      ...event.scope,
+      id: nextScopeIds.get(event.scope.id) ?? event.scope.id,
+    },
+  }));
+
+  const remappedRecords = snapshot.records.map((record) => ({
+    ...record,
+    id: nextRecordIds.get(record.id) ?? record.id,
+    spaceId: nextSpaceId,
+    scope: {
+      ...record.scope,
+      id: nextScopeIds.get(record.scope.id) ?? record.scope.id,
+    },
+    sourceEventId: record.sourceEventId ? (nextEventIds.get(record.sourceEventId) ?? record.sourceEventId) : undefined,
+  }));
+
+  const remappedLinks = snapshot.links.map((link) => ({
+    ...link,
+    id: nextLinkIds.get(link.id) ?? link.id,
+    spaceId: nextSpaceId,
+    fromRecordId: nextRecordIds.get(link.fromRecordId) ?? link.fromRecordId,
+    toRecordId: nextRecordIds.get(link.toRecordId) ?? link.toRecordId,
+  }));
+
+  return {
+    ...snapshot,
+    space: {
+      ...snapshot.space,
+      id: nextSpaceId,
+      name: nextSpaceName,
+    },
+    scopes: remappedScopes,
+    events: remappedEvents,
+    records: remappedRecords,
+    links: remappedLinks,
   };
 }
 

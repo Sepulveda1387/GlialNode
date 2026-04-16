@@ -71,6 +71,18 @@ For a straightforward local restore:
 glialnode import --input ./exports/space.snapshot.json
 ```
 
+If the target space already exists and you want an explicit duplicate instead of a hard failure:
+
+```bash
+glialnode import --input ./exports/space.snapshot.json --collision rename
+```
+
+If you intentionally want to restore over the existing ids:
+
+```bash
+glialnode import --input ./exports/space.snapshot.json --collision overwrite
+```
+
 For a stricter restore that requires a signed snapshot from a trusted anchor:
 
 ```bash
@@ -82,6 +94,18 @@ If you want machine-readable output during restore:
 
 ```bash
 glialnode import --input ./exports/space.snapshot.json --trust-profile anchored --trust-signer ops-anchor --json
+```
+
+Collision policy rules:
+
+- default is `error`
+- use `overwrite` only when you mean to reuse the imported ids
+- use `rename` when you want a second imported copy to coexist safely
+
+Preset bundle import follows the same pattern:
+
+```bash
+glialnode preset bundle-import --input ./team-executor.bundle.json --collision rename
 ```
 
 ## Compatibility Rules

@@ -177,7 +177,7 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--directory <path>] [--name <name>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
+    "  glialnode preset bundle-import --input <path> [--directory <path>] [--name <name>] [--space-id <id>] [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
     "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--db <path>]",
     "  glialnode space list [--db <path>]",
@@ -202,7 +202,7 @@ export function usageText(): string {
     "  glialnode link add --space-id <id> --from-record-id <id> --to-record-id <id> --type <relation> [--db <path>]",
     "  glialnode link list --space-id <id> [--record-id <id>] [--limit 10] [--db <path>]",
     "  glialnode export --space-id <id> [--output <path>] [--origin <name>] [--signer <name>] [--signing-private-key <path>] [--signing-key <name>] [--preset-directory <path>] [--db <path>]",
-    "  glialnode import --input <path> [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--preset-directory <path>] [--json] [--db <path>]",
+    "  glialnode import --input <path> [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--preset-directory <path>] [--json] [--db <path>]",
     "  glialnode memory promote --record-id <id> [--db <path>]",
     "  glialnode memory archive --record-id <id> [--db <path>]",
     "  glialnode memory show --record-id <id> [--db <path>]",
@@ -1202,43 +1202,38 @@ async function runPresetCommand(
   if (action === "bundle-import") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const imported = parsePresetBundle(readTextFile(inputPath));
-    const name = parsed.flags.name ?? imported.preset.name;
+    const requestedName = parsed.flags.name ?? imported.preset.name;
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const collisionPolicy = parseImportCollisionPolicy(parsed.flags.collision);
     const space = parsed.flags["space-id"]
       ? await requireSpace(context.repository, parsed.flags["space-id"])
       : undefined;
     const provenanceSettings = space?.settings?.provenance;
+    const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile);
     const validation = validatePresetBundle(
       imported,
       resolvePresetTrustPolicy(
         mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
         directory,
-        parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
+        trustProfile,
       ),
-      parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
+      trustProfile,
     );
-
-    for (const preset of imported.history) {
-      writePresetHistoryFile(directory, {
-        ...preset,
-        name,
-      });
-    }
-
-    writePresetFiles(directory, {
-      ...imported.preset,
-      name,
+    const client = new GlialNodeClient({ repository: context.repository });
+    const stored = client.importPresetBundle(inputPath, {
+      directory,
+      name: requestedName,
+      trustPolicy: mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
+      trustProfile,
+      collisionPolicy,
     });
-    writePresetChannels(directory, {
-      ...imported.channels,
-      name,
-    });
+    const importedPresetName = stored.preset.name;
 
     if (space) {
       await ensureSpaceAuditScope(context.repository, space.id);
-      const event = createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${name}.`, {
+      const event = createPresetBundleAuditEvent(space.id, "bundle_imported", `Imported preset bundle ${importedPresetName}.`, {
         bundleName: imported.preset.name,
-        importedPresetName: name,
+        importedPresetName,
         trusted: validation.trusted,
         trustProfile: validation.report.trustProfile,
         signer: validation.metadata.signer,
@@ -1253,10 +1248,12 @@ async function runPresetCommand(
 
     if (wantsJson(parsed)) {
       return jsonResult({
-        importedPresetName: name,
+        importedPresetName,
+        requestedPresetName: requestedName,
         bundleName: imported.preset.name,
-        versions: imported.history.length,
-        defaultChannel: imported.channels.defaultChannel,
+        collisionPolicy,
+        versions: stored.history.length,
+        defaultChannel: stored.channels.defaultChannel,
         trusted: validation.trusted,
         validation,
       });
@@ -1265,9 +1262,11 @@ async function runPresetCommand(
     return {
       lines: [
         "Preset bundle imported.",
-        `name=${name}`,
-        `versions=${imported.history.length}`,
-        `defaultChannel=${imported.channels.defaultChannel ?? ""}`,
+        `name=${importedPresetName}`,
+        `requestedName=${requestedName}`,
+        `collisionPolicy=${collisionPolicy}`,
+        `versions=${stored.history.length}`,
+        `defaultChannel=${stored.channels.defaultChannel ?? ""}`,
         `trusted=${validation.trusted}`,
         ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
@@ -2152,6 +2151,7 @@ async function runImportCommand(
   const presetDirectory = resolvePresetDirectory(parsed.flags["preset-directory"]);
   const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"]);
   const trustPolicy = parsePresetTrustPolicy(parsed.flags);
+  const collisionPolicy = parseImportCollisionPolicy(parsed.flags.collision);
   const validation = await client.validateSnapshot(
     JSON.parse(readTextFile(inputPath)) as Parameters<typeof client.validateSnapshot>[0],
     trustPolicy,
@@ -2162,6 +2162,7 @@ async function runImportCommand(
     trustPolicy,
     trustProfile,
     directory: presetDirectory,
+    collisionPolicy,
   });
 
   if (parsed.flags.json === "true") {
@@ -2169,6 +2170,8 @@ async function runImportCommand(
       lines: [
         JSON.stringify({
           spaceId: imported.space.id,
+          spaceName: imported.space.name,
+          collisionPolicy,
           importedCounts: {
             scopes: imported.scopes.length,
             events: imported.events.length,
@@ -2185,6 +2188,8 @@ async function runImportCommand(
     lines: [
       "Import completed.",
       `spaceId=${imported.space.id}`,
+      `spaceName=${imported.space.name}`,
+      `collisionPolicy=${collisionPolicy}`,
       `snapshotFormatVersion=${imported.metadata.snapshotFormatVersion}`,
       `signed=${Boolean(imported.metadata.signature)}`,
       `trusted=${validation.trusted}`,
@@ -2250,6 +2255,20 @@ function parsePresetTrustPolicy(flags: Record<string, string>) {
     allowedSignerKeyIds: parseCsvFlag(flags["allow-key-id"]),
     trustedSignerNames: parseCsvFlag(flags["trust-signer"]),
   };
+}
+
+function parseImportCollisionPolicy(
+  value: string | undefined,
+): "error" | "overwrite" | "rename" {
+  const resolved = value ?? "error";
+  switch (resolved) {
+    case "error":
+    case "overwrite":
+    case "rename":
+      return resolved;
+    default:
+      throw new Error(`Invalid collision policy: ${value}`);
+  }
 }
 
 function parseTrustProfileFlag(value: string | undefined): "permissive" | "signed" | "anchored" {

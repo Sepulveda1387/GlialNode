@@ -1456,6 +1456,64 @@ test("CLI can export and import full preset bundles", async () => {
   }
 });
 
+test("CLI preset bundle import enforces explicit collision policy", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-bundle-collision-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["preset", "register", "--input", presetPath, "--name", "team-executor", "--directory", presetDirectory]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["preset", "bundle-export", "--name", "team-executor", "--output", bundlePath, "--directory", presetDirectory]),
+      { repository },
+    );
+
+    await assert.rejects(
+      () => runCommand(
+        parseArgs(["preset", "bundle-import", "--input", bundlePath, "--directory", presetDirectory]),
+        { repository },
+      ),
+      /Preset already exists: team-executor\. Use collisionPolicy=overwrite or collisionPolicy=rename\./,
+    );
+
+    const overwritten = await runCommand(
+      parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--collision", "overwrite",
+      ]),
+      { repository },
+    );
+    assert.match(overwritten.lines.join("\n"), /collisionPolicy=overwrite/);
+
+    const renamed = await runCommand(
+      parseArgs([
+        "preset", "bundle-import",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--collision", "rename",
+      ]),
+      { repository },
+    );
+    assert.match(renamed.lines.join("\n"), /name=team-executor imported/);
+    assert.match(renamed.lines.join("\n"), /collisionPolicy=rename/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI validates preset bundle metadata and rejects unsupported formats", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-bundle-validation-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -1976,6 +2034,84 @@ test("CLI commands import exported data and support record promotion and archivi
 
     assert.equal(importedSearch.lines[0], "records=1");
     assert.match(importedSearch.lines[1] ?? "", /Promotion candidate/);
+  } finally {
+    sourceRepository.close();
+    targetRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI snapshot import enforces explicit collision policy", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-import-collision-"));
+  const sourceDbPath = join(tempDirectory, "source.sqlite");
+  const targetDbPath = join(tempDirectory, "target.sqlite");
+  const exportPath = join(tempDirectory, "space-export.json");
+  const sourceRepository = createRepository(sourceDbPath);
+  const targetRepository = createRepository(targetDbPath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Collision Space"]),
+      { repository: sourceRepository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository: sourceRepository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Snapshot imports should not overwrite silently.",
+        "--summary", "Collision rule",
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(
+      parseArgs(["export", "--space-id", spaceId, "--output", exportPath]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(parseArgs(["import", "--input", exportPath]), {
+      repository: targetRepository,
+    });
+
+    await assert.rejects(
+      () => runCommand(parseArgs(["import", "--input", exportPath]), {
+        repository: targetRepository,
+      }),
+      /Space already exists: .*Use collisionPolicy=overwrite or collisionPolicy=rename\./,
+    );
+
+    const overwritten = await runCommand(
+      parseArgs(["import", "--input", exportPath, "--collision", "overwrite"]),
+      { repository: targetRepository },
+    );
+    assert.match(overwritten.lines.join("\n"), /collisionPolicy=overwrite/);
+
+    const renamed = await runCommand(
+      parseArgs(["import", "--input", exportPath, "--collision", "rename", "--json"]),
+      { repository: targetRepository },
+    );
+    const parsed = JSON.parse(renamed.lines.join("\n")) as {
+      spaceId: string;
+      spaceName: string;
+      collisionPolicy: string;
+    };
+    assert.equal(parsed.collisionPolicy, "rename");
+    assert.equal(parsed.spaceName, "Collision Space (imported)");
+    assert.notEqual(parsed.spaceId, spaceId);
   } finally {
     sourceRepository.close();
     targetRepository.close();

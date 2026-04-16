@@ -203,6 +203,13 @@ That means export/import can now:
 - reject unsupported snapshot formats
 - warn on runtime mismatches
 - optionally require signed or anchored imports for stricter operational workflows
+- require explicit collision policy when restoring into an already-imported target
+
+Current import collision behavior:
+
+- default `collision=error`
+- explicit `collision=overwrite` to reuse existing target ids
+- explicit `collision=rename` to import a second copy under new ids
 
 GlialNode also records applied SQLite migrations inside the database so bootstrap stays idempotent and the runtime can report the actual schema version that has been applied.
 

@@ -56,6 +56,7 @@ Symptoms:
 - `Unsupported space snapshot format`
 - `Space snapshot checksum verification failed`
 - `Space snapshot signature verification failed`
+- `Space already exists`
 
 What it means:
 
@@ -73,6 +74,24 @@ What to do:
 - re-export the snapshot from the source system
 - prefer signed exports for snapshots that move between machines or teams
 - use `glialnode import --json ...` to inspect validation output more easily
+- if the target already exists, choose an explicit collision policy:
+  - `--collision overwrite` to reuse ids
+  - `--collision rename` to import a second copy safely
+
+## Preset Bundle Import Collides With Existing Name
+
+Symptoms:
+
+- `Preset already exists`
+
+What it means:
+
+- preset bundle import is now safe-by-default and will not silently replace an existing registered preset
+
+What to do:
+
+- use `--collision overwrite` if you mean to replace the active preset files
+- use `--collision rename` if you want the imported bundle stored as a separate local preset
 
 ## Anchored Trust Validation Fails
 
