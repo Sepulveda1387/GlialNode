@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -136,7 +136,7 @@ test("SqliteMemoryRepository applies durable defaults for file-backed databases"
   try {
     const runtime = repository.getRuntimeSettings();
 
-    assert.equal(runtime.filename, databasePath);
+    assert.equal(realpathSync(runtime.filename ?? ""), realpathSync(databasePath));
     assert.equal(runtime.journalMode, "WAL");
     assert.equal(runtime.synchronous, "NORMAL");
     assert.equal(runtime.busyTimeoutMs, 5000);
