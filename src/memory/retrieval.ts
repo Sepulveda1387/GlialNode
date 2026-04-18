@@ -68,6 +68,98 @@ export function rankRecordsForRetrieval(
   );
 }
 
+export interface SemanticPrototypeRerankOptions {
+  enabled?: boolean;
+  semanticWeight?: number;
+  gate?: SemanticPrototypeGateOptions;
+}
+
+export interface SemanticPrototypeGateOptions {
+  requirePass?: boolean;
+  passed?: boolean;
+  reportId?: string;
+  reason?: string;
+}
+
+export interface SemanticPrototypeRerankResult {
+  records: MemoryRecord[];
+  applied: boolean;
+  semanticWeight: number;
+  queryTokenCount: number;
+  gate: SemanticPrototypeGateStatus;
+}
+
+export interface SemanticPrototypeGateStatus {
+  required: boolean;
+  allowed: boolean;
+  reportId?: string;
+  reason?: string;
+}
+
+export function rerankRecordsWithSemanticPrototype(
+  records: MemoryRecord[],
+  queryText: string | undefined,
+  options: SemanticPrototypeRerankOptions = {},
+): SemanticPrototypeRerankResult {
+  const enabled = options.enabled === true;
+  const gate = resolveSemanticPrototypeGate(options.gate);
+  if (!enabled || !queryText || records.length < 2) {
+    return {
+      records,
+      applied: false,
+      semanticWeight: clampSemanticWeight(options.semanticWeight),
+      queryTokenCount: tokenizeSemanticText(queryText ?? "").length,
+      gate,
+    };
+  }
+  if (!gate.allowed) {
+    return {
+      records,
+      applied: false,
+      semanticWeight: clampSemanticWeight(options.semanticWeight),
+      queryTokenCount: tokenizeSemanticText(queryText).length,
+      gate,
+    };
+  }
+
+  const semanticWeight = clampSemanticWeight(options.semanticWeight);
+  const lexicalWeight = 1 - semanticWeight;
+  const queryTokens = tokenizeSemanticText(queryText);
+  if (queryTokens.length === 0) {
+    return {
+      records,
+      applied: false,
+      semanticWeight,
+      queryTokenCount: 0,
+      gate,
+    };
+  }
+  const querySet = new Set(queryTokens);
+  const now = new Date();
+
+  const reranked = [...records].sort((left, right) => {
+    const leftLexical = scoreRecordForRetrieval(left, now, queryText);
+    const rightLexical = scoreRecordForRetrieval(right, now, queryText);
+    const leftSemantic = scoreSemanticPrototypeSimilarity(querySet, queryText, left);
+    const rightSemantic = scoreSemanticPrototypeSimilarity(querySet, queryText, right);
+    const leftCombined = (leftLexical * lexicalWeight) + (leftSemantic * semanticWeight);
+    const rightCombined = (rightLexical * lexicalWeight) + (rightSemantic * semanticWeight);
+
+    if (rightCombined !== leftCombined) {
+      return rightCombined - leftCombined;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  return {
+    records: reranked,
+    applied: true,
+    semanticWeight,
+    queryTokenCount: queryTokens.length,
+    gate,
+  };
+}
+
 export interface RecallPack {
   primary: MemoryRecord;
   supporting: MemoryRecord[];
@@ -137,6 +229,7 @@ export type MemoryBundleHint =
 
 export type MemoryBundleProfile = "balanced" | "planner" | "executor" | "reviewer";
 export type MemoryBundleConsumer = MemoryBundleProfile | "auto";
+export type MemoryBundleProvenanceMode = "auto" | "minimal" | "balanced" | "preserve";
 
 export interface MemoryBundleRoute {
   requestedConsumer: MemoryBundleConsumer;
@@ -148,6 +241,11 @@ export interface MemoryBundleRoute {
   warnings: MemoryBundleHint[];
 }
 
+export interface MemoryBundleRouteReasoning {
+  route: MemoryBundleRoute;
+  hints: MemoryBundleHint[];
+}
+
 export interface BuildMemoryBundleOptions {
   queryText?: string;
   profile?: MemoryBundleProfile;
@@ -156,6 +254,7 @@ export interface BuildMemoryBundleOptions {
   maxSupporting?: number;
   maxContentChars?: number;
   preferCompact?: boolean;
+  provenanceMode?: MemoryBundleProvenanceMode;
 }
 
 export interface BuildRecallPackOptions {
@@ -252,25 +351,41 @@ export function buildRecallTrace(pack: RecallPack, queryText?: string): RecallTr
 
 export function buildMemoryBundle(pack: RecallPack, options: BuildMemoryBundleOptions = {}): MemoryBundle {
   const routingPolicy = resolveRoutingPolicy(options.routingPolicy);
-  const hints = buildBundleHints(pack.primary, pack.supporting, pack.links, routingPolicy);
-  const route = resolveBundleRoute(pack.primary, pack.supporting, hints, options, routingPolicy);
+  const routeReasoning = resolveMemoryBundleRouteReasoning(pack.primary, pack.supporting, pack.links, options);
+  const route = routeReasoning.route;
   const resolved = resolveBundlePolicy(route.profileUsed, options);
-  const supporting = rankSupportingForBundle(pack.supporting, route.profileUsed).slice(0, Math.max(resolved.maxSupporting, 0));
+  const rankedSupporting = rankSupportingForBundle(pack.supporting, route.profileUsed, routeReasoning.hints);
+  const supporting = applyProvenanceShaping(
+    rankedSupporting,
+    route.profileUsed,
+    resolved.provenanceMode,
+    routeReasoning.hints,
+    resolved.maxSupporting,
+  );
   const relatedIds = new Set([pack.primary.id, ...supporting.map((record) => record.id)]);
+  const relatedLinks = pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId));
+  const trace = buildRecallTrace(
+    {
+      ...pack,
+      supporting,
+      links: relatedLinks,
+    },
+    resolved.queryText,
+  );
+  const provenanceCount = [pack.primary, ...supporting].filter((record) => isProvenanceRecord(record)).length;
+  const traceSummary = route.resolvedConsumer === "reviewer" && provenanceCount > 0
+    ? `${trace.summary} Reviewer hint: includes ${provenanceCount} provenance memory item(s).`
+    : trace.summary;
 
   return {
-    trace: buildRecallTrace(
-      {
-        ...pack,
-        supporting,
-        links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
-      },
-      resolved.queryText,
-    ),
+    trace: {
+      ...trace,
+      summary: traceSummary,
+    },
     primary: toBundleEntry(pack.primary, "primary", { ...resolved, routingPolicy }),
     supporting: supporting.map((record) => toBundleEntry(record, "supporting", { ...resolved, routingPolicy })),
-    links: pack.links.filter((link) => relatedIds.has(link.fromRecordId) && relatedIds.has(link.toRecordId)),
-    hints: buildBundleHints(pack.primary, supporting, pack.links),
+    links: relatedLinks,
+    hints: buildMemoryBundleHints(pack.primary, supporting, pack.links),
     route,
   };
 }
@@ -480,7 +595,7 @@ function buildEntryAnnotations(record: MemoryRecord, routingPolicy: RoutingPolic
   return [...annotations];
 }
 
-function buildBundleHints(
+export function buildMemoryBundleHints(
   primary: MemoryRecord,
   supporting: MemoryRecord[],
   links: MemoryRecordLink[],
@@ -514,6 +629,22 @@ function buildBundleHints(
   }
 
   return [...hints];
+}
+
+export function resolveMemoryBundleRouteReasoning(
+  primary: MemoryRecord,
+  supporting: MemoryRecord[],
+  links: MemoryRecordLink[],
+  options: BuildMemoryBundleOptions = {},
+): MemoryBundleRouteReasoning {
+  const routingPolicy = resolveRoutingPolicy(options.routingPolicy);
+  const hints = buildMemoryBundleHints(primary, supporting, links, routingPolicy);
+  const route = resolveBundleRoute(primary, supporting, hints, options, routingPolicy);
+
+  return {
+    route,
+    hints,
+  };
 }
 
 function resolveBundleRoute(
@@ -654,22 +785,30 @@ function extractRouteWarnings(hints: MemoryBundleHint[]): MemoryBundleHint[] {
 function rankSupportingForBundle(
   supporting: MemoryRecord[],
   profile: MemoryBundleProfile,
+  hints: MemoryBundleHint[],
 ): MemoryRecord[] {
   return [...supporting].sort(
-    (left, right) => scoreSupportingForProfile(right, profile) - scoreSupportingForProfile(left, profile),
+    (left, right) => scoreSupportingForProfile(right, profile, hints) - scoreSupportingForProfile(left, profile, hints),
   );
 }
 
-function scoreSupportingForProfile(record: MemoryRecord, profile: MemoryBundleProfile): number {
+function scoreSupportingForProfile(
+  record: MemoryRecord,
+  profile: MemoryBundleProfile,
+  hints: MemoryBundleHint[],
+): number {
   const annotations = new Set(buildEntryAnnotations(record));
   const baseScore = record.importance * 0.35 + record.confidence * 0.35 + record.freshness * 0.3;
+  const riskPresent = hasRiskHints(hints);
 
   if (profile === "executor") {
     return baseScore +
       (annotations.has("actionable") ? 0.35 : 0) +
       (annotations.has("high_confidence") ? 0.18 : 0) +
       (annotations.has("stale") ? -0.25 : 0) +
-      (annotations.has("contested") ? -0.2 : 0);
+      (annotations.has("contested") ? -0.2 : 0) +
+      (annotations.has("provenance") ? (riskPresent ? -0.05 : -0.28) : 0) +
+      (annotations.has("provenance") && record.kind === "summary" ? (riskPresent ? 0.05 : -0.12) : 0);
   }
 
   if (profile === "planner") {
@@ -684,7 +823,8 @@ function scoreSupportingForProfile(record: MemoryRecord, profile: MemoryBundlePr
       (annotations.has("contested") ? 0.3 : 0) +
       (annotations.has("stale") ? 0.24 : 0) +
       (annotations.has("superseded") ? 0.18 : 0) +
-      (annotations.has("provenance") ? 0.14 : 0) +
+      (annotations.has("provenance") ? 0.2 : 0) +
+      (annotations.has("provenance") && record.kind === "summary" ? 0.16 : 0) +
       (annotations.has("distilled") ? 0.08 : 0);
   }
 
@@ -712,6 +852,7 @@ function resolveBundlePolicy(
   maxSupporting: number;
   maxContentChars: number;
   preferCompact: boolean;
+  provenanceMode: MemoryBundleProvenanceMode;
 } {
   const defaultsByProfile: Record<MemoryBundleProfile, Omit<Required<Pick<BuildMemoryBundleOptions, "profile" | "maxSupporting" | "maxContentChars" | "preferCompact">>, "profile">> = {
     balanced: {
@@ -745,7 +886,55 @@ function resolveBundlePolicy(
     maxSupporting: options.maxSupporting ?? base.maxSupporting,
     maxContentChars: options.maxContentChars ?? base.maxContentChars,
     preferCompact: options.preferCompact ?? base.preferCompact,
+    provenanceMode: options.provenanceMode ?? "auto",
   };
+}
+
+function applyProvenanceShaping(
+  supporting: MemoryRecord[],
+  profile: MemoryBundleProfile,
+  mode: MemoryBundleProvenanceMode,
+  hints: MemoryBundleHint[],
+  maxSupporting: number,
+): MemoryRecord[] {
+  const effectiveMode = resolveProvenanceMode(mode, profile, hints);
+  if (effectiveMode === "preserve") {
+    return supporting.slice(0, Math.max(maxSupporting, 0));
+  }
+
+  const provenance = supporting.filter((record) => isProvenanceRecord(record));
+  const nonProvenance = supporting.filter((record) => !isProvenanceRecord(record));
+  const keepCount = effectiveMode === "minimal"
+    ? hasRiskHints(hints) && provenance.length > 0 ? 1 : 0
+    : hasRiskHints(hints) ? 2 : 1;
+
+  return [...nonProvenance, ...provenance.slice(0, keepCount)].slice(0, Math.max(maxSupporting, 0));
+}
+
+function resolveProvenanceMode(
+  mode: MemoryBundleProvenanceMode,
+  profile: MemoryBundleProfile,
+  hints: MemoryBundleHint[],
+): Exclude<MemoryBundleProvenanceMode, "auto"> {
+  if (mode !== "auto") {
+    return mode;
+  }
+
+  if (profile === "reviewer") {
+    return "preserve";
+  }
+
+  if (profile === "executor") {
+    return "minimal";
+  }
+
+  return "balanced";
+}
+
+function hasRiskHints(hints: MemoryBundleHint[]): boolean {
+  return hints.includes("contains_contested_memory")
+    || hints.includes("contains_stale_memory")
+    || hints.includes("contains_superseded_memory");
 }
 
 function scoreQueryAlignment(record: MemoryRecord, queryText: string): number {
@@ -818,6 +1007,113 @@ function scoreKindPreference(record: MemoryRecord, queryText?: string): number {
   }
 
   return 0;
+}
+
+function scoreSemanticPrototypeSimilarity(
+  queryTokens: Set<string>,
+  queryText: string,
+  record: MemoryRecord,
+): number {
+  if (queryTokens.size === 0) {
+    return 0;
+  }
+
+  const recordText = [record.summary, record.content, record.compactContent, ...record.tags]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const recordTokens = new Set(tokenizeSemanticText(recordText));
+  if (recordTokens.size === 0) {
+    return 0;
+  }
+
+  const tokenOverlap = overlapRatio(queryTokens, recordTokens);
+  const queryTrigrams = new Set(buildCharTrigrams(normalizeSemanticText(queryText)));
+  const recordTrigrams = new Set(buildCharTrigrams(normalizeSemanticText(recordText)));
+  const trigramOverlap = jaccardSimilarity(queryTrigrams, recordTrigrams);
+
+  return Math.min((tokenOverlap * 0.7) + (trigramOverlap * 0.3), 1);
+}
+
+function tokenizeSemanticText(value: string): string[] {
+  return normalizeSemanticText(value)
+    .split(/\s+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !QUERY_STOP_WORDS.has(token));
+}
+
+function normalizeSemanticText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildCharTrigrams(value: string): string[] {
+  if (value.length < 3) {
+    return value.length > 0 ? [value] : [];
+  }
+  const trigrams: string[] = [];
+  for (let index = 0; index <= value.length - 3; index += 1) {
+    trigrams.push(value.slice(index, index + 3));
+  }
+  return trigrams;
+}
+
+function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+  for (const value of left) {
+    if (right.has(value)) {
+      intersection += 1;
+    }
+  }
+  const union = left.size + right.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function clampSemanticWeight(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 0.35;
+  }
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= 1) {
+    return 1;
+  }
+  return value;
+}
+
+function resolveSemanticPrototypeGate(
+  gate: SemanticPrototypeGateOptions | undefined,
+): SemanticPrototypeGateStatus {
+  if (!gate || gate.requirePass !== true) {
+    return {
+      required: false,
+      allowed: true,
+      reportId: gate?.reportId,
+      reason: gate?.reason,
+    };
+  }
+
+  if (gate.passed !== true) {
+    return {
+      required: true,
+      allowed: false,
+      reportId: gate.reportId,
+      reason: gate.reason ?? "Semantic rerank blocked because evaluation gate did not pass.",
+    };
+  }
+
+  return {
+    required: true,
+    allowed: true,
+    reportId: gate.reportId,
+    reason: gate.reason,
+  };
 }
 
 function tokenize(value: string): string[] {

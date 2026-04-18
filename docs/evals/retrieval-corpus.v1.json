@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "route_executor_actionable",
+      "description": "Auto routing should choose executor for actionable memory.",
+      "queryText": "ship rollout checklist",
+      "bundleConsumer": "auto",
+      "records": [
+        { "summary": "Ship rollout checklist", "content": "Ship rollout checklist with validation.", "kind": "task", "tags": ["actionable"], "importance": 0.92, "confidence": 0.93, "freshness": 0.9 },
+        { "summary": "Release checklist policy", "content": "Checklist requires signed artifacts.", "kind": "fact", "tags": ["release"], "importance": 0.74, "confidence": 0.83, "freshness": 0.86 }
+      ],
+      "expect": {
+        "route": "executor",
+        "primarySummaryContains": "Ship rollout checklist",
+        "warningsExclude": ["contains_provenance_memory"]
+      }
+    },
+    {
+      "id": "route_reviewer_provenance",
+      "description": "Auto routing should choose reviewer when provenance memory is leading.",
+      "queryText": "bundle import audit",
+      "bundleConsumer": "auto",
+      "records": [
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.78, "confidence": 0.88, "freshness": 0.86 }
+      ],
+      "expect": {
+        "route": "reviewer",
+        "warningsInclude": ["contains_provenance_memory"],
+        "traceSummaryContains": "Reviewer hint: includes"
+      }
+    },
+    {
+      "id": "route_reviewer_stale",
+      "description": "Auto routing should choose reviewer for stale memory.",
+      "queryText": "legacy rollout guidance",
+      "bundleConsumer": "auto",
+      "records": [
+        { "summary": "Legacy rollout guidance", "content": "Legacy rollout guidance from previous quarter.", "kind": "fact", "tags": ["ops"], "importance": 0.71, "confidence": 0.42, "freshness": 0.2 }
+      ],
+      "expect": {
+        "route": "reviewer",
+        "warningsInclude": ["contains_stale_memory"]
+      }
+    },
+    {
+      "id": "route_planner_distilled",
+      "description": "Auto routing should choose planner for distilled summary memory.",
+      "queryText": "distilled retrieval plan",
+      "bundleConsumer": "auto",
+      "records": [
+        { "summary": "Distilled retrieval plan", "content": "Distilled plan for retrieval ranking.", "kind": "summary", "tags": ["distilled", "planning"], "importance": 0.83, "confidence": 0.86, "freshness": 0.84 }
+      ],
+      "expect": {
+        "route": "planner",
+        "warningsExclude": ["contains_provenance_memory"]
+      }
+    },
+    {
+      "id": "explicit_executor_override",
+      "description": "Explicit executor consumer should override auto reviewer route pressure.",
+      "queryText": "bundle import audit",
+      "bundleConsumer": "executor",
+      "records": [
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.78, "confidence": 0.88, "freshness": 0.86 }
+      ],
+      "expect": {
+        "route": "executor"
+      }
+    },
+    {
+      "id": "provenance_minimal_no_risk",
+      "description": "Executor auto provenance mode should keep supporting payload lean when no risk exists.",
+      "queryText": "rollout checklist",
+      "bundleConsumer": "executor",
+      "bundleProvenanceMode": "auto",
+      "bundleMaxSupporting": 4,
+      "records": [
+        { "summary": "Ship rollout checklist", "content": "Ship rollout checklist with validation.", "kind": "task", "tags": ["actionable"], "importance": 0.92, "confidence": 0.93, "freshness": 0.9 },
+        { "summary": "Checklist execution note", "content": "Execution note for rollout checklist.", "kind": "fact", "tags": ["execution"], "importance": 0.75, "confidence": 0.82, "freshness": 0.86 },
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.7, "confidence": 0.84, "freshness": 0.88 }
+      ],
+      "expect": {
+        "route": "executor",
+        "supportingProvenanceMax": 0
+      }
+    },
+    {
+      "id": "provenance_floor_on_risk",
+      "description": "Executor auto provenance mode should preserve a minimal provenance floor when risk is present.",
+      "queryText": "rollout checklist",
+      "bundleConsumer": "executor",
+      "bundleProvenanceMode": "auto",
+      "bundleMaxSupporting": 5,
+      "records": [
+        { "summary": "Ship rollout checklist", "content": "Ship rollout checklist with validation.", "kind": "task", "tags": ["actionable"], "importance": 0.92, "confidence": 0.93, "freshness": 0.9 },
+        { "summary": "Checklist execution note", "content": "Execution note for rollout checklist.", "kind": "fact", "tags": ["execution"], "importance": 0.75, "confidence": 0.82, "freshness": 0.86 },
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.7, "confidence": 0.84, "freshness": 0.88 },
+        { "summary": "Secondary rollout provenance audit", "content": "Secondary stale provenance note for rollout checklist.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.66, "confidence": 0.82, "freshness": 0.18 }
+      ],
+      "expect": {
+        "route": "executor",
+        "warningsInclude": ["contains_stale_memory"],
+        "totalProvenanceMin": 1,
+        "supportingProvenanceMax": 1
+      }
+    },
+    {
+      "id": "provenance_preserve_mode",
+      "description": "Preserve mode should retain provenance supporting context even for executor handoffs.",
+      "queryText": "rollout checklist",
+      "bundleConsumer": "executor",
+      "bundleProvenanceMode": "preserve",
+      "bundleMaxSupporting": 4,
+      "records": [
+        { "summary": "Ship rollout checklist", "content": "Ship rollout checklist with validation.", "kind": "task", "tags": ["actionable"], "importance": 0.92, "confidence": 0.93, "freshness": 0.9 },
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.7, "confidence": 0.84, "freshness": 0.88 }
+      ],
+      "expect": {
+        "route": "executor",
+        "totalProvenanceMin": 1
+      }
+    },
+    {
+      "id": "balanced_mode_keeps_some_provenance",
+      "description": "Balanced provenance mode should keep some provenance context.",
+      "queryText": "rollout checklist",
+      "bundleConsumer": "executor",
+      "bundleProvenanceMode": "balanced",
+      "bundleMaxSupporting": 4,
+      "records": [
+        { "summary": "Ship rollout checklist", "content": "Ship rollout checklist with validation.", "kind": "task", "tags": ["actionable"], "importance": 0.92, "confidence": 0.93, "freshness": 0.9 },
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.7, "confidence": 0.84, "freshness": 0.88 }
+      ],
+      "expect": {
+        "route": "executor",
+        "totalProvenanceMin": 1
+      }
+    },
+    {
+      "id": "explicit_reviewer_keeps_provenance",
+      "description": "Explicit reviewer consumer should retain provenance in review-focused bundles.",
+      "queryText": "bundle import audit",
+      "bundleConsumer": "reviewer",
+      "bundleProvenanceMode": "auto",
+      "bundleMaxSupporting": 5,
+      "records": [
+        { "summary": "Bundle import audit", "content": "Bundle import audit for trust review.", "kind": "summary", "tags": ["provenance", "bundle", "audit"], "importance": 0.78, "confidence": 0.88, "freshness": 0.86 },
+        { "summary": "Trust review checklist", "content": "Checklist for trust review before apply.", "kind": "fact", "tags": ["review"], "importance": 0.74, "confidence": 0.83, "freshness": 0.81 }
+      ],
+      "expect": {
+        "route": "reviewer",
+        "totalProvenanceMin": 1,
+        "traceSummaryContains": "Reviewer hint: includes"
+      }
+    }
+  ]
+}

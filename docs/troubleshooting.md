@@ -2,6 +2,17 @@
 
 This guide collects the most common GlialNode operational failures and the fastest way to diagnose them.
 
+## Failure Matrix
+
+| Failure | Typical Signal | First Command | Recovery Direction |
+|---|---|---|---|
+| Lock contention | `database is locked` / `SQLITE_BUSY` | `glialnode status` | Confirm write mode, reduce concurrent writers, serialize writes locally |
+| Trust validation failure | `trust validation failed` | `glialnode preset trust-list` | Verify trust profile, signer allowlists, and key ids |
+| Trust-pack resolution failure | `Unknown trust policy pack` / `Circular trust policy pack inheritance` | `glialnode preset trust-pack-list --json` | Verify pack names, inheritance chain, and preset directory |
+| Revoked signer path | `Trusted signer is revoked` | `glialnode preset trust-show --name <anchor>` | Rotate/replace anchor and re-export artifacts as needed |
+| Query parse edge case | punctuation-heavy query misses expected records | `glialnode memory search --json ...` | Normalize query text, inspect trace/bundle behavior, test literal phrases |
+| Snapshot import failure | format/checksum/signature/collision errors | `glialnode import --json ...` | Re-export clean artifact, align trust settings, use explicit collision policy |
+
 ## Start With Doctor
 
 Before chasing a specific failure, run:
@@ -118,6 +129,30 @@ What to do:
 - do not weaken trust policy just to force an import unless that is a conscious operational decision
 - inspect matched vs revoked trusted signer names in validation output to confirm which anchor actually satisfied policy
 
+## Trust Pack Resolution Fails
+
+Symptoms:
+
+- `Unknown trust policy pack`
+- `Circular trust policy pack inheritance`
+- trust behavior differs unexpectedly from your intended baseline
+
+What it means:
+
+- the selected pack name is missing, the wrong preset directory is in use, or an inheritance chain is invalid
+
+What to check:
+
+- list packs with `glialnode preset trust-pack-list --json`
+- inspect resolved pack policy with `glialnode preset trust-pack-show --name <pack> --json`
+- confirm `GLIALNODE_TRUST_POLICY_PACK` (if set) matches an existing pack in the active preset directory
+
+What to do:
+
+- correct pack names or inheritance references
+- avoid circular pack inheritance
+- set `--trust-pack` explicitly in critical automation to avoid accidental environment drift
+
 ## Signer Or Key Rotation Confusion
 
 Symptoms:
@@ -163,6 +198,28 @@ What to do:
 - search with a more literal phrase first
 - include status filters if you expect non-active memory
 - use reviewer-oriented bundles when you want more provenance and supporting context
+
+## Query Parse Or Punctuation Edge Cases
+
+Symptoms:
+
+- quoted or punctuation-heavy queries return no records unexpectedly
+- tokens with dashes/colons/symbols behave differently than plain words
+
+What it means:
+
+- GlialNode sanitizes FTS input for safety and parser stability
+- literal phrase matching can still narrow results when tokenization differs from expectation
+
+What to check:
+
+- compare a complex query with a shorter literal token
+- inspect `memory trace`/`memory bundle` to see which records were considered primary vs supporting
+
+What to do:
+
+- prefer short literal terms first, then widen incrementally
+- if needed, run `memory search --json` and inspect returned records/status filters directly
 
 ## Key Material Safety Questions
 

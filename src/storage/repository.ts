@@ -15,6 +15,31 @@ export interface SpaceReport {
   recordsByTier: Record<string, number>;
   recordsByStatus: Record<string, number>;
   recordsByKind: Record<string, number>;
+  eventCountsByType: Record<string, number>;
+  provenanceSummaryCount: number;
+  maintenance: {
+    latestRunAt?: string;
+    latestCompactionAt?: string;
+    latestRetentionAt?: string;
+    latestDecayAt?: string;
+    latestReinforcementAt?: string;
+    latestCompactionDelta?: {
+      promoted: number;
+      archived: number;
+      refreshed: number;
+      distilled: number;
+      superseded: number;
+    };
+    latestRetentionDelta?: {
+      expired: number;
+    };
+    latestDecayDelta?: {
+      decayed: number;
+    };
+    latestReinforcementDelta?: {
+      reinforced: number;
+    };
+  };
   recentLifecycleEvents: MemoryEvent[];
   recentProvenanceEvents: MemoryEvent[];
 }

@@ -8,6 +8,7 @@ import type {
   MemorySpace,
   ScopeRecord,
 } from "../../core/types.js";
+import { buildSafeFtsQuery } from "../../memory/query.js";
 import { rankRecordsForRetrieval } from "../../memory/retrieval.js";
 import type { MemoryRepository, SpaceReport } from "../repository.js";
 import {
@@ -74,6 +75,27 @@ interface MemoryRecordLinkRow {
   relation_type: MemoryRecordLink["type"];
   created_at: string;
 }
+
+interface SummaryRow {
+  content: string;
+  created_at: string;
+}
+
+const COMPACTION_EVENT_TYPES: MemoryEvent["type"][] = ["memory_promoted", "memory_archived", "memory_superseded"];
+const RETENTION_EVENT_TYPES: MemoryEvent["type"][] = ["memory_expired"];
+const DECAY_EVENT_TYPES: MemoryEvent["type"][] = ["memory_decayed"];
+const REINFORCEMENT_EVENT_TYPES: MemoryEvent["type"][] = ["memory_reinforced"];
+const MAINTENANCE_EVENT_TYPES: MemoryEvent["type"][] = [
+  ...COMPACTION_EVENT_TYPES,
+  ...RETENTION_EVENT_TYPES,
+  ...DECAY_EVENT_TYPES,
+  ...REINFORCEMENT_EVENT_TYPES,
+];
+const LIFECYCLE_EVENT_TYPES: MemoryEvent["type"][] = [
+  ...MAINTENANCE_EVENT_TYPES,
+  "memory_conflicted",
+];
+const PROVENANCE_EVENT_TYPES: MemoryEvent["type"][] = ["bundle_reviewed", "bundle_imported"];
 
 export class SqliteMemoryRepository implements MemoryRepository {
   readonly db: DatabaseSync;
@@ -495,15 +517,127 @@ export class SqliteMemoryRepository implements MemoryRepository {
         .all(spaceId) as Array<{ label: string; count: number }>,
     );
 
+    const eventCountsByType = mapCountRows(
+      this.db
+        .prepare(
+          `
+          SELECT event_type AS label, COUNT(*) AS count
+          FROM memory_events
+          WHERE space_id = ?
+          GROUP BY event_type
+          `,
+        )
+        .all(spaceId) as Array<{ label: string; count: number }>,
+    );
+
+    const provenanceSummaryCount = getCount(
+      this.db
+        .prepare(
+          `
+          SELECT COUNT(*) AS count
+          FROM memory_records
+          WHERE space_id = ?
+            AND kind = 'summary'
+            AND tags_json LIKE '%"provenance"%'
+          `,
+        )
+        .get(spaceId),
+    );
+
+    const maintenanceRow = this.db
+      .prepare(
+        `
+        SELECT
+          MAX(CASE WHEN event_type IN (${placeholders(MAINTENANCE_EVENT_TYPES.length)}) THEN created_at END) AS latest_run_at,
+          MAX(CASE WHEN event_type IN (${placeholders(COMPACTION_EVENT_TYPES.length)}) THEN created_at END) AS latest_compaction_at,
+          MAX(CASE WHEN event_type IN (${placeholders(RETENTION_EVENT_TYPES.length)}) THEN created_at END) AS latest_retention_at,
+          MAX(CASE WHEN event_type IN (${placeholders(DECAY_EVENT_TYPES.length)}) THEN created_at END) AS latest_decay_at,
+          MAX(CASE WHEN event_type IN (${placeholders(REINFORCEMENT_EVENT_TYPES.length)}) THEN created_at END) AS latest_reinforcement_at
+        FROM memory_events
+        WHERE space_id = ?
+        `,
+      )
+      .get(
+        ...MAINTENANCE_EVENT_TYPES,
+        ...COMPACTION_EVENT_TYPES,
+        ...RETENTION_EVENT_TYPES,
+        ...DECAY_EVENT_TYPES,
+        ...REINFORCEMENT_EVENT_TYPES,
+        spaceId,
+      ) as {
+      latest_run_at: string | null;
+      latest_compaction_at: string | null;
+      latest_retention_at: string | null;
+      latest_decay_at: string | null;
+      latest_reinforcement_at: string | null;
+    };
+
+    const latestCompactionSummary = this.db
+      .prepare(
+        `
+        SELECT content, created_at
+        FROM memory_records
+        WHERE space_id = ?
+          AND kind = 'summary'
+          AND tags_json LIKE '%"compaction"%'
+          AND tags_json LIKE '%"system"%'
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+      )
+      .get(spaceId) as SummaryRow | undefined;
+    const latestRetentionSummary = this.db
+      .prepare(
+        `
+        SELECT content, created_at
+        FROM memory_records
+        WHERE space_id = ?
+          AND kind = 'summary'
+          AND tags_json LIKE '%"retention"%'
+          AND tags_json LIKE '%"system"%'
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+      )
+      .get(spaceId) as SummaryRow | undefined;
+    const latestDecaySummary = this.db
+      .prepare(
+        `
+        SELECT content, created_at
+        FROM memory_records
+        WHERE space_id = ?
+          AND kind = 'summary'
+          AND tags_json LIKE '%"decay"%'
+          AND tags_json LIKE '%"system"%'
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+      )
+      .get(spaceId) as SummaryRow | undefined;
+    const latestReinforcementSummary = this.db
+      .prepare(
+        `
+        SELECT content, created_at
+        FROM memory_records
+        WHERE space_id = ?
+          AND kind = 'summary'
+          AND tags_json LIKE '%"reinforcement"%'
+          AND tags_json LIKE '%"system"%'
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+      )
+      .get(spaceId) as SummaryRow | undefined;
+
     const recentLifecycleEvents = await this.listEventsByType(
       spaceId,
-      ["memory_promoted", "memory_archived", "memory_expired", "memory_superseded", "memory_conflicted", "memory_decayed", "memory_reinforced"],
+      LIFECYCLE_EVENT_TYPES,
       recentEventLimit,
     );
 
     const recentProvenanceEvents = await this.listEventsByType(
       spaceId,
-      ["bundle_reviewed", "bundle_imported"],
+      PROVENANCE_EVENT_TYPES,
       recentEventLimit,
     );
 
@@ -515,6 +649,21 @@ export class SqliteMemoryRepository implements MemoryRepository {
       recordsByTier,
       recordsByStatus,
       recordsByKind,
+      eventCountsByType,
+      provenanceSummaryCount,
+      maintenance: {
+        latestRunAt: maintenanceRow.latest_run_at ?? undefined,
+        latestCompactionAt: maintenanceRow.latest_compaction_at ?? undefined,
+        latestRetentionAt: maintenanceRow.latest_retention_at ?? undefined,
+        latestDecayAt: maintenanceRow.latest_decay_at ?? undefined,
+        latestReinforcementAt: maintenanceRow.latest_reinforcement_at ?? undefined,
+        latestCompactionDelta: latestCompactionSummary ? parseCompactionSummary(latestCompactionSummary.content) : undefined,
+        latestRetentionDelta: latestRetentionSummary ? parseRetentionSummary(latestRetentionSummary.content) : undefined,
+        latestDecayDelta: latestDecaySummary ? parseDecaySummary(latestDecaySummary.content) : undefined,
+        latestReinforcementDelta: latestReinforcementSummary
+          ? parseReinforcementSummary(latestReinforcementSummary.content)
+          : undefined,
+      },
       recentLifecycleEvents,
       recentProvenanceEvents,
     };
@@ -665,31 +814,6 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
 }
 
-function buildSafeFtsQuery(input: string | undefined): string | undefined {
-  const trimmed = input?.trim();
-
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const tokenPattern = /"([^"]+)"|(\S+)/g;
-  const tokens: string[] = [];
-
-  for (const match of trimmed.matchAll(tokenPattern)) {
-    const value = (match[1] ?? match[2] ?? "").trim();
-
-    if (!value) {
-      continue;
-    }
-
-    // Treat each token as a literal phrase to avoid raw FTS operator injection
-    // or parser errors from punctuation-heavy user input.
-    tokens.push(`"${value.replace(/"/g, "\"\"")}"`);
-  }
-
-  return tokens.length ? tokens.join(" AND ") : undefined;
-}
-
 function getCount(row: unknown): number {
   return Number((row as { count: number }).count ?? 0);
 }
@@ -759,4 +883,48 @@ function mapMemoryRecordLinkRow(row: MemoryRecordLinkRow): MemoryRecordLink {
     type: row.relation_type,
     createdAt: row.created_at,
   };
+}
+
+function parseCompactionSummary(content: string): {
+  promoted: number;
+  archived: number;
+  refreshed: number;
+  distilled: number;
+  superseded: number;
+} {
+  return {
+    promoted: parseCountInSummary(content, /promoted\s+(\d+)/i),
+    archived: parseCountInSummary(content, /archived\s+(\d+)/i),
+    refreshed: parseCountInSummary(content, /refreshed\s+(\d+)/i),
+    distilled: parseCountInSummary(content, /distilled\s+(\d+)/i),
+    superseded: parseCountInSummary(content, /superseded\s+(\d+)/i),
+  };
+}
+
+function parseRetentionSummary(content: string): { expired: number } {
+  return {
+    expired: parseCountInSummary(content, /expired\s+(\d+)/i),
+  };
+}
+
+function parseDecaySummary(content: string): { decayed: number } {
+  return {
+    decayed: parseCountInSummary(content, /lowered trust on\s+(\d+)/i),
+  };
+}
+
+function parseReinforcementSummary(content: string): { reinforced: number } {
+  return {
+    reinforced: parseCountInSummary(content, /updated\s+(\d+)/i),
+  };
+}
+
+function parseCountInSummary(content: string, pattern: RegExp): number {
+  const match = pattern.exec(content);
+  if (!match?.[1]) {
+    return 0;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
 }

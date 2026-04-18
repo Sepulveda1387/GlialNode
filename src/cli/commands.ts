@@ -1,9 +1,20 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
-import { GlialNodeClient } from "../client/glialnode-client.js";
+import { GlialNodeClient, convertSpaceGraphToCytoscape, convertSpaceGraphToDot, type SpaceGraphExportFormat } from "../client/glialnode-client.js";
 import { createId } from "../core/ids.js";
+import {
+  defaultCompactionPolicy,
+  defaultConfig,
+  defaultConflictPolicy,
+  defaultDecayPolicy,
+  defaultReinforcementPolicy,
+  defaultRetentionPolicy,
+  defaultRoutingPolicy,
+} from "../core/config.js";
 import {
   diffSpacePresetDefinitions,
   getSpacePreset,
@@ -58,7 +69,8 @@ import {
   planReinforcement,
   summarizeReinforcementPlan,
 } from "../memory/reinforcement.js";
-import { buildMemoryBundle, buildRecallPack, buildRecallTrace } from "../memory/retrieval.js";
+import { buildMemoryBundle, buildRecallPack, buildRecallTrace, rerankRecordsWithSemanticPrototype } from "../memory/retrieval.js";
+import { evaluateSemanticPrototypeCorpus, type SemanticEvalCorpus, type SemanticEvalReport } from "../memory/semantic-eval.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -69,7 +81,8 @@ import {
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import { SqliteMemoryRepository, sqliteAdapter } from "../storage/index.js";
-import type { MemoryRepository } from "../storage/repository.js";
+import type { MemoryRepository, SpaceReport } from "../storage/repository.js";
+import type { SqliteWriteMode } from "../storage/sqlite/connection.js";
 import type { ParsedArgs } from "./args.js";
 
 export interface CommandResult {
@@ -86,11 +99,20 @@ export interface CommandContext {
 const PRESET_BUNDLE_FORMAT_VERSION = 1;
 const GLIALNODE_VERSION = "0.1.0";
 const GLIALNODE_NODE_ENGINE = ">=24";
+const CLI_JSON_CONTRACT_VERSION = "1.0.0";
 
-export function createRepository(databasePath: string): SqliteMemoryRepository {
+export function createRepository(
+  databasePath: string,
+  options: { writeMode?: SqliteWriteMode } = {},
+): SqliteMemoryRepository {
   const resolvedPath = resolve(databasePath);
   mkdirSync(dirname(resolvedPath), { recursive: true });
-  return new SqliteMemoryRepository({ filename: resolvedPath });
+  return new SqliteMemoryRepository({
+    filename: resolvedPath,
+    connection: {
+      writeMode: options.writeMode,
+    },
+  });
 }
 
 export async function runCommand(parsed: ParsedArgs, context: CommandContext): Promise<CommandResult> {
@@ -147,6 +169,7 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
 export function usageText(): string {
   return [
     "Usage:",
+    "  (global) --db <path> --write-mode single_writer|serialized_local --json [--json-envelope]",
     "  glialnode status",
     "  glialnode doctor [--preset-directory <path>] [--db <path>] [--json]",
     "  glialnode preset list",
@@ -164,6 +187,9 @@ export function usageText(): string {
     "  glialnode preset trust-register --input <path> --name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
     "  glialnode preset trust-list [--directory <path>]",
     "  glialnode preset trust-show --name <name> [--directory <path>]",
+    "  glialnode preset trust-pack-register --name <name> [--description <text>] [--inherits <name>] [--base-profile permissive|signed|anchored] [--require-signer true|false] [--require-signature true|false] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--directory <path>] [--overwrite]",
+    "  glialnode preset trust-pack-list [--directory <path>] [--json]",
+    "  glialnode preset trust-pack-show --name <name> [--directory <path>] [--json]",
     "  glialnode preset trust-revoke --name <name> [--replaced-by <name>] [--directory <path>]",
     "  glialnode preset trust-rotate --name <name> --input <path> --next-name <name> [--signer <text>] [--source <text>] [--directory <path>] [--overwrite]",
     "  glialnode preset trust-profile-list",
@@ -177,21 +203,29 @@ export function usageText(): string {
     "  glialnode preset channel-import --input <path> [--name <name>] [--directory <path>]",
     "  glialnode preset bundle-export --name <name> --output <path> [--directory <path>]",
     "    [--origin <text>] [--signer <text>] [--signing-key <name>] [--signing-private-key <path>] [--signing-public-key <path>]",
-    "  glialnode preset bundle-import --input <path> [--directory <path>] [--name <name>] [--space-id <id>] [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
-    "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--json]",
+    "  glialnode preset bundle-import --input <path> [--directory <path>] [--name <name>] [--space-id <id>] [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--trust-pack <name>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--trust-explain] [--json]",
+    "  glialnode preset bundle-show --input <path> [--directory <path>] [--space-id <id>] [--trust-profile permissive|signed|anchored] [--trust-pack <name>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--trust-explain] [--json]",
     "  glialnode space create --name <name> [--description <text>] [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--db <path>]",
     "  glialnode space list [--db <path>]",
     "  glialnode space show --id <id> [--db <path>] [--json]",
     "  glialnode space report --id <id> [--recent-events 10] [--db <path>] [--json]",
+    "  glialnode space graph-export --id <id> [--format native|cytoscape|dot] [--include-scopes true|false] [--include-events true|false] [--output <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-export --id <id> --output <path> [--recent-events 20] [--include-scopes true|false] [--include-events true|false] [--include-trust-registry true|false] [--query-text <text>] [--query-scope-id <id>] [--query-tier <tier>] [--query-kind <kind>] [--query-visibility <visibility>] [--query-status <status>] [--query-limit <n>] [--query-support-limit <n>] [--query-bundle-consumer auto|balanced|planner|executor|reviewer] [--query-bundle-provenance-mode auto|minimal|balanced|preserve] [--directory <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-snapshot --id <id> --output <path> [--recent-events 20] [--include-scopes true|false] [--include-events true|false] [--include-trust-registry true|false] [--query-text <text>] [--query-scope-id <id>] [--query-tier <tier>] [--query-kind <kind>] [--query-visibility <visibility>] [--query-status <status>] [--query-limit <n>] [--query-support-limit <n>] [--query-bundle-consumer auto|balanced|planner|executor|reviewer] [--query-bundle-provenance-mode auto|minimal|balanced|preserve] [--directory <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-index-export --output <path> [--recent-events 10] [--include-graph-counts true|false] [--include-trust-registry true|false] [--directory <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-index-snapshot --output <path> [--recent-events 10] [--include-graph-counts true|false] [--include-trust-registry true|false] [--directory <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-pack-export --output-dir <path> [--recent-events 20] [--include-scopes true|false] [--include-events true|false] [--include-graph-counts true|false] [--include-trust-registry true|false] [--capture-screenshots true|false] [--screenshot-width <n>] [--screenshot-height <n>] [--query-text <text>] [--query-scope-id <id>] [--query-tier <tier>] [--query-kind <kind>] [--query-visibility <visibility>] [--query-status <status>] [--query-limit <n>] [--query-support-limit <n>] [--query-bundle-consumer auto|balanced|planner|executor|reviewer] [--query-bundle-provenance-mode auto|minimal|balanced|preserve] [--directory <path>] [--db <path>] [--json]",
+    "  glialnode space inspect-pack-serve --input-dir <path> --duration-ms <n> [--host <host>] [--port <n>] [--probe-path <path>] [--db <path>] [--json]",
     "  glialnode space maintain --id <id> [--apply] [--db <path>]",
     "  glialnode space configure --id <id> [--preset balanced-default|execution-first|conservative-review|planning-heavy] [--preset-local <name>] [--preset-channel <name>] [--preset-directory <path>] [--preset-file <path>] [--settings <json>] [--provenance-trust-profile permissive|signed|anchored] [--provenance-trust-signer <a,b>] [--short-promote-importance-min 0.95] [--short-promote-confidence-min 0.95] [--mid-promote-importance-min 0.9] [--mid-promote-confidence-min 0.85] [--mid-promote-freshness-min 0.6] [--archive-importance-max 0.3] [--archive-confidence-max 0.4] [--archive-freshness-max 0.3] [--distill-min-cluster-size 2] [--distill-min-token-overlap 2] [--distill-supersede-sources true] [--distill-supersede-min-confidence 0.8] [--conflict-enabled true] [--conflict-min-token-overlap 2] [--conflict-confidence-penalty 0.15] [--decay-enabled true] [--decay-min-age-days 14] [--decay-confidence-per-day 0.01] [--decay-freshness-per-day 0.02] [--decay-min-confidence 0.2] [--decay-min-freshness 0.15] [--routing-prefer-reviewer-on-contested true] [--routing-prefer-reviewer-on-stale true] [--routing-prefer-reviewer-on-provenance true] [--routing-stale-threshold 0.35] [--routing-prefer-executor-on-actionable true] [--routing-prefer-planner-on-distilled true] [--reinforcement-enabled true] [--reinforcement-confidence-boost 0.08] [--reinforcement-freshness-boost 0.12] [--reinforcement-max-confidence 1] [--reinforcement-max-freshness 1] [--retention-short-days 7] [--retention-mid-days 30] [--retention-long-days 90] [--db <path>]",
     "  glialnode scope add --space-id <id> --type <type> [--label <text>] [--external-id <id>] [--parent-scope-id <id>] [--db <path>]",
     "  glialnode scope list --space-id <id> [--db <path>]",
     "  glialnode memory add --space-id <id> --scope-id <id> --scope-type <type> --tier <tier> --kind <kind> --content <text> [--summary <text>] [--compact-content <text>] [--tags a,b] [--visibility <visibility>] [--importance 0.7] [--confidence 0.8] [--freshness 0.6] [--db <path>]",
-    "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
-    "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
-    "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
-    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--bundle-profile balanced|planner|executor|reviewer] [--bundle-consumer auto|balanced|planner|executor|reviewer] [--bundle-max-supporting 3] [--bundle-max-content-chars 240] [--bundle-prefer-compact true] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory search --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 10] [--semantic-prototype true|false] [--semantic-weight 0.35] [--semantic-gate-report <path>] [--semantic-gate-require-pass true|false] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory recall --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--semantic-prototype true|false] [--semantic-weight 0.35] [--semantic-gate-report <path>] [--semantic-gate-require-pass true|false] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory trace --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--semantic-prototype true|false] [--semantic-weight 0.35] [--semantic-gate-report <path>] [--semantic-gate-require-pass true|false] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory bundle --space-id <id> [--text <query>] [--scope-id <id>] [--tier <tier>] [--kind <kind>] [--visibility <visibility>] [--status <status>] [--limit 3] [--support-limit 3] [--semantic-prototype true|false] [--semantic-weight 0.35] [--semantic-gate-report <path>] [--semantic-gate-require-pass true|false] [--bundle-profile balanced|planner|executor|reviewer] [--bundle-consumer auto|balanced|planner|executor|reviewer] [--bundle-provenance-mode auto|minimal|balanced|preserve] [--bundle-max-supporting 3] [--bundle-max-content-chars 240] [--bundle-prefer-compact true] [--reinforce] [--reinforce-limit 3] [--reinforce-strength 1] [--reinforce-reason <text>] [--db <path>] [--json]",
+    "  glialnode memory semantic-eval --corpus <path> [--semantic-weight 0.35] [--min-delta-top1 0] [--output <path>] [--db <path>] [--json]",
     "  glialnode memory list --space-id <id> [--limit 10] [--db <path>]",
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
@@ -202,7 +236,7 @@ export function usageText(): string {
     "  glialnode link add --space-id <id> --from-record-id <id> --to-record-id <id> --type <relation> [--db <path>]",
     "  glialnode link list --space-id <id> [--record-id <id>] [--limit 10] [--db <path>]",
     "  glialnode export --space-id <id> [--output <path>] [--origin <name>] [--signer <name>] [--signing-private-key <path>] [--signing-key <name>] [--preset-directory <path>] [--db <path>]",
-    "  glialnode import --input <path> [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--preset-directory <path>] [--json] [--db <path>]",
+    "  glialnode import --input <path> [--collision error|overwrite|rename] [--trust-profile permissive|signed|anchored] [--trust-pack <name>] [--require-signer] [--require-signature] [--allow-origin <a,b>] [--allow-signer <a,b>] [--allow-key-id <a,b>] [--trust-signer <a,b>] [--preset-directory <path>] [--preview] [--json] [--db <path>]",
     "  glialnode memory promote --record-id <id> [--db <path>]",
     "  glialnode memory archive --record-id <id> [--db <path>]",
     "  glialnode memory show --record-id <id> [--db <path>]",
@@ -213,9 +247,27 @@ function wantsJson(parsed: ParsedArgs): boolean {
   return parsed.flags.json === "true";
 }
 
-function jsonResult(payload: unknown): CommandResult {
+function wantsJsonEnvelope(parsed: ParsedArgs): boolean {
+  return parsed.flags["json-envelope"] === "true";
+}
+
+function resolveCommandPath(parsed: ParsedArgs): string {
+  const [resource = "status", action] = parsed.positional;
+  return action ? `${resource} ${action}` : resource;
+}
+
+function jsonResult(parsed: ParsedArgs, payload: unknown): CommandResult {
+  const serializedPayload = wantsJsonEnvelope(parsed)
+    ? {
+        schemaVersion: CLI_JSON_CONTRACT_VERSION,
+        command: resolveCommandPath(parsed),
+        generatedAt: new Date().toISOString(),
+        data: payload,
+      }
+    : payload;
+
   return {
-    lines: JSON.stringify(payload, null, 2).split(/\r?\n/),
+    lines: JSON.stringify(serializedPayload, null, 2).split(/\r?\n/),
   };
 }
 
@@ -223,7 +275,7 @@ async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Pr
   const payload = await buildStatusPayload(context);
 
   if (wantsJson(parsed)) {
-    return jsonResult(payload);
+    return jsonResult(parsed, payload);
   }
 
   return {
@@ -236,6 +288,12 @@ async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Pr
       `schemaVersion=${payload.schema.version}`,
       `schemaLatest=${payload.schema.latest}`,
       `schemaUpToDate=${payload.schema.upToDate ? "yes" : "no"}`,
+      `maintenanceSpaces=${payload.maintenance.spacesWithMaintenance}`,
+      `maintenanceLatestRunAt=${payload.maintenance.latestRunAt ?? ""}`,
+      `maintenanceCompactionDeltas=${formatCounts(payload.maintenance.compactionDeltas)}`,
+      `maintenanceRetentionExpired=${payload.maintenance.retentionExpired}`,
+      `maintenanceDecayDecayed=${payload.maintenance.decayDecayed}`,
+      `maintenanceReinforcementUpdated=${payload.maintenance.reinforcementUpdated}`,
       `writeMode=${payload.runtime.writeMode}`,
       `journalMode=${payload.runtime.journalMode.toLowerCase()}`,
       `synchronous=${payload.runtime.synchronous.toLowerCase()}`,
@@ -251,6 +309,10 @@ async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Pr
 async function buildStatusPayload(context: CommandContext) {
   const spaces = await context.repository.listSpaces();
   const runtime = context.repository.getRuntimeSettings();
+  const maintenanceReports = await Promise.all(
+    spaces.map((space) => context.repository.getSpaceReport(space.id, 1)),
+  );
+  const maintenance = summarizeMaintenanceAcrossSpaces(maintenanceReports);
 
   return {
     status: "ready" as const,
@@ -266,6 +328,7 @@ async function buildStatusPayload(context: CommandContext) {
       latest: sqliteAdapter.schemaVersion,
       upToDate: context.repository.getSchemaVersion() === sqliteAdapter.schemaVersion,
     },
+    maintenance,
     runtime: {
       writeMode: runtime.writeMode,
       journalMode: runtime.journalMode,
@@ -283,7 +346,7 @@ function runDoctorCommand(parsed: ParsedArgs, context: CommandContext): CommandR
   const report = buildDoctorReport(parsed, context);
 
   if (wantsJson(parsed)) {
-    return jsonResult(report);
+    return jsonResult(parsed, report);
   }
 
   return {
@@ -456,10 +519,12 @@ async function runSpaceCommand(
   if (action === "show") {
     const spaceId = requireFlag(parsed.flags, "id");
     const space = await requireSpace(context.repository, spaceId);
+    const policyView = buildSpacePolicyView(space.settings);
 
     if (wantsJson(parsed)) {
-      return jsonResult({
+      return jsonResult(parsed, {
         space,
+        policy: policyView,
       });
     }
 
@@ -469,6 +534,8 @@ async function runSpaceCommand(
         `name=${space.name}`,
         `description=${space.description ?? ""}`,
         `settings=${JSON.stringify(space.settings ?? {})}`,
+        `effectiveSettings=${JSON.stringify(policyView.effective)}`,
+        `settingsOrigin=${JSON.stringify(policyView.origin)}`,
       ],
     };
   }
@@ -527,15 +594,17 @@ async function runSpaceCommand(
 
   if (action === "report") {
     const spaceId = requireFlag(parsed.flags, "id");
-    await requireSpace(context.repository, spaceId);
+    const space = await requireSpace(context.repository, spaceId);
+    const policyView = buildSpacePolicyView(space.settings);
     const report = await context.repository.getSpaceReport(
       spaceId,
       parsed.flags["recent-events"] ? Number(parsed.flags["recent-events"]) : 10,
     );
 
     if (wantsJson(parsed)) {
-      return jsonResult({
+      return jsonResult(parsed, {
         report,
+        policy: policyView,
       });
     }
 
@@ -548,6 +617,19 @@ async function runSpaceCommand(
         `tiers=${formatCounts(report.recordsByTier)}`,
         `statuses=${formatCounts(report.recordsByStatus)}`,
         `kinds=${formatCounts(report.recordsByKind)}`,
+        `eventTypes=${formatCounts(report.eventCountsByType)}`,
+        `provenanceSummaryRecords=${report.provenanceSummaryCount}`,
+        `maintenanceLatestRunAt=${report.maintenance.latestRunAt ?? ""}`,
+        `maintenanceLatestCompactionAt=${report.maintenance.latestCompactionAt ?? ""}`,
+        `maintenanceLatestRetentionAt=${report.maintenance.latestRetentionAt ?? ""}`,
+        `maintenanceLatestDecayAt=${report.maintenance.latestDecayAt ?? ""}`,
+        `maintenanceLatestReinforcementAt=${report.maintenance.latestReinforcementAt ?? ""}`,
+        `maintenanceCompactionDelta=${JSON.stringify(report.maintenance.latestCompactionDelta ?? {})}`,
+        `maintenanceRetentionDelta=${JSON.stringify(report.maintenance.latestRetentionDelta ?? {})}`,
+        `maintenanceDecayDelta=${JSON.stringify(report.maintenance.latestDecayDelta ?? {})}`,
+        `maintenanceReinforcementDelta=${JSON.stringify(report.maintenance.latestReinforcementDelta ?? {})}`,
+        `effectiveSettings=${JSON.stringify(policyView.effective)}`,
+        `settingsOrigin=${JSON.stringify(policyView.origin)}`,
         `recentLifecycleEvents=${report.recentLifecycleEvents.length}`,
         ...report.recentLifecycleEvents.map(
           (event) => `${event.id} ${event.type} ${truncate(event.summary, 100)}`,
@@ -556,6 +638,417 @@ async function runSpaceCommand(
         ...report.recentProvenanceEvents.map(
           (event) => `${event.id} ${event.type} ${truncate(event.summary, 100)}`,
         ),
+      ],
+    };
+  }
+
+  if (action === "graph-export") {
+    const spaceId = requireFlag(parsed.flags, "id");
+    const format = parseGraphExportFormat(parsed.flags.format);
+    const includeScopes = parsed.flags["include-scopes"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-scopes"])
+      : true;
+    const includeEvents = parsed.flags["include-events"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-events"])
+      : true;
+    const client = new GlialNodeClient({ repository: context.repository });
+    const graph = await client.exportSpaceGraph(spaceId, { includeScopes, includeEvents });
+    const payload = format === "native"
+      ? graph
+      : format === "cytoscape"
+        ? convertSpaceGraphToCytoscape(graph)
+        : convertSpaceGraphToDot(graph);
+
+    if (parsed.flags.output) {
+      const outputPath = resolve(parsed.flags.output);
+      mkdirSync(dirname(outputPath), { recursive: true });
+      const outputContents = typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload, null, 2);
+      writeFileSync(outputPath, outputContents, "utf8");
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          output: outputPath,
+          format,
+          metadata: graph.metadata,
+          counts: graph.counts,
+        });
+      }
+
+      return {
+        lines: [
+          "Space graph export written.",
+          `format=${format}`,
+          `spaceId=${graph.metadata.spaceId}`,
+          `spaceName=${graph.metadata.spaceName}`,
+          `nodes=${graph.metadata.nodeCount}`,
+          `edges=${graph.metadata.edgeCount}`,
+          `output=${outputPath}`,
+        ],
+      };
+    }
+
+    if (wantsJson(parsed)) {
+      if (format === "dot") {
+        return jsonResult(parsed, {
+          format,
+          metadata: graph.metadata,
+          counts: graph.counts,
+          dot: payload,
+        });
+      }
+      return jsonResult(parsed, payload);
+    }
+
+    return {
+      lines: format === "dot"
+        ? String(payload).split(/\r?\n/)
+        : JSON.stringify(payload, null, 2).split(/\r?\n/),
+    };
+  }
+
+  if (action === "inspect-export") {
+    const spaceId = requireFlag(parsed.flags, "id");
+    const outputPath = requireFlag(parsed.flags, "output");
+    const includeScopes = parsed.flags["include-scopes"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-scopes"])
+      : true;
+    const includeEvents = parsed.flags["include-events"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-events"])
+      : true;
+    const includeTrustRegistry = parsed.flags["include-trust-registry"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-trust-registry"])
+      : true;
+    const recentEventLimit = parsed.flags["recent-events"] !== undefined
+      ? Number(parsed.flags["recent-events"])
+      : 20;
+    if (!Number.isFinite(recentEventLimit) || recentEventLimit <= 0) {
+      throw new Error(`Invalid --recent-events value: ${parsed.flags["recent-events"] ?? ""}`);
+    }
+    const recall = parseInspectorRecallOptions(parsed.flags);
+
+    const client = new GlialNodeClient({ repository: context.repository });
+    const result = await client.exportSpaceInspectorHtml(spaceId, outputPath, {
+      includeScopes,
+      includeEvents,
+      includeTrustRegistry,
+      recentEventLimit,
+      presetDirectory: parsed.flags.directory,
+      recall,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        output: result.outputPath,
+        space: {
+          id: result.snapshot.space.id,
+          name: result.snapshot.space.name,
+        },
+        report: {
+          records: result.snapshot.report.recordCount,
+          events: result.snapshot.report.eventCount,
+          links: result.snapshot.report.linkCount,
+        },
+        graph: {
+          nodes: result.snapshot.graph.metadata.nodeCount,
+          edges: result.snapshot.graph.metadata.edgeCount,
+        },
+        recall: result.snapshot.recall
+          ? {
+              query: result.snapshot.recall.query,
+              traceCount: result.snapshot.recall.traceCount,
+            }
+          : null,
+        trustRegistryIncluded: Boolean(result.snapshot.trustRegistry),
+      });
+    }
+
+    return {
+      lines: [
+        "Space inspector export written.",
+        `spaceId=${result.snapshot.space.id}`,
+        `spaceName=${result.snapshot.space.name}`,
+        `records=${result.snapshot.report.recordCount}`,
+        `events=${result.snapshot.report.eventCount}`,
+        `links=${result.snapshot.report.linkCount}`,
+        `graphNodes=${result.snapshot.graph.metadata.nodeCount}`,
+        `graphEdges=${result.snapshot.graph.metadata.edgeCount}`,
+        `riskLevel=${result.snapshot.risk.riskLevel}`,
+        `recallTraceCount=${result.snapshot.recall?.traceCount ?? 0}`,
+        `trustRegistryIncluded=${result.snapshot.trustRegistry ? "yes" : "no"}`,
+        `output=${result.outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "inspect-snapshot") {
+    const spaceId = requireFlag(parsed.flags, "id");
+    const outputPath = requireFlag(parsed.flags, "output");
+    const includeScopes = parsed.flags["include-scopes"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-scopes"])
+      : true;
+    const includeEvents = parsed.flags["include-events"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-events"])
+      : true;
+    const includeTrustRegistry = parsed.flags["include-trust-registry"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-trust-registry"])
+      : true;
+    const recentEventLimit = parsed.flags["recent-events"] !== undefined
+      ? Number(parsed.flags["recent-events"])
+      : 20;
+    if (!Number.isFinite(recentEventLimit) || recentEventLimit <= 0) {
+      throw new Error(`Invalid --recent-events value: ${parsed.flags["recent-events"] ?? ""}`);
+    }
+    const recall = parseInspectorRecallOptions(parsed.flags);
+
+    const client = new GlialNodeClient({ repository: context.repository });
+    const result = await client.exportSpaceInspectorSnapshotToFile(spaceId, outputPath, {
+      includeScopes,
+      includeEvents,
+      includeTrustRegistry,
+      recentEventLimit,
+      presetDirectory: parsed.flags.directory,
+      recall,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        output: result.outputPath,
+        space: {
+          id: result.snapshot.space.id,
+          name: result.snapshot.space.name,
+        },
+        risk: result.snapshot.risk,
+        graph: {
+          nodes: result.snapshot.graph.metadata.nodeCount,
+          edges: result.snapshot.graph.metadata.edgeCount,
+        },
+        recall: result.snapshot.recall
+          ? {
+              query: result.snapshot.recall.query,
+              traceCount: result.snapshot.recall.traceCount,
+            }
+          : null,
+      });
+    }
+
+    return {
+      lines: [
+        "Space inspector snapshot written.",
+        `spaceId=${result.snapshot.space.id}`,
+        `spaceName=${result.snapshot.space.name}`,
+        `riskLevel=${result.snapshot.risk.riskLevel}`,
+        `graphNodes=${result.snapshot.graph.metadata.nodeCount}`,
+        `graphEdges=${result.snapshot.graph.metadata.edgeCount}`,
+        `recallTraceCount=${result.snapshot.recall?.traceCount ?? 0}`,
+        `output=${result.outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "inspect-index-export") {
+    const outputPath = requireFlag(parsed.flags, "output");
+    const includeTrustRegistry = parsed.flags["include-trust-registry"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-trust-registry"])
+      : true;
+    const includeGraphCounts = parsed.flags["include-graph-counts"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-graph-counts"])
+      : true;
+    const recentEventLimit = parsed.flags["recent-events"] !== undefined
+      ? Number(parsed.flags["recent-events"])
+      : 10;
+    if (!Number.isFinite(recentEventLimit) || recentEventLimit <= 0) {
+      throw new Error(`Invalid --recent-events value: ${parsed.flags["recent-events"] ?? ""}`);
+    }
+    const client = new GlialNodeClient({ repository: context.repository });
+    const result = await client.exportSpaceInspectorIndexHtml(outputPath, {
+      includeTrustRegistry,
+      includeGraphCounts,
+      recentEventLimit,
+      presetDirectory: parsed.flags.directory,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        output: result.outputPath,
+        totals: result.snapshot.totals,
+        spaceCount: result.snapshot.metadata.spaceCount,
+        trustRegistryIncluded: Boolean(result.snapshot.trustRegistry),
+      });
+    }
+
+    return {
+      lines: [
+        "Space inspector index export written.",
+        `spaces=${result.snapshot.metadata.spaceCount}`,
+        `totalRecords=${result.snapshot.totals.records}`,
+        `totalEvents=${result.snapshot.totals.events}`,
+        `totalLinks=${result.snapshot.totals.links}`,
+        `totalGraphNodes=${result.snapshot.totals.graphNodes}`,
+        `totalGraphEdges=${result.snapshot.totals.graphEdges}`,
+        `spacesNeedingTrustReview=${result.snapshot.totals.spacesNeedingTrustReview}`,
+        `spacesWithContestedMemory=${result.snapshot.totals.spacesWithContestedMemory}`,
+        `spacesWithStaleMemory=${result.snapshot.totals.spacesWithStaleMemory}`,
+        `trustRegistryIncluded=${result.snapshot.trustRegistry ? "yes" : "no"}`,
+        `output=${result.outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "inspect-index-snapshot") {
+    const outputPath = requireFlag(parsed.flags, "output");
+    const includeTrustRegistry = parsed.flags["include-trust-registry"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-trust-registry"])
+      : true;
+    const includeGraphCounts = parsed.flags["include-graph-counts"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-graph-counts"])
+      : true;
+    const recentEventLimit = parsed.flags["recent-events"] !== undefined
+      ? Number(parsed.flags["recent-events"])
+      : 10;
+    if (!Number.isFinite(recentEventLimit) || recentEventLimit <= 0) {
+      throw new Error(`Invalid --recent-events value: ${parsed.flags["recent-events"] ?? ""}`);
+    }
+    const client = new GlialNodeClient({ repository: context.repository });
+    const result = await client.exportSpaceInspectorIndexSnapshotToFile(outputPath, {
+      includeTrustRegistry,
+      includeGraphCounts,
+      recentEventLimit,
+      presetDirectory: parsed.flags.directory,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        output: result.outputPath,
+        totals: result.snapshot.totals,
+        spaceCount: result.snapshot.metadata.spaceCount,
+        trustRegistryIncluded: Boolean(result.snapshot.trustRegistry),
+      });
+    }
+
+    return {
+      lines: [
+        "Space inspector index snapshot written.",
+        `spaces=${result.snapshot.metadata.spaceCount}`,
+        `totalRecords=${result.snapshot.totals.records}`,
+        `totalEvents=${result.snapshot.totals.events}`,
+        `totalLinks=${result.snapshot.totals.links}`,
+        `totalGraphNodes=${result.snapshot.totals.graphNodes}`,
+        `totalGraphEdges=${result.snapshot.totals.graphEdges}`,
+        `spacesNeedingTrustReview=${result.snapshot.totals.spacesNeedingTrustReview}`,
+        `spacesWithContestedMemory=${result.snapshot.totals.spacesWithContestedMemory}`,
+        `spacesWithStaleMemory=${result.snapshot.totals.spacesWithStaleMemory}`,
+        `trustRegistryIncluded=${result.snapshot.trustRegistry ? "yes" : "no"}`,
+        `output=${result.outputPath}`,
+      ],
+    };
+  }
+
+  if (action === "inspect-pack-export") {
+    const outputDirectory = requireFlag(parsed.flags, "output-dir");
+    const includeScopes = parsed.flags["include-scopes"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-scopes"])
+      : true;
+    const includeEvents = parsed.flags["include-events"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-events"])
+      : true;
+    const includeGraphCounts = parsed.flags["include-graph-counts"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-graph-counts"])
+      : true;
+    const includeTrustRegistry = parsed.flags["include-trust-registry"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["include-trust-registry"])
+      : true;
+    const captureScreenshots = parsed.flags["capture-screenshots"] !== undefined
+      ? parseOptionalBoolean(parsed.flags["capture-screenshots"])
+      : false;
+    const recentEventLimit = parsed.flags["recent-events"] !== undefined
+      ? Number(parsed.flags["recent-events"])
+      : 20;
+    if (!Number.isFinite(recentEventLimit) || recentEventLimit <= 0) {
+      throw new Error(`Invalid --recent-events value: ${parsed.flags["recent-events"] ?? ""}`);
+    }
+    const recall = parseInspectorRecallOptions(parsed.flags);
+    const screenshotWidth = parsePositiveOptionalNumber(parsed.flags["screenshot-width"], "screenshot-width");
+    const screenshotHeight = parsePositiveOptionalNumber(parsed.flags["screenshot-height"], "screenshot-height");
+    const screenshotViewport = screenshotWidth !== undefined || screenshotHeight !== undefined
+      ? {
+          width: screenshotWidth ?? 1440,
+          height: screenshotHeight ?? 900,
+        }
+      : undefined;
+
+    const client = new GlialNodeClient({ repository: context.repository });
+    const result = await client.exportSpaceInspectorPack(outputDirectory, {
+      recentEventLimit,
+      includeScopes,
+      includeEvents,
+      includeGraphCounts,
+      includeTrustRegistry,
+      presetDirectory: parsed.flags.directory,
+      recall,
+      captureScreenshots,
+      screenshotViewport,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        outputDirectory: result.outputDirectory,
+        manifestPath: result.manifestPath,
+        spaceCount: result.manifest.metadata.spaceCount,
+        screenshotsCaptured: Boolean(result.manifest.files.indexScreenshot),
+        totals: result.manifest.totals,
+      });
+    }
+
+    return {
+      lines: [
+        "Space inspector pack export written.",
+        `outputDirectory=${result.outputDirectory}`,
+        `manifest=${result.manifestPath}`,
+        `spaces=${result.manifest.metadata.spaceCount}`,
+        `screenshotsCaptured=${result.manifest.files.indexScreenshot ? "yes" : "no"}`,
+        `totalRecords=${result.manifest.totals.records}`,
+        `totalEvents=${result.manifest.totals.events}`,
+        `totalLinks=${result.manifest.totals.links}`,
+        `spacesNeedingTrustReview=${result.manifest.totals.spacesNeedingTrustReview}`,
+        `spacesWithContestedMemory=${result.manifest.totals.spacesWithContestedMemory}`,
+        `spacesWithStaleMemory=${result.manifest.totals.spacesWithStaleMemory}`,
+      ],
+    };
+  }
+
+  if (action === "inspect-pack-serve") {
+    const inputDirectory = resolve(requireFlag(parsed.flags, "input-dir"));
+    const durationMs = parseRequiredPositiveNumber(parsed.flags["duration-ms"], "duration-ms");
+    const host = parsed.flags.host ?? "127.0.0.1";
+    const requestedPort = parsed.flags.port !== undefined
+      ? parsePortNumber(parsed.flags.port)
+      : 4173;
+    const probePath = parsed.flags["probe-path"];
+
+    const result = await serveInspectorPackDirectory({
+      directory: inputDirectory,
+      host,
+      port: requestedPort,
+      durationMs,
+      probePath,
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, result);
+    }
+
+    return {
+      lines: [
+        "Space inspector pack served.",
+        `directory=${result.directory}`,
+        `baseUrl=${result.baseUrl}`,
+        `host=${result.host}`,
+        `port=${result.port}`,
+        `durationMs=${result.durationMs}`,
+        `probePath=${result.probePath ?? ""}`,
+        `probeStatus=${result.probeStatus ?? ""}`,
       ],
     };
   }
@@ -945,6 +1438,71 @@ async function runPresetCommand(
     };
   }
 
+  if (action === "trust-pack-register") {
+    const name = requireFlag(parsed.flags, "name");
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const client = new GlialNodeClient({ repository: context.repository, presetDirectory: directory });
+    const pack = client.registerTrustPolicyPack(name, {
+      description: parsed.flags.description,
+      inheritsFrom: parsed.flags.inherits,
+      baseProfile: parsed.flags["base-profile"] ? parseTrustProfileFlag(parsed.flags["base-profile"]) : undefined,
+      policy: parsePresetTrustPolicy(parsed.flags),
+      overwrite: parsed.flags.overwrite === "true",
+      directory,
+    });
+
+    return {
+      lines: [
+        "Trust policy pack registered.",
+        `name=${pack.name}`,
+        `baseProfile=${pack.baseProfile ?? ""}`,
+        `inheritsFrom=${pack.inheritsFrom ?? ""}`,
+      ],
+    };
+  }
+
+  if (action === "trust-pack-list") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const client = new GlialNodeClient({ repository: context.repository, presetDirectory: directory });
+    const packs = client.listTrustPolicyPacks(directory);
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        count: packs.length,
+        packs,
+      });
+    }
+
+    return {
+      lines: [
+        `trustPacks=${packs.length}`,
+        ...packs.map((pack) => `${pack.name} baseProfile=${pack.baseProfile ?? ""} inheritsFrom=${pack.inheritsFrom ?? ""}`),
+      ],
+    };
+  }
+
+  if (action === "trust-pack-show") {
+    const directory = resolvePresetDirectory(parsed.flags.directory);
+    const client = new GlialNodeClient({ repository: context.repository, presetDirectory: directory });
+    const pack = client.resolveTrustPolicyPack(requireFlag(parsed.flags, "name"), directory);
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, pack);
+    }
+
+    return {
+      lines: [
+        `name=${pack.name}`,
+        `baseProfile=${pack.baseProfile ?? ""}`,
+        `inheritsFrom=${pack.inheritsFrom ?? ""}`,
+        `description=${pack.description ?? ""}`,
+        `policy=${JSON.stringify(pack.policy)}`,
+        `createdAt=${pack.createdAt}`,
+        `updatedAt=${pack.updatedAt}`,
+      ],
+    };
+  }
+
   if (action === "trust-profile-list") {
     return {
       lines: [
@@ -1209,11 +1767,15 @@ async function runPresetCommand(
       ? await requireSpace(context.repository, parsed.flags["space-id"])
       : undefined;
     const provenanceSettings = space?.settings?.provenance;
-    const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile);
+    const directoryClient = new GlialNodeClient({ repository: context.repository, presetDirectory: directory });
+    const trustPack = resolveTrustPolicyPackFromFlags(directoryClient, parsed, directory);
+    const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile ?? trustPack?.baseProfile);
+    const mergedTrustPolicy = mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings);
+    const effectiveTrustPolicy = mergePresetTrustPolicy(toPresetTrustPolicyInput(trustPack?.policy), mergedTrustPolicy);
     const validation = validatePresetBundle(
       imported,
       resolvePresetTrustPolicy(
-        mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
+        effectiveTrustPolicy,
         directory,
         trustProfile,
       ),
@@ -1223,7 +1785,7 @@ async function runPresetCommand(
     const stored = client.importPresetBundle(inputPath, {
       directory,
       name: requestedName,
-      trustPolicy: mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
+      trustPolicy: effectiveTrustPolicy,
       trustProfile,
       collisionPolicy,
     });
@@ -1247,7 +1809,7 @@ async function runPresetCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
+      return jsonResult(parsed, {
         importedPresetName,
         requestedPresetName: requestedName,
         bundleName: imported.preset.name,
@@ -1276,20 +1838,82 @@ async function runPresetCommand(
   if (action === "bundle-show") {
     const inputPath = resolve(requireFlag(parsed.flags, "input"));
     const directory = resolvePresetDirectory(parsed.flags.directory);
+    const trustExplain = parsed.flags["trust-explain"] === "true";
     const space = parsed.flags["space-id"]
       ? await requireSpace(context.repository, parsed.flags["space-id"])
       : undefined;
     const provenanceSettings = space?.settings?.provenance;
     const bundle = parsePresetBundle(readTextFile(inputPath));
-    const validation = validatePresetBundle(
-      bundle,
-      resolvePresetTrustPolicy(
-        mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings),
-        directory,
-        parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
-      ),
-      parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile),
-    );
+    const directoryClient = new GlialNodeClient({ repository: context.repository, presetDirectory: directory });
+    const trustPack = resolveTrustPolicyPackFromFlags(directoryClient, parsed, directory);
+    const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"] ?? provenanceSettings?.trustProfile ?? trustPack?.baseProfile);
+    const mergedTrustPolicy = mergePresetTrustPolicyFromSettings(parsePresetTrustPolicy(parsed.flags), provenanceSettings);
+    const effectiveTrustPolicy = mergePresetTrustPolicy(toPresetTrustPolicyInput(trustPack?.policy), mergedTrustPolicy);
+    let resolvedTrustPolicy: ResolvedPresetTrustPolicy;
+    try {
+      resolvedTrustPolicy = resolvePresetTrustPolicy(effectiveTrustPolicy, directory, trustProfile);
+    } catch (error) {
+      if (!trustExplain) {
+        throw error;
+      }
+
+      const failures = extractTrustFailureMessages(error);
+      const failedValidation = buildFailedPresetBundleValidationReport(bundle, effectiveTrustPolicy, trustProfile, failures);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          bundle,
+          validation: failedValidation,
+        });
+      }
+
+      return {
+        lines: [
+          `name=${bundle.preset.name}`,
+          `trusted=false`,
+          `trustProfile=${trustProfile}`,
+          `effectivePolicy=${JSON.stringify(effectiveTrustPolicy)}`,
+          `requestedTrustedSigners=${failedValidation.report.requestedTrustedSignerNames.join(",")}`,
+          `unmatchedTrustedSigners=${failedValidation.report.unmatchedTrustedSignerNames.join(",")}`,
+          `policyFailures=${failedValidation.report.policyFailures.length}`,
+          ...failedValidation.report.policyFailures.map((failure) => `policyFailure=${failure}`),
+        ],
+      };
+    }
+
+    let validation: ReturnType<typeof validatePresetBundle>;
+    try {
+      validation = validatePresetBundle(bundle, resolvedTrustPolicy, trustProfile);
+    } catch (error) {
+      if (!trustExplain) {
+        throw error;
+      }
+
+      const failures = extractTrustFailureMessages(error);
+      const failedValidation = buildFailedPresetBundleValidationReport(bundle, resolvedTrustPolicy, trustProfile, failures);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          bundle,
+          validation: failedValidation,
+        });
+      }
+
+      return {
+        lines: [
+          `name=${bundle.preset.name}`,
+          `trusted=false`,
+          `trustProfile=${trustProfile}`,
+          `reportSignerKeyId=${failedValidation.report.signerKeyId ?? ""}`,
+          `matchedTrustedSigners=${failedValidation.report.matchedTrustedSignerNames.join(",")}`,
+          `requestedTrustedSigners=${failedValidation.report.requestedTrustedSignerNames.join(",")}`,
+          `unmatchedTrustedSigners=${failedValidation.report.unmatchedTrustedSignerNames.join(",")}`,
+          `effectivePolicy=${JSON.stringify(failedValidation.report.effectivePolicy)}`,
+          `policyFailures=${failedValidation.report.policyFailures.length}`,
+          ...failedValidation.report.policyFailures.map((failure) => `policyFailure=${failure}`),
+        ],
+      };
+    }
 
     if (space) {
       await ensureSpaceAuditScope(context.repository, space.id);
@@ -1308,7 +1932,7 @@ async function runPresetCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
+      return jsonResult(parsed, {
         bundle,
         validation,
       });
@@ -1333,8 +1957,11 @@ async function runPresetCommand(
         `trustProfile=${validation.report.trustProfile}`,
         `reportSignerKeyId=${validation.report.signerKeyId ?? ""}`,
         `matchedTrustedSigners=${validation.report.matchedTrustedSignerNames.join(",")}`,
+        `requestedTrustedSigners=${validation.report.requestedTrustedSignerNames.join(",")}`,
+        `unmatchedTrustedSigners=${validation.report.unmatchedTrustedSignerNames.join(",")}`,
         `revokedTrustedSigners=${validation.report.revokedTrustedSignerNames.join(",")}`,
         `effectivePolicy=${JSON.stringify(validation.report.effectivePolicy)}`,
+        `policyFailures=${validation.report.policyFailures.length}`,
         `warnings=${validation.warnings.length}`,
         ...validation.warnings.map((warning) => `warning=${warning}`),
       ],
@@ -1440,6 +2067,45 @@ async function runMemoryCommand(
   parsed: ParsedArgs,
   context: CommandContext,
 ): Promise<CommandResult> {
+  if (action === "semantic-eval") {
+    const corpusPath = requireFlag(parsed.flags, "corpus");
+    const corpus = JSON.parse(readFileSync(corpusPath, "utf8")) as SemanticEvalCorpus;
+    const report = evaluateSemanticPrototypeCorpus(corpus, {
+      semanticWeight: parsed.flags["semantic-weight"] !== undefined
+        ? parseOptionalNumber(parsed.flags["semantic-weight"])
+        : undefined,
+      minDeltaTop1Accuracy: parsed.flags["min-delta-top1"] !== undefined
+        ? parseOptionalNumber(parsed.flags["min-delta-top1"])
+        : undefined,
+    });
+
+    if (parsed.flags.output) {
+      writeJsonFileAtomic(parsed.flags.output, JSON.stringify(report, null, 2));
+    }
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, report);
+    }
+
+    return {
+      lines: [
+        `reportId=${report.reportId}`,
+        `generatedAt=${report.generatedAt}`,
+        `corpusVersion=${report.corpus.version}`,
+        `scenarios=${report.corpus.scenarioCount}`,
+        `scoredScenarios=${report.corpus.scoredScenarioCount}`,
+        `semanticWeight=${report.semantic.semanticWeight}`,
+        `lexicalTop1Accuracy=${report.metrics.lexicalTop1Accuracy.toFixed(3)}`,
+        `semanticTop1Accuracy=${report.metrics.semanticTop1Accuracy.toFixed(3)}`,
+        `deltaTop1Accuracy=${report.metrics.deltaTop1Accuracy.toFixed(3)}`,
+        `minDeltaTop1Accuracy=${report.passCriteria.minDeltaTop1Accuracy.toFixed(3)}`,
+        `passed=${report.passed ? "yes" : "no"}`,
+        `gateReason=${report.gate.reason}`,
+        ...(parsed.flags.output ? [`output=${parsed.flags.output}`] : []),
+      ],
+    };
+  }
+
   if (action === "add") {
     const input = createMemoryInput(parsed);
     const space = await requireSpace(context.repository, input.spaceId);
@@ -1475,7 +2141,7 @@ async function runMemoryCommand(
 
   if (action === "search") {
     const spaceId = requireFlag(parsed.flags, "space-id");
-    const records = await context.repository.searchRecords({
+    let records = await context.repository.searchRecords({
       spaceId,
       text: parsed.flags.text,
       scopeIds: parsed.flags["scope-id"] ? [parsed.flags["scope-id"]] : undefined,
@@ -1485,6 +2151,7 @@ async function runMemoryCommand(
       statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
       limit: parsed.flags.limit ? Number(parsed.flags.limit) : 10,
     });
+    records = applySemanticPrototypeRerankFromFlags(records, parsed.flags.text, parsed.flags);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
       const space = await requireSpace(context.repository, spaceId);
@@ -1516,7 +2183,7 @@ async function runMemoryCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
+      return jsonResult(parsed, {
         query: {
           spaceId,
           text: parsed.flags.text,
@@ -1526,6 +2193,7 @@ async function runMemoryCommand(
           visibility: parsed.flags.visibility ? [requireVisibility(parsed.flags.visibility)] : undefined,
           statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
           limit: parsed.flags.limit ? Number(parsed.flags.limit) : 10,
+          semantic: parseSemanticPrototypeOptions(parsed.flags),
         },
         count: records.length,
         records,
@@ -1555,7 +2223,8 @@ async function runMemoryCommand(
       statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
       limit: parsed.flags.limit ? Number(parsed.flags.limit) : 3,
     };
-    const records = await context.repository.searchRecords(query);
+    let records = await context.repository.searchRecords(query);
+    records = applySemanticPrototypeRerankFromFlags(records, parsed.flags.text, parsed.flags);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
       const space = await requireSpace(context.repository, spaceId);
@@ -1598,8 +2267,11 @@ async function runMemoryCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
-        query,
+      return jsonResult(parsed, {
+        query: {
+          ...query,
+          semantic: parseSemanticPrototypeOptions(parsed.flags),
+        },
         count: packs.length,
         packs,
       });
@@ -1635,7 +2307,8 @@ async function runMemoryCommand(
       statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
       limit: parsed.flags.limit ? Number(parsed.flags.limit) : 3,
     };
-    const records = await context.repository.searchRecords(query);
+    let records = await context.repository.searchRecords(query);
+    records = applySemanticPrototypeRerankFromFlags(records, parsed.flags.text, parsed.flags);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
       const space = await requireSpace(context.repository, spaceId);
@@ -1678,8 +2351,11 @@ async function runMemoryCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
-        query,
+      return jsonResult(parsed, {
+        query: {
+          ...query,
+          semantic: parseSemanticPrototypeOptions(parsed.flags),
+        },
         count: traces.length,
         traces,
       });
@@ -1711,7 +2387,8 @@ async function runMemoryCommand(
       statuses: parsed.flags.status ? [requireStatus(parsed.flags.status)] : undefined,
       limit: parsed.flags.limit ? Number(parsed.flags.limit) : 3,
     };
-    const records = await context.repository.searchRecords(query);
+    let records = await context.repository.searchRecords(query);
+    records = applySemanticPrototypeRerankFromFlags(records, parsed.flags.text, parsed.flags);
 
     if (parsed.flags.reinforce === "true" && records.length > 0) {
       const availableRecords = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
@@ -1753,6 +2430,7 @@ async function runMemoryCommand(
         queryText: parsed.flags.text,
         profile: parseBundleProfile(parsed.flags["bundle-profile"]),
         consumer: parseBundleConsumer(parsed.flags["bundle-consumer"]),
+        provenanceMode: parseBundleProvenanceMode(parsed.flags["bundle-provenance-mode"]),
         routingPolicy: space.settings?.routing,
         maxSupporting: parseOptionalNumber(parsed.flags["bundle-max-supporting"]),
         maxContentChars: parseOptionalNumber(parsed.flags["bundle-max-content-chars"]),
@@ -1763,8 +2441,11 @@ async function runMemoryCommand(
     }
 
     if (wantsJson(parsed)) {
-      return jsonResult({
-        query,
+      return jsonResult(parsed, {
+        query: {
+          ...query,
+          semantic: parseSemanticPrototypeOptions(parsed.flags),
+        },
         count: bundles.length,
         bundles,
       });
@@ -2149,9 +2830,63 @@ async function runImportCommand(
   const inputPath = resolve(requireFlag(parsed.flags, "input"));
   const client = new GlialNodeClient({ repository: context.repository });
   const presetDirectory = resolvePresetDirectory(parsed.flags["preset-directory"]);
-  const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"]);
-  const trustPolicy = parsePresetTrustPolicy(parsed.flags);
+  const trustPack = resolveTrustPolicyPackFromFlags(client, parsed, presetDirectory);
+  const trustProfile = parseTrustProfileFlag(parsed.flags["trust-profile"] ?? trustPack?.baseProfile);
+  const trustPolicy = mergePresetTrustPolicy(toPresetTrustPolicyInput(trustPack?.policy), parsePresetTrustPolicy(parsed.flags));
   const collisionPolicy = parseImportCollisionPolicy(parsed.flags.collision);
+  const preview = parsed.flags.preview === "true";
+
+  if (preview) {
+    const previewResult = await client.previewSnapshotImportFromFile(inputPath, {
+      trustPolicy,
+      trustProfile,
+      directory: presetDirectory,
+      collisionPolicy,
+    });
+
+    const payload = {
+      ...previewResult,
+      schema: {
+        version: context.repository.getSchemaVersion(),
+        latest: sqliteAdapter.schemaVersion,
+        upToDate: context.repository.getSchemaVersion() === sqliteAdapter.schemaVersion,
+      },
+    };
+
+    if (parsed.flags.json === "true") {
+      return {
+        lines: [JSON.stringify(payload, null, 2)],
+      };
+    }
+
+    return {
+      lines: [
+        "Import preview.",
+        `applyAllowed=${previewResult.applyAllowed}`,
+        `requestedSpaceId=${previewResult.requestedSpace.id}`,
+        `requestedSpaceName=${previewResult.requestedSpace.name}`,
+        `targetSpaceId=${previewResult.targetSpace.id}`,
+        `targetSpaceName=${previewResult.targetSpace.name}`,
+        `spaceExistsAtTarget=${previewResult.existingSpace ? "yes" : "no"}`,
+        `identityRemapped=${previewResult.identityRemapped}`,
+        `collisionPolicy=${previewResult.collisionPolicy}`,
+        `trustProfile=${previewResult.trustProfile}`,
+        `snapshotFormatVersion=${previewResult.snapshotMetadata.snapshotFormatVersion}`,
+        `signed=${previewResult.snapshotMetadata.signed}`,
+        `trusted=${previewResult.validation?.trusted ?? false}`,
+        `schemaVersion=${payload.schema.version}`,
+        `schemaLatest=${payload.schema.latest}`,
+        `schemaUpToDate=${payload.schema.upToDate ? "yes" : "no"}`,
+        `scopes=${previewResult.importedCounts.scopes}`,
+        `events=${previewResult.importedCounts.events}`,
+        `records=${previewResult.importedCounts.records}`,
+        `links=${previewResult.importedCounts.links}`,
+        `blockingIssues=${previewResult.blockingIssues.length}`,
+        ...previewResult.blockingIssues.map((issue) => `blockingIssue=${issue}`),
+      ],
+    };
+  }
+
   const validation = await client.validateSnapshot(
     JSON.parse(readTextFile(inputPath)) as Parameters<typeof client.validateSnapshot>[0],
     trustPolicy,
@@ -2248,13 +2983,62 @@ function parseCsvFlag(value: string | undefined): string[] | undefined {
 
 function parsePresetTrustPolicy(flags: Record<string, string>) {
   return {
-    requireSigner: flags["require-signer"] === "true",
-    requireSignature: flags["require-signature"] === "true",
+    requireSigner: flags["require-signer"] !== undefined
+      ? parseOptionalBoolean(flags["require-signer"])
+      : undefined,
+    requireSignature: flags["require-signature"] !== undefined
+      ? parseOptionalBoolean(flags["require-signature"])
+      : undefined,
     allowedOrigins: parseCsvFlag(flags["allow-origin"]),
     allowedSigners: parseCsvFlag(flags["allow-signer"]),
     allowedSignerKeyIds: parseCsvFlag(flags["allow-key-id"]),
     trustedSignerNames: parseCsvFlag(flags["trust-signer"]),
   };
+}
+
+function mergePresetTrustPolicy(
+  base: ReturnType<typeof parsePresetTrustPolicy> | undefined,
+  override: ReturnType<typeof parsePresetTrustPolicy> | undefined,
+): ReturnType<typeof parsePresetTrustPolicy> {
+  return {
+    requireSigner: override?.requireSigner ?? base?.requireSigner,
+    requireSignature: override?.requireSignature ?? base?.requireSignature,
+    allowedOrigins: mergeStringLists(base?.allowedOrigins, override?.allowedOrigins),
+    allowedSigners: mergeStringLists(base?.allowedSigners, override?.allowedSigners),
+    allowedSignerKeyIds: mergeStringLists(base?.allowedSignerKeyIds, override?.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringLists(base?.trustedSignerNames, override?.trustedSignerNames),
+  };
+}
+
+function toPresetTrustPolicyInput(policy: {
+  requireSigner?: boolean;
+  requireSignature?: boolean;
+  allowedOrigins?: string[];
+  allowedSigners?: string[];
+  allowedSignerKeyIds?: string[];
+  trustedSignerNames?: string[];
+} | undefined): ReturnType<typeof parsePresetTrustPolicy> {
+  return {
+    requireSigner: policy?.requireSigner,
+    requireSignature: policy?.requireSignature,
+    allowedOrigins: policy?.allowedOrigins,
+    allowedSigners: policy?.allowedSigners,
+    allowedSignerKeyIds: policy?.allowedSignerKeyIds,
+    trustedSignerNames: policy?.trustedSignerNames,
+  };
+}
+
+function resolveTrustPolicyPackFromFlags(
+  client: GlialNodeClient,
+  parsed: ParsedArgs,
+  directory: string,
+) {
+  const trustPackName = parsed.flags["trust-pack"] ?? process.env.GLIALNODE_TRUST_POLICY_PACK;
+  if (!trustPackName) {
+    return undefined;
+  }
+
+  return client.resolveTrustPolicyPack(trustPackName, directory);
 }
 
 function parseImportCollisionPolicy(
@@ -2425,6 +3209,299 @@ function parseBundleConsumer(
   }
 
   return value as "auto" | "balanced" | "planner" | "executor" | "reviewer";
+}
+
+function parseBundleProvenanceMode(
+  value: string | undefined,
+): "auto" | "minimal" | "balanced" | "preserve" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const allowed = new Set(["auto", "minimal", "balanced", "preserve"]);
+  if (!allowed.has(value)) {
+    throw new Error(`Invalid bundle provenance mode: ${value}`);
+  }
+
+  return value as "auto" | "minimal" | "balanced" | "preserve";
+}
+
+function parseInspectorRecallQuery(flags: Record<string, string>) {
+  const hasRecallFlag = [
+    "query-text",
+    "query-scope-id",
+    "query-tier",
+    "query-kind",
+    "query-visibility",
+    "query-status",
+    "query-limit",
+  ].some((key) => flags[key] !== undefined);
+
+  if (!hasRecallFlag) {
+    return undefined;
+  }
+
+  return {
+    text: flags["query-text"],
+    scopeIds: flags["query-scope-id"] ? [flags["query-scope-id"]] : undefined,
+    tiers: flags["query-tier"] ? [requireTier(flags["query-tier"])] : undefined,
+    kinds: flags["query-kind"] ? [requireKind(flags["query-kind"])] : undefined,
+    visibility: flags["query-visibility"] ? [requireVisibility(flags["query-visibility"])] : undefined,
+    statuses: flags["query-status"] ? [requireStatus(flags["query-status"])] : undefined,
+    limit: parsePositiveOptionalNumber(flags["query-limit"], "query-limit"),
+  };
+}
+
+function parseInspectorRecallOptions(flags: Record<string, string>) {
+  const query = parseInspectorRecallQuery(flags);
+  if (!query) {
+    return undefined;
+  }
+
+  return {
+    query,
+    primaryLimit: parsePositiveOptionalNumber(flags["query-limit"], "query-limit"),
+    supportLimit: parsePositiveOptionalNumber(flags["query-support-limit"], "query-support-limit"),
+    bundleConsumer: parseBundleConsumer(flags["query-bundle-consumer"]),
+    bundleProvenanceMode: parseBundleProvenanceMode(flags["query-bundle-provenance-mode"]),
+  };
+}
+
+function parsePositiveOptionalNumber(value: string | undefined, flagName: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --${flagName} value: ${value}`);
+  }
+  return parsed;
+}
+
+function parseRequiredPositiveNumber(value: string | undefined, flagName: string): number {
+  if (value === undefined) {
+    throw new Error(`Missing required flag: --${flagName}`);
+  }
+  return parsePositiveOptionalNumber(value, flagName) as number;
+}
+
+function parsePortNumber(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    throw new Error(`Invalid --port value: ${value}`);
+  }
+  return parsed;
+}
+
+function parseSemanticPrototypeOptions(flags: Record<string, string>) {
+  const enabled = flags["semantic-prototype"] !== undefined
+    ? parseOptionalBoolean(flags["semantic-prototype"])
+    : false;
+  const semanticWeight = flags["semantic-weight"] !== undefined
+    ? parseOptionalNumber(flags["semantic-weight"])
+    : undefined;
+  const requireGatePass = flags["semantic-gate-require-pass"] !== undefined
+    ? parseOptionalBoolean(flags["semantic-gate-require-pass"])
+    : false;
+  const gateReportPath = flags["semantic-gate-report"];
+  const gateReport = gateReportPath ? readSemanticEvalReport(gateReportPath) : undefined;
+  if (semanticWeight !== undefined && (semanticWeight < 0 || semanticWeight > 1)) {
+    throw new Error(`Invalid --semantic-weight value: ${flags["semantic-weight"]}`);
+  }
+  if (requireGatePass && !gateReport) {
+    throw new Error("Missing required semantic gate report: pass --semantic-gate-report <path>.");
+  }
+
+  return {
+    enabled,
+    semanticWeight,
+    gate: requireGatePass || gateReport
+      ? {
+          requirePass: requireGatePass,
+          passed: gateReport?.passed,
+          reportId: gateReport?.reportId,
+          reason: gateReport?.gate?.reason,
+        }
+      : undefined,
+  };
+}
+
+function applySemanticPrototypeRerankFromFlags(
+  records: MemoryRecord[],
+  queryText: string | undefined,
+  flags: Record<string, string>,
+): MemoryRecord[] {
+  const semanticOptions = parseSemanticPrototypeOptions(flags);
+  const reranked = rerankRecordsWithSemanticPrototype(records, queryText, semanticOptions);
+  return reranked.records;
+}
+
+function readSemanticEvalReport(path: string): SemanticEvalReport {
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SemanticEvalReport>;
+  if (parsed.schemaVersion !== "1.0.0") {
+    throw new Error(`Unsupported semantic eval report schema version in ${path}.`);
+  }
+  if (typeof parsed.passed !== "boolean") {
+    throw new Error(`Invalid semantic eval report in ${path}: missing boolean 'passed'.`);
+  }
+  if (!parsed.gate || typeof parsed.gate.reason !== "string") {
+    throw new Error(`Invalid semantic eval report in ${path}: missing gate.reason.`);
+  }
+  if (!parsed.reportId || typeof parsed.reportId !== "string") {
+    throw new Error(`Invalid semantic eval report in ${path}: missing reportId.`);
+  }
+  return parsed as SemanticEvalReport;
+}
+
+async function serveInspectorPackDirectory(options: {
+  directory: string;
+  host: string;
+  port: number;
+  durationMs: number;
+  probePath?: string;
+}) {
+  const directoryStat = safeStat(options.directory);
+  if (!directoryStat || !directoryStat.isDirectory()) {
+    throw new Error(`Inspector pack directory does not exist or is not a directory: ${options.directory}`);
+  }
+
+  const server = createServer((request, response) => {
+    serveStaticDirectoryRequest(options.directory, request, response);
+  });
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(options.port, options.host, () => {
+      server.off("error", rejectListen);
+      resolveListen();
+    });
+  });
+
+  try {
+    const address = server.address();
+    const activePort = typeof address === "object" && address
+      ? address.port
+      : options.port;
+    const baseUrl = `http://${options.host}:${activePort}`;
+    let probeStatus: number | undefined;
+    if (options.probePath) {
+      const normalizedProbePath = options.probePath.startsWith("/")
+        ? options.probePath
+        : `/${options.probePath}`;
+      const probeResponse = await fetch(`${baseUrl}${normalizedProbePath}`);
+      probeStatus = probeResponse.status;
+    }
+
+    await delay(options.durationMs);
+    return {
+      directory: options.directory,
+      host: options.host,
+      port: activePort,
+      baseUrl,
+      durationMs: options.durationMs,
+      probePath: options.probePath,
+      probeStatus,
+    };
+  } finally {
+    await new Promise<void>((resolveClose, rejectClose) => {
+      server.close((error) => {
+        if (error) {
+          rejectClose(error);
+          return;
+        }
+        resolveClose();
+      });
+    });
+  }
+}
+
+function serveStaticDirectoryRequest(
+  rootDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
+  const method = request.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") {
+    response.statusCode = 405;
+    response.end("Method not allowed.");
+    return;
+  }
+
+  const requestUrl = request.url ?? "/";
+  const requestPath = requestUrl.split("?", 1)[0] ?? "/";
+  const decodedPath = safelyDecodeUriComponent(requestPath);
+  if (decodedPath === null) {
+    response.statusCode = 400;
+    response.end("Invalid request path.");
+    return;
+  }
+
+  const targetRelativePath = decodedPath === "/" ? "index.html" : decodedPath.slice(1);
+  const normalizedRelativePath = targetRelativePath.replace(/\//g, sep);
+  const resolvedTargetPath = resolve(rootDirectory, normalizedRelativePath);
+  const normalizedRoot = `${resolve(rootDirectory)}${sep}`;
+  if (!resolvedTargetPath.startsWith(normalizedRoot) && resolvedTargetPath !== resolve(rootDirectory)) {
+    response.statusCode = 403;
+    response.end("Forbidden.");
+    return;
+  }
+
+  let finalPath = resolvedTargetPath;
+  const targetStat = safeStat(finalPath);
+  if (targetStat?.isDirectory()) {
+    finalPath = join(finalPath, "index.html");
+  }
+  const fileStat = safeStat(finalPath);
+  if (!fileStat || !fileStat.isFile()) {
+    response.statusCode = 404;
+    response.end("Not found.");
+    return;
+  }
+
+  const body = readFileSync(finalPath);
+  response.statusCode = 200;
+  response.setHeader("Content-Type", contentTypeForPath(finalPath));
+  response.setHeader("Cache-Control", "no-store");
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
+function contentTypeForPath(filePath: string): string {
+  const extension = extname(filePath).toLowerCase();
+  switch (extension) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".png":
+      return "image/png";
+    case ".svg":
+      return "image/svg+xml";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function safelyDecodeUriComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+function safeStat(path: string) {
+  try {
+    return statSync(path);
+  } catch {
+    return null;
+  }
 }
 
 function parseSpacePreset(value: string | undefined): SpacePresetName | undefined {
@@ -2700,6 +3777,18 @@ function parseOptionalBoolean(value: string | undefined): boolean {
   }
 
   throw new Error(`Invalid boolean value: ${value ?? "undefined"}`);
+}
+
+function parseGraphExportFormat(value: string | undefined): SpaceGraphExportFormat {
+  if (!value) {
+    return "native";
+  }
+
+  if (value === "native" || value === "cytoscape" || value === "dot") {
+    return value;
+  }
+
+  throw new Error(`Invalid graph export format: ${value}`);
 }
 
 async function requireRecord(
@@ -3214,8 +4303,11 @@ function validatePresetBundle(
 
   const warnings: string[] = [];
   const trustWarnings: string[] = [];
-  const matchedTrustedSignerNames: string[] = [];
-  const revokedTrustedSignerNames = [...(resolvedTrustPolicy.revokedTrustedSignerNames ?? [])];
+  const trustedSignerMatch = resolveTrustedSignerMatch(bundle, resolvedTrustPolicy);
+  const matchedTrustedSignerNames = trustedSignerMatch.matchedTrustedSignerNames;
+  const requestedTrustedSignerNames = trustedSignerMatch.requestedTrustedSignerNames;
+  const revokedTrustedSignerNames = trustedSignerMatch.revokedTrustedSignerNames;
+  const unmatchedTrustedSignerNames = trustedSignerMatch.unmatchedTrustedSignerNames;
   if (bundle.metadata.glialnodeVersion !== GLIALNODE_VERSION) {
     warnings.push(
       `Bundle was exported by GlialNode ${bundle.metadata.glialnodeVersion}; current runtime is ${GLIALNODE_VERSION}.`,
@@ -3278,11 +4370,6 @@ function validatePresetBundle(
     if (trustPolicy.allowedSignerKeyIds?.length && !trustPolicy.allowedSignerKeyIds.includes(signerKeyId)) {
       trustWarnings.push(`Preset bundle signer key id is not allowed: ${signerKeyId}`);
     }
-
-    const matchedTrustedSignerNamesForKey = resolvedTrustPolicy.trustedSignerNamesByKeyId?.[signerKeyId] ?? [];
-    if (matchedTrustedSignerNamesForKey.length > 0) {
-      matchedTrustedSignerNames.push(...matchedTrustedSignerNamesForKey);
-    }
   } else if (trustPolicy.allowedSignerKeyIds?.length) {
     trustWarnings.push("Preset bundle signer key id is missing.");
   }
@@ -3302,8 +4389,84 @@ function validatePresetBundle(
       signerKeyId: bundle.metadata.signerKeyId
         ?? (bundle.metadata.signerPublicKey ? computeSignerKeyId(bundle.metadata.signerPublicKey) : undefined),
       matchedTrustedSignerNames,
+      requestedTrustedSignerNames,
+      unmatchedTrustedSignerNames,
       revokedTrustedSignerNames,
       signed: Boolean(bundle.metadata.signature),
+      policyFailures: [...trustWarnings],
+    },
+  };
+}
+
+function resolveTrustedSignerMatch(
+  bundle: ReturnType<typeof parsePresetBundle>,
+  trustPolicy: ResolvedPresetTrustPolicy,
+): {
+  signerKeyId?: string;
+  matchedTrustedSignerNames: string[];
+  requestedTrustedSignerNames: string[];
+  revokedTrustedSignerNames: string[];
+  unmatchedTrustedSignerNames: string[];
+} {
+  const requestedTrustedSignerNames = [...(trustPolicy.trustedSignerNames ?? [])];
+  const revokedTrustedSignerNames = [...(trustPolicy.revokedTrustedSignerNames ?? [])];
+  const signerKeyId = bundle.metadata.signerKeyId
+    ?? (bundle.metadata.signerPublicKey ? computeSignerKeyId(bundle.metadata.signerPublicKey) : undefined);
+  const matchedTrustedSignerNames = signerKeyId
+    ? [...(trustPolicy.trustedSignerNamesByKeyId?.[signerKeyId] ?? [])]
+    : [];
+  const unmatchedTrustedSignerNames = requestedTrustedSignerNames.filter((name) =>
+    !matchedTrustedSignerNames.includes(name) && !revokedTrustedSignerNames.includes(name)
+  );
+
+  return {
+    signerKeyId,
+    matchedTrustedSignerNames,
+    requestedTrustedSignerNames,
+    revokedTrustedSignerNames,
+    unmatchedTrustedSignerNames,
+  };
+}
+
+function extractTrustFailureMessages(error: unknown): string[] {
+  const message = error instanceof Error ? error.message : String(error);
+  const prefix = "Preset bundle trust validation failed:";
+
+  if (message.startsWith(prefix)) {
+    return message
+      .slice(prefix.length)
+      .split(";")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  return [message];
+}
+
+function buildFailedPresetBundleValidationReport(
+  bundle: ReturnType<typeof parsePresetBundle>,
+  trustPolicy: ReturnType<typeof parsePresetTrustPolicy> | ResolvedPresetTrustPolicy,
+  trustProfile: "permissive" | "signed" | "anchored",
+  policyFailures: string[],
+) {
+  const resolvedTrustPolicy = trustPolicy as ResolvedPresetTrustPolicy;
+  const trustedSignerMatch = resolveTrustedSignerMatch(bundle, resolvedTrustPolicy);
+
+  return {
+    metadata: bundle.metadata,
+    warnings: [] as string[],
+    trustWarnings: policyFailures,
+    trusted: false,
+    report: {
+      trustProfile,
+      effectivePolicy: trustPolicy,
+      signerKeyId: trustedSignerMatch.signerKeyId,
+      matchedTrustedSignerNames: trustedSignerMatch.matchedTrustedSignerNames,
+      requestedTrustedSignerNames: trustedSignerMatch.requestedTrustedSignerNames,
+      unmatchedTrustedSignerNames: trustedSignerMatch.unmatchedTrustedSignerNames,
+      revokedTrustedSignerNames: trustedSignerMatch.revokedTrustedSignerNames,
+      signed: Boolean(bundle.metadata.signature),
+      policyFailures,
     },
   };
 }
@@ -3863,6 +5026,176 @@ function countJsonFilesRecursive(directory: string): number {
   }
 
   return count;
+}
+
+function summarizeMaintenanceAcrossSpaces(reports: SpaceReport[]) {
+  let latestRunAt: string | undefined;
+  let spacesWithMaintenance = 0;
+  let retentionExpired = 0;
+  let decayDecayed = 0;
+  let reinforcementUpdated = 0;
+  const compactionDeltas = {
+    promoted: 0,
+    archived: 0,
+    refreshed: 0,
+    distilled: 0,
+    superseded: 0,
+  };
+
+  for (const report of reports) {
+    if (report.maintenance.latestRunAt) {
+      spacesWithMaintenance += 1;
+      if (!latestRunAt || report.maintenance.latestRunAt > latestRunAt) {
+        latestRunAt = report.maintenance.latestRunAt;
+      }
+    }
+
+    const compaction = report.maintenance.latestCompactionDelta;
+    if (compaction) {
+      compactionDeltas.promoted += compaction.promoted;
+      compactionDeltas.archived += compaction.archived;
+      compactionDeltas.refreshed += compaction.refreshed;
+      compactionDeltas.distilled += compaction.distilled;
+      compactionDeltas.superseded += compaction.superseded;
+    }
+
+    retentionExpired += report.maintenance.latestRetentionDelta?.expired ?? 0;
+    decayDecayed += report.maintenance.latestDecayDelta?.decayed ?? 0;
+    reinforcementUpdated += report.maintenance.latestReinforcementDelta?.reinforced ?? 0;
+  }
+
+  return {
+    spacesWithMaintenance,
+    latestRunAt,
+    compactionDeltas,
+    retentionExpired,
+    decayDecayed,
+    reinforcementUpdated,
+  };
+}
+
+function buildSpacePolicyView(settings: MemorySpace["settings"] | undefined) {
+  const effective = {
+    maxShortTermRecords: settings?.maxShortTermRecords ?? defaultConfig.maxWorkingMemoryRecords,
+    retentionDays: {
+      short: settings?.retentionDays?.short ?? defaultRetentionPolicy.short,
+      mid: settings?.retentionDays?.mid ?? defaultRetentionPolicy.mid,
+      long: settings?.retentionDays?.long,
+    },
+    compaction: {
+      shortPromoteImportanceMin: settings?.compaction?.shortPromoteImportanceMin ?? defaultCompactionPolicy.shortPromoteImportanceMin,
+      shortPromoteConfidenceMin: settings?.compaction?.shortPromoteConfidenceMin ?? defaultCompactionPolicy.shortPromoteConfidenceMin,
+      midPromoteImportanceMin: settings?.compaction?.midPromoteImportanceMin ?? defaultCompactionPolicy.midPromoteImportanceMin,
+      midPromoteConfidenceMin: settings?.compaction?.midPromoteConfidenceMin ?? defaultCompactionPolicy.midPromoteConfidenceMin,
+      midPromoteFreshnessMin: settings?.compaction?.midPromoteFreshnessMin ?? defaultCompactionPolicy.midPromoteFreshnessMin,
+      archiveImportanceMax: settings?.compaction?.archiveImportanceMax ?? defaultCompactionPolicy.archiveImportanceMax,
+      archiveConfidenceMax: settings?.compaction?.archiveConfidenceMax ?? defaultCompactionPolicy.archiveConfidenceMax,
+      archiveFreshnessMax: settings?.compaction?.archiveFreshnessMax ?? defaultCompactionPolicy.archiveFreshnessMax,
+      distillMinClusterSize: settings?.compaction?.distillMinClusterSize ?? defaultCompactionPolicy.distillMinClusterSize,
+      distillMinTokenOverlap: settings?.compaction?.distillMinTokenOverlap ?? defaultCompactionPolicy.distillMinTokenOverlap,
+      distillSupersedeSources: settings?.compaction?.distillSupersedeSources ?? defaultCompactionPolicy.distillSupersedeSources,
+      distillSupersedeMinConfidence: settings?.compaction?.distillSupersedeMinConfidence ?? defaultCompactionPolicy.distillSupersedeMinConfidence,
+    },
+    conflict: {
+      enabled: settings?.conflict?.enabled ?? defaultConflictPolicy.enabled,
+      minTokenOverlap: settings?.conflict?.minTokenOverlap ?? defaultConflictPolicy.minTokenOverlap,
+      confidencePenalty: settings?.conflict?.confidencePenalty ?? defaultConflictPolicy.confidencePenalty,
+    },
+    decay: {
+      enabled: settings?.decay?.enabled ?? defaultDecayPolicy.enabled,
+      minAgeDays: settings?.decay?.minAgeDays ?? defaultDecayPolicy.minAgeDays,
+      confidenceDecayPerDay: settings?.decay?.confidenceDecayPerDay ?? defaultDecayPolicy.confidenceDecayPerDay,
+      freshnessDecayPerDay: settings?.decay?.freshnessDecayPerDay ?? defaultDecayPolicy.freshnessDecayPerDay,
+      minConfidence: settings?.decay?.minConfidence ?? defaultDecayPolicy.minConfidence,
+      minFreshness: settings?.decay?.minFreshness ?? defaultDecayPolicy.minFreshness,
+    },
+    reinforcement: {
+      enabled: settings?.reinforcement?.enabled ?? defaultReinforcementPolicy.enabled,
+      confidenceBoost: settings?.reinforcement?.confidenceBoost ?? defaultReinforcementPolicy.confidenceBoost,
+      freshnessBoost: settings?.reinforcement?.freshnessBoost ?? defaultReinforcementPolicy.freshnessBoost,
+      maxConfidence: settings?.reinforcement?.maxConfidence ?? defaultReinforcementPolicy.maxConfidence,
+      maxFreshness: settings?.reinforcement?.maxFreshness ?? defaultReinforcementPolicy.maxFreshness,
+    },
+    routing: {
+      preferReviewerOnContested: settings?.routing?.preferReviewerOnContested ?? defaultRoutingPolicy.preferReviewerOnContested,
+      preferReviewerOnStale: settings?.routing?.preferReviewerOnStale ?? defaultRoutingPolicy.preferReviewerOnStale,
+      preferReviewerOnProvenance: settings?.routing?.preferReviewerOnProvenance ?? defaultRoutingPolicy.preferReviewerOnProvenance,
+      staleThreshold: settings?.routing?.staleThreshold ?? defaultRoutingPolicy.staleThreshold,
+      preferExecutorOnActionable: settings?.routing?.preferExecutorOnActionable ?? defaultRoutingPolicy.preferExecutorOnActionable,
+      preferPlannerOnDistilled: settings?.routing?.preferPlannerOnDistilled ?? defaultRoutingPolicy.preferPlannerOnDistilled,
+    },
+    provenance: {
+      trustProfile: settings?.provenance?.trustProfile,
+      trustedSignerNames: settings?.provenance?.trustedSignerNames,
+      allowedOrigins: settings?.provenance?.allowedOrigins,
+      allowedSigners: settings?.provenance?.allowedSigners,
+      allowedSignerKeyIds: settings?.provenance?.allowedSignerKeyIds,
+    },
+  };
+
+  const origin = {
+    maxShortTermRecords: settings?.maxShortTermRecords !== undefined ? "space" : "default",
+    retentionDays: {
+      short: settings?.retentionDays?.short !== undefined ? "space" : "default",
+      mid: settings?.retentionDays?.mid !== undefined ? "space" : "default",
+      long: settings?.retentionDays?.long !== undefined ? "space" : "unset",
+    },
+    compaction: {
+      shortPromoteImportanceMin: settings?.compaction?.shortPromoteImportanceMin !== undefined ? "space" : "default",
+      shortPromoteConfidenceMin: settings?.compaction?.shortPromoteConfidenceMin !== undefined ? "space" : "default",
+      midPromoteImportanceMin: settings?.compaction?.midPromoteImportanceMin !== undefined ? "space" : "default",
+      midPromoteConfidenceMin: settings?.compaction?.midPromoteConfidenceMin !== undefined ? "space" : "default",
+      midPromoteFreshnessMin: settings?.compaction?.midPromoteFreshnessMin !== undefined ? "space" : "default",
+      archiveImportanceMax: settings?.compaction?.archiveImportanceMax !== undefined ? "space" : "default",
+      archiveConfidenceMax: settings?.compaction?.archiveConfidenceMax !== undefined ? "space" : "default",
+      archiveFreshnessMax: settings?.compaction?.archiveFreshnessMax !== undefined ? "space" : "default",
+      distillMinClusterSize: settings?.compaction?.distillMinClusterSize !== undefined ? "space" : "default",
+      distillMinTokenOverlap: settings?.compaction?.distillMinTokenOverlap !== undefined ? "space" : "default",
+      distillSupersedeSources: settings?.compaction?.distillSupersedeSources !== undefined ? "space" : "default",
+      distillSupersedeMinConfidence: settings?.compaction?.distillSupersedeMinConfidence !== undefined ? "space" : "default",
+    },
+    conflict: {
+      enabled: settings?.conflict?.enabled !== undefined ? "space" : "default",
+      minTokenOverlap: settings?.conflict?.minTokenOverlap !== undefined ? "space" : "default",
+      confidencePenalty: settings?.conflict?.confidencePenalty !== undefined ? "space" : "default",
+    },
+    decay: {
+      enabled: settings?.decay?.enabled !== undefined ? "space" : "default",
+      minAgeDays: settings?.decay?.minAgeDays !== undefined ? "space" : "default",
+      confidenceDecayPerDay: settings?.decay?.confidenceDecayPerDay !== undefined ? "space" : "default",
+      freshnessDecayPerDay: settings?.decay?.freshnessDecayPerDay !== undefined ? "space" : "default",
+      minConfidence: settings?.decay?.minConfidence !== undefined ? "space" : "default",
+      minFreshness: settings?.decay?.minFreshness !== undefined ? "space" : "default",
+    },
+    reinforcement: {
+      enabled: settings?.reinforcement?.enabled !== undefined ? "space" : "default",
+      confidenceBoost: settings?.reinforcement?.confidenceBoost !== undefined ? "space" : "default",
+      freshnessBoost: settings?.reinforcement?.freshnessBoost !== undefined ? "space" : "default",
+      maxConfidence: settings?.reinforcement?.maxConfidence !== undefined ? "space" : "default",
+      maxFreshness: settings?.reinforcement?.maxFreshness !== undefined ? "space" : "default",
+    },
+    routing: {
+      preferReviewerOnContested: settings?.routing?.preferReviewerOnContested !== undefined ? "space" : "default",
+      preferReviewerOnStale: settings?.routing?.preferReviewerOnStale !== undefined ? "space" : "default",
+      preferReviewerOnProvenance: settings?.routing?.preferReviewerOnProvenance !== undefined ? "space" : "default",
+      staleThreshold: settings?.routing?.staleThreshold !== undefined ? "space" : "default",
+      preferExecutorOnActionable: settings?.routing?.preferExecutorOnActionable !== undefined ? "space" : "default",
+      preferPlannerOnDistilled: settings?.routing?.preferPlannerOnDistilled !== undefined ? "space" : "default",
+    },
+    provenance: {
+      trustProfile: settings?.provenance?.trustProfile !== undefined ? "space" : "unset",
+      trustedSignerNames: settings?.provenance?.trustedSignerNames !== undefined ? "space" : "unset",
+      allowedOrigins: settings?.provenance?.allowedOrigins !== undefined ? "space" : "unset",
+      allowedSigners: settings?.provenance?.allowedSigners !== undefined ? "space" : "unset",
+      allowedSignerKeyIds: settings?.provenance?.allowedSignerKeyIds !== undefined ? "space" : "unset",
+    },
+  };
+
+  return {
+    raw: settings ?? {},
+    effective,
+    origin,
+  };
 }
 
 interface SpaceExport {

@@ -34,9 +34,11 @@ Current policy:
 Current policy:
 
 - `--json` output is the machine-facing CLI contract
+- `--json --json-envelope` provides a versioned envelope contract (`schemaVersion`, `command`, `generatedAt`, `data`)
+- current envelope contract: `schemaVersion=1.0.0`
 - additive fields are allowed
 - destructive schema changes should be avoided inside a release line
-- if a breaking `--json` contract change is necessary, it must be called out explicitly in the changelog
+- if a breaking `--json` contract change is necessary, it must be called out explicitly in the changelog and envelope version notes
 
 ### SQLite Schema
 
@@ -76,6 +78,7 @@ Current policy:
 Current policy:
 
 - trust profile names such as `permissive`, `signed`, and `anchored` are part of the operator surface
+- named trust policy packs (`.trust-packs/*.json`) are additive overlays and may define inherited policy bundles with optional base-profile defaults
 - new profiles may be added additively
 - changing the meaning of an existing trust profile should be treated as a breaking operational change
 

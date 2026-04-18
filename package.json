@@ -33,6 +33,11 @@
     "demo:client": "node scripts/client-demo.mjs",
     "demo": "node scripts/demo.mjs",
     "demo:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "example:agent-loop": "node examples/agent-loop/loop.mjs",
+    "example:service": "node examples/memory-service/service.mjs",
+    "bench": "node scripts/benchmark.mjs",
+    "bench:provenance": "node scripts/benchmark-provenance.mjs",
+    "eval:semantic": "npm run build && node dist/cli/index.js memory semantic-eval --corpus docs/evals/retrieval-corpus.v1.json --output docs/evals/semantic-eval.latest.json --json",
     "pack:check": "npm run build && node scripts/check-pack.mjs",
     "start": "node dist/cli/index.js",
     "test": "npm run build && node --test dist/test/*.test.js"

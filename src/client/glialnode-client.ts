@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 
 import type {
@@ -9,6 +10,15 @@ import type {
   RoutingPolicy,
   ReinforcementPolicy,
   RetentionPolicy,
+} from "../core/config.js";
+import {
+  defaultCompactionPolicy,
+  defaultConfig,
+  defaultConflictPolicy,
+  defaultDecayPolicy,
+  defaultReinforcementPolicy,
+  defaultRetentionPolicy,
+  defaultRoutingPolicy,
 } from "../core/config.js";
 import { createId } from "../core/ids.js";
 import {
@@ -29,6 +39,7 @@ import type {
   MemoryEvent,
   MemoryRecord,
   MemoryRecordLink,
+  MemorySearchQuery,
   MemorySpace,
   MemorySpaceSettings,
   RecordStatus,
@@ -65,10 +76,13 @@ import {
   buildRecallTrace,
   formatReplyContextBlock,
   formatReplyContextText,
+  rerankRecordsWithSemanticPrototype,
   type MemoryBundle,
   type MemoryBundleConsumer,
+  type MemoryBundleProvenanceMode,
   type MemoryBundleProfile,
   type RecallPack,
+  type SemanticPrototypeRerankOptions,
   type ReplyContextFormatOptions,
   type RecallTrace,
 } from "../memory/retrieval.js";
@@ -81,7 +95,8 @@ import {
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import type { MemoryRepository, SpaceReport } from "../storage/repository.js";
-import type { SqliteConnectionPolicy } from "../storage/sqlite/connection.js";
+import type { SqliteConnectionPolicy, SqliteWriteMode } from "../storage/sqlite/connection.js";
+import { createSerializedLocalRepository } from "../storage/serialized-local-repository.js";
 import { SqliteMemoryRepository } from "../storage/sqlite/sqlite-repository.js";
 
 export interface GlialNodeClientOptions {
@@ -89,6 +104,7 @@ export interface GlialNodeClientOptions {
   repository?: MemoryRepository;
   presetDirectory?: string;
   sqlite?: Partial<SqliteConnectionPolicy>;
+  writeMode?: SqliteWriteMode;
 }
 
 export interface CreateSpaceInput {
@@ -167,6 +183,302 @@ export interface SpaceSnapshot {
   links: MemoryRecordLink[];
 }
 
+export interface SpaceGraphExportOptions {
+  includeScopes?: boolean;
+  includeEvents?: boolean;
+}
+
+export type SpaceGraphExportFormat = "native" | "cytoscape" | "dot";
+
+export interface SpaceGraphExportToFileOptions extends SpaceGraphExportOptions {
+  format?: SpaceGraphExportFormat;
+}
+
+export type SpaceGraphNodeType = "space" | "scope" | "record" | "event";
+
+export interface SpaceGraphNode {
+  id: string;
+  type: SpaceGraphNodeType;
+  label: string;
+  scopeType?: ScopeRecord["type"];
+  parentScopeId?: string;
+  tier?: MemoryRecord["tier"];
+  kind?: MemoryRecord["kind"];
+  status?: MemoryRecord["status"];
+  visibility?: MemoryRecord["visibility"];
+  eventType?: MemoryEvent["type"];
+  actorType?: MemoryEvent["actorType"];
+  actorId?: string;
+  scopeId?: string;
+  tags?: string[];
+  importance?: number;
+  confidence?: number;
+  freshness?: number;
+  summary?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type SpaceGraphEdgeType =
+  | "contains_scope"
+  | "contains_record"
+  | "contains_event"
+  | "scope_parent"
+  | "record_link"
+  | "source_event";
+
+export interface SpaceGraphEdge {
+  id: string;
+  type: SpaceGraphEdgeType;
+  fromId: string;
+  toId: string;
+  label: string;
+  relation?: MemoryRecordLink["type"];
+  createdAt: string;
+}
+
+export interface SpaceGraphExport {
+  metadata: {
+    schemaVersion: 1;
+    exportedAt: string;
+    spaceId: string;
+    spaceName: string;
+    nodeCount: number;
+    edgeCount: number;
+    options: {
+      includeScopes: boolean;
+      includeEvents: boolean;
+    };
+  };
+  counts: {
+    scopes: number;
+    events: number;
+    records: number;
+    links: number;
+  };
+  nodes: SpaceGraphNode[];
+  edges: SpaceGraphEdge[];
+}
+
+export interface SpaceGraphCytoscapeExport {
+  metadata: SpaceGraphExport["metadata"];
+  counts: SpaceGraphExport["counts"];
+  elements: {
+    nodes: Array<{ data: SpaceGraphNode }>;
+    edges: Array<{ data: SpaceGraphEdge & { source: string; target: string } }>;
+  };
+}
+
+export interface SpaceInspectorSnapshotOptions extends SpaceGraphExportOptions {
+  recentEventLimit?: number;
+  includeTrustRegistry?: boolean;
+  presetDirectory?: string;
+  recall?: SpaceInspectorRecallOptions;
+}
+
+export interface SpaceInspectorRecallOptions {
+  query: Omit<MemorySearchQuery, "spaceId">;
+  primaryLimit?: number;
+  supportLimit?: number;
+  bundleConsumer?: MemoryBundleConsumer;
+  bundleProvenanceMode?: MemoryBundleProvenanceMode;
+}
+
+export interface SpaceInspectorPolicyView {
+  effective: {
+    maxShortTermRecords: number;
+    retentionDays: {
+      short?: number;
+      mid?: number;
+      long?: number;
+    };
+    compaction: CompactionPolicy;
+    conflict: ConflictPolicy;
+    decay: DecayPolicy;
+    reinforcement: ReinforcementPolicy;
+    routing: RoutingPolicy;
+    provenance: {
+      trustProfile?: SpaceSnapshotTrustProfile;
+      trustedSignerNames?: string[];
+      allowedOrigins?: string[];
+      allowedSigners?: string[];
+      allowedSignerKeyIds?: string[];
+    };
+  };
+  origin: {
+    maxShortTermRecords: "space" | "default";
+    retentionDays: {
+      short: "space" | "default";
+      mid: "space" | "default";
+      long: "space" | "unset";
+    };
+    compaction: Record<keyof CompactionPolicy, "space" | "default">;
+    conflict: Record<keyof ConflictPolicy, "space" | "default">;
+    decay: Record<keyof DecayPolicy, "space" | "default">;
+    reinforcement: Record<keyof ReinforcementPolicy, "space" | "default">;
+    routing: Record<keyof RoutingPolicy, "space" | "default">;
+    provenance: {
+      trustProfile: "space" | "unset";
+      trustedSignerNames: "space" | "unset";
+      allowedOrigins: "space" | "unset";
+      allowedSigners: "space" | "unset";
+      allowedSignerKeyIds: "space" | "unset";
+    };
+  };
+}
+
+export interface SpaceInspectorSnapshot {
+  metadata: {
+    schemaVersion: 1;
+    generatedAt: string;
+  };
+  space: MemorySpace;
+  report: SpaceReport;
+  risk: SpaceInspectorRiskSummary;
+  policy: SpaceInspectorPolicyView;
+  graph: SpaceGraphExport;
+  recall?: {
+    query: MemorySearchQuery;
+    traceCount: number;
+    traces: RecallTrace[];
+    bundles: MemoryBundle[];
+  };
+  trustRegistry?: {
+    trustedSigners: TrustedSignerSummary[];
+    trustPolicyPacks: Array<{
+      name: string;
+      description?: string;
+      inheritsFrom?: string;
+      baseProfile?: PresetBundleTrustProfileName;
+      updatedAt: string;
+      policy: PresetBundleTrustPolicy;
+    }>;
+  };
+}
+
+export interface SpaceInspectorExportResult {
+  outputPath: string;
+  snapshot: SpaceInspectorSnapshot;
+}
+
+export interface SpaceInspectorSnapshotExportResult {
+  outputPath: string;
+  snapshot: SpaceInspectorSnapshot;
+}
+
+export interface SpaceInspectorIndexSnapshotOptions {
+  recentEventLimit?: number;
+  includeTrustRegistry?: boolean;
+  includeGraphCounts?: boolean;
+  presetDirectory?: string;
+}
+
+export interface SpaceInspectorIndexSnapshot {
+  metadata: {
+    schemaVersion: 1;
+    generatedAt: string;
+    spaceCount: number;
+  };
+  totals: {
+    records: number;
+    events: number;
+    links: number;
+    graphNodes: number;
+    graphEdges: number;
+    spacesNeedingTrustReview: number;
+    spacesWithContestedMemory: number;
+    spacesWithStaleMemory: number;
+  };
+  spaces: Array<{
+    space: {
+      id: string;
+      name: string;
+      description?: string;
+      updatedAt: string;
+    };
+    report: {
+      recordCount: number;
+      eventCount: number;
+      linkCount: number;
+      provenanceSummaryCount: number;
+      latestMaintenanceAt?: string;
+    };
+    policy: {
+      maxShortTermRecords: number;
+      provenanceTrustProfile?: SpaceSnapshotTrustProfile;
+    };
+    risk: SpaceInspectorRiskSummary;
+    graph?: {
+      nodes: number;
+      edges: number;
+    };
+  }>;
+  trustRegistry?: SpaceInspectorSnapshot["trustRegistry"];
+}
+
+export interface SpaceInspectorIndexExportResult {
+  outputPath: string;
+  snapshot: SpaceInspectorIndexSnapshot;
+}
+
+export interface SpaceInspectorIndexSnapshotExportResult {
+  outputPath: string;
+  snapshot: SpaceInspectorIndexSnapshot;
+}
+
+export interface SpaceInspectorPackExportOptions {
+  recentEventLimit?: number;
+  includeScopes?: boolean;
+  includeEvents?: boolean;
+  includeTrustRegistry?: boolean;
+  includeGraphCounts?: boolean;
+  presetDirectory?: string;
+  recall?: SpaceInspectorRecallOptions;
+  captureScreenshots?: boolean;
+  screenshotViewport?: {
+    width: number;
+    height: number;
+  };
+}
+
+export interface SpaceInspectorPackManifest {
+  metadata: {
+    schemaVersion: 1;
+    generatedAt: string;
+    outputDirectory: string;
+    spaceCount: number;
+  };
+  files: {
+    indexHtml: string;
+    indexSnapshot: string;
+    indexScreenshot?: string;
+  };
+  spaces: Array<{
+    spaceId: string;
+    spaceName: string;
+    html: string;
+    snapshot: string;
+    screenshot?: string;
+    riskLevel: SpaceInspectorRiskSummary["riskLevel"];
+  }>;
+  totals: SpaceInspectorIndexSnapshot["totals"];
+}
+
+export interface SpaceInspectorPackExportResult {
+  outputDirectory: string;
+  manifestPath: string;
+  manifest: SpaceInspectorPackManifest;
+}
+
+export interface SpaceInspectorRiskSummary {
+  contestedMemoryEvents: number;
+  decayedMemoryEvents: number;
+  provenanceSummaryRecords: number;
+  needsTrustReview: boolean;
+  maintenanceStale: boolean;
+  riskLevel: "low" | "moderate" | "high";
+}
+
 export interface ExportSpaceSnapshotOptions {
   origin?: string;
   signer?: string;
@@ -209,6 +521,37 @@ export interface ImportSpaceSnapshotOptions {
 
 export type ImportCollisionPolicy = "error" | "overwrite" | "rename";
 
+export interface SnapshotImportPreview {
+  collisionPolicy: ImportCollisionPolicy;
+  trustProfile: SpaceSnapshotTrustProfile;
+  requestedSpace: {
+    id: string;
+    name: string;
+  };
+  targetSpace: {
+    id: string;
+    name: string;
+  };
+  existingSpace: {
+    id: string;
+    name: string;
+  } | null;
+  identityRemapped: boolean;
+  applyAllowed: boolean;
+  blockingIssues: string[];
+  importedCounts: {
+    scopes: number;
+    events: number;
+    records: number;
+    links: number;
+  };
+  snapshotMetadata: {
+    snapshotFormatVersion: number;
+    signed: boolean;
+  };
+  validation: SpaceSnapshotValidationResult | null;
+}
+
 export interface ImportPresetBundleOptions {
   directory?: string;
   name?: string;
@@ -235,8 +578,13 @@ export interface SearchReinforcementOptions extends ReinforceRecordOptions {
   limit?: number;
 }
 
+export interface SearchSemanticOptions extends SemanticPrototypeRerankOptions {
+  enabled?: boolean;
+}
+
 export interface RecallOptions {
   reinforce?: SearchReinforcementOptions;
+  semantic?: SearchSemanticOptions;
   primaryLimit?: number;
   supportLimit?: number;
   includeSameScopeDistilled?: boolean;
@@ -245,6 +593,7 @@ export interface RecallOptions {
   bundleMaxSupporting?: number;
   bundleMaxContentChars?: number;
   bundlePreferCompact?: boolean;
+  bundleProvenanceMode?: MemoryBundleProvenanceMode;
 }
 
 export interface PrepareReplyContextOptions extends RecallOptions, ReplyContextFormatOptions {
@@ -316,6 +665,25 @@ export interface TrustedSignerSummary {
   replacedBy?: string;
 }
 
+export interface TrustPolicyPackRecord {
+  name: string;
+  description?: string;
+  inheritsFrom?: string;
+  baseProfile?: PresetBundleTrustProfileName;
+  policy: PresetBundleTrustPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RegisterTrustPolicyPackOptions {
+  description?: string;
+  inheritsFrom?: string;
+  baseProfile?: PresetBundleTrustProfileName;
+  policy?: PresetBundleTrustPolicy;
+  directory?: string;
+  overwrite?: boolean;
+}
+
 export interface PresetBundle {
   metadata: PresetBundleMetadata;
   exportedAt: string;
@@ -375,8 +743,12 @@ export class GlialNodeClient {
   private readonly presetDirectory: string;
 
   constructor(options: GlialNodeClientOptions = {}) {
+    const writeMode = options.writeMode ?? options.sqlite?.writeMode ?? "single_writer";
+
     if (options.repository) {
-      this.repository = options.repository;
+      this.repository = writeMode === "serialized_local"
+        ? createSerializedLocalRepository(options.repository)
+        : options.repository;
       this.closeRepository = null;
       this.presetDirectory = resolve(options.presetDirectory ?? ".glialnode/presets");
       return;
@@ -386,9 +758,14 @@ export class GlialNodeClient {
     mkdirSync(dirname(filename), { recursive: true });
     const repository = new SqliteMemoryRepository({
       filename,
-      connection: options.sqlite,
+      connection: {
+        ...options.sqlite,
+        writeMode,
+      },
     });
-    this.repository = repository;
+    this.repository = writeMode === "serialized_local"
+      ? createSerializedLocalRepository(repository)
+      : repository;
     this.closeRepository = () => repository.close();
     this.presetDirectory = resolve(options.presetDirectory ?? join(dirname(filename), "presets"));
   }
@@ -580,6 +957,46 @@ export class GlialNodeClient {
 
   listPresetBundleTrustProfiles(): PresetBundleTrustProfileName[] {
     return ["permissive", "signed", "anchored"];
+  }
+
+  registerTrustPolicyPack(
+    name: string,
+    options: RegisterTrustPolicyPackOptions = {},
+  ): TrustPolicyPackRecord {
+    const directory = resolve(options.directory ?? this.presetDirectory);
+    const existingPath = getTrustPolicyPackPath(directory, name);
+    if (!options.overwrite && existsSync(existingPath)) {
+      throw new Error(`Trust policy pack already exists: ${name}`);
+    }
+
+    const timestamp = new Date().toISOString();
+    const next: TrustPolicyPackRecord = {
+      name,
+      description: options.description,
+      inheritsFrom: options.inheritsFrom,
+      baseProfile: options.baseProfile,
+      policy: options.policy ?? {},
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    if (options.inheritsFrom) {
+      // Verify inheritance target exists early for safer operator feedback.
+      this.getTrustPolicyPack(options.inheritsFrom, directory);
+    }
+    writeTrustPolicyPackRecord(directory, next);
+    return next;
+  }
+
+  listTrustPolicyPacks(directory?: string): TrustPolicyPackRecord[] {
+    return listTrustPolicyPackRecords(resolve(directory ?? this.presetDirectory));
+  }
+
+  getTrustPolicyPack(name: string, directory?: string): TrustPolicyPackRecord {
+    return readTrustPolicyPackRecord(resolve(directory ?? this.presetDirectory), name);
+  }
+
+  resolveTrustPolicyPack(name: string, directory?: string): TrustPolicyPackRecord {
+    return resolveTrustPolicyPackRecord(name, resolve(directory ?? this.presetDirectory));
   }
 
   getTrustedSigner(name: string, directory?: string): TrustedSignerRecord {
@@ -1052,10 +1469,12 @@ export class GlialNodeClient {
 
   async searchRecords(
     query: Parameters<MemoryRepository["searchRecords"]>[0],
-    options: { reinforce?: SearchReinforcementOptions } = {},
+    options: { reinforce?: SearchReinforcementOptions; semantic?: SearchSemanticOptions } = {},
   ): Promise<MemoryRecord[]> {
     await requireSpace(this.repository, query.spaceId);
-    const results = await this.repository.searchRecords(query);
+    const baseResults = await this.repository.searchRecords(query);
+    const semanticRerank = rerankRecordsWithSemanticPrototype(baseResults, query.text, options.semantic);
+    const results = semanticRerank.records;
 
     if (options.reinforce?.enabled) {
       const limit = options.reinforce.limit ?? results.length;
@@ -1080,6 +1499,7 @@ export class GlialNodeClient {
     await requireSpace(this.repository, query.spaceId);
     const results = await this.searchRecords(query, {
       reinforce: options.reinforce,
+      semantic: options.semantic,
     });
     const primaryRecords = results.slice(0, Math.max(options.primaryLimit ?? results.length, 0));
 
@@ -1126,6 +1546,7 @@ export class GlialNodeClient {
       maxSupporting: options.bundleMaxSupporting,
       maxContentChars: options.bundleMaxContentChars,
       preferCompact: options.bundlePreferCompact,
+      provenanceMode: options.bundleProvenanceMode,
     }));
   }
 
@@ -1150,6 +1571,7 @@ export class GlialNodeClient {
         maxSupporting: options.bundleMaxSupporting,
         maxContentChars: options.bundleMaxContentChars,
         preferCompact: options.bundlePreferCompact,
+        provenanceMode: options.bundleProvenanceMode,
       });
 
       const entry: PreparedReplyContextEntry = {
@@ -1461,6 +1883,350 @@ export class GlialNodeClient {
     return this.repository.getSpaceReport(spaceId, recentEventLimit);
   }
 
+  async buildSpaceInspectorSnapshot(
+    spaceId: string,
+    options: SpaceInspectorSnapshotOptions = {},
+  ): Promise<SpaceInspectorSnapshot> {
+    const includeScopes = options.includeScopes ?? true;
+    const includeEvents = options.includeEvents ?? true;
+    const recentEventLimit = options.recentEventLimit ?? 20;
+    const includeTrustRegistry = options.includeTrustRegistry ?? true;
+    const space = await requireSpace(this.repository, spaceId);
+    const [report, graph] = await Promise.all([
+      this.repository.getSpaceReport(spaceId, recentEventLimit),
+      this.exportSpaceGraph(spaceId, { includeScopes, includeEvents }),
+    ]);
+    const risk = buildSpaceInspectorRiskSummary(report);
+    const recall = options.recall
+      ? await buildInspectorRecall(this, spaceId, options.recall)
+      : undefined;
+    const trustRegistry = includeTrustRegistry
+      ? {
+          trustedSigners: this.listTrustedSigners(options.presetDirectory),
+          trustPolicyPacks: this.listTrustPolicyPacks(options.presetDirectory).map((pack) => ({
+            name: pack.name,
+            description: pack.description,
+            inheritsFrom: pack.inheritsFrom,
+            baseProfile: pack.baseProfile,
+            updatedAt: pack.updatedAt,
+            policy: pack.policy,
+          })),
+        }
+      : undefined;
+
+    return {
+      metadata: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+      },
+      space,
+      report,
+      risk,
+      policy: buildSpaceInspectorPolicyView(space.settings),
+      graph,
+      recall,
+      trustRegistry,
+    };
+  }
+
+  async exportSpaceInspectorHtml(
+    spaceId: string,
+    outputPath: string,
+    options: SpaceInspectorSnapshotOptions = {},
+  ): Promise<SpaceInspectorExportResult> {
+    const snapshot = await this.buildSpaceInspectorSnapshot(spaceId, options);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, renderSpaceInspectorHtml(snapshot), "utf8");
+    return {
+      outputPath: resolvedOutputPath,
+      snapshot,
+    };
+  }
+
+  async exportSpaceInspectorSnapshotToFile(
+    spaceId: string,
+    outputPath: string,
+    options: SpaceInspectorSnapshotOptions = {},
+  ): Promise<SpaceInspectorSnapshotExportResult> {
+    const snapshot = await this.buildSpaceInspectorSnapshot(spaceId, options);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, JSON.stringify(snapshot, null, 2), "utf8");
+    return {
+      outputPath: resolvedOutputPath,
+      snapshot,
+    };
+  }
+
+  async buildSpaceInspectorIndexSnapshot(
+    options: SpaceInspectorIndexSnapshotOptions = {},
+  ): Promise<SpaceInspectorIndexSnapshot> {
+    const recentEventLimit = options.recentEventLimit ?? 10;
+    const includeTrustRegistry = options.includeTrustRegistry ?? true;
+    const includeGraphCounts = options.includeGraphCounts ?? true;
+    const spaces = await this.listSpaces();
+    const entries: SpaceInspectorIndexSnapshot["spaces"] = [];
+    let totalRecords = 0;
+    let totalEvents = 0;
+    let totalLinks = 0;
+    let totalGraphNodes = 0;
+    let totalGraphEdges = 0;
+    let spacesNeedingTrustReview = 0;
+    let spacesWithContestedMemory = 0;
+    let spacesWithStaleMemory = 0;
+
+    for (const space of spaces) {
+      const report = await this.getSpaceReport(space.id, recentEventLimit);
+      totalRecords += report.recordCount;
+      totalEvents += report.eventCount;
+      totalLinks += report.linkCount;
+      const risk = buildSpaceInspectorRiskSummary(report);
+      if (risk.needsTrustReview) {
+        spacesNeedingTrustReview += 1;
+      }
+      if (risk.contestedMemoryEvents > 0) {
+        spacesWithContestedMemory += 1;
+      }
+      if (risk.decayedMemoryEvents > 0) {
+        spacesWithStaleMemory += 1;
+      }
+
+      let graphCounts: { nodes: number; edges: number } | undefined;
+      if (includeGraphCounts) {
+        const graph = await this.exportSpaceGraph(space.id, { includeScopes: true, includeEvents: true });
+        graphCounts = {
+          nodes: graph.metadata.nodeCount,
+          edges: graph.metadata.edgeCount,
+        };
+        totalGraphNodes += graphCounts.nodes;
+        totalGraphEdges += graphCounts.edges;
+      }
+
+      entries.push({
+        space: {
+          id: space.id,
+          name: space.name,
+          description: space.description,
+          updatedAt: space.updatedAt,
+        },
+        report: {
+          recordCount: report.recordCount,
+          eventCount: report.eventCount,
+          linkCount: report.linkCount,
+          provenanceSummaryCount: report.provenanceSummaryCount,
+          latestMaintenanceAt: report.maintenance.latestRunAt,
+        },
+        policy: {
+          maxShortTermRecords: buildSpaceInspectorPolicyView(space.settings).effective.maxShortTermRecords,
+          provenanceTrustProfile: space.settings?.provenance?.trustProfile,
+        },
+        risk,
+        graph: graphCounts,
+      });
+    }
+
+    const trustRegistry = includeTrustRegistry
+      ? {
+          trustedSigners: this.listTrustedSigners(options.presetDirectory),
+          trustPolicyPacks: this.listTrustPolicyPacks(options.presetDirectory).map((pack) => ({
+            name: pack.name,
+            description: pack.description,
+            inheritsFrom: pack.inheritsFrom,
+            baseProfile: pack.baseProfile,
+            updatedAt: pack.updatedAt,
+            policy: pack.policy,
+          })),
+        }
+      : undefined;
+
+    return {
+      metadata: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        spaceCount: entries.length,
+      },
+      totals: {
+        records: totalRecords,
+        events: totalEvents,
+        links: totalLinks,
+        graphNodes: totalGraphNodes,
+        graphEdges: totalGraphEdges,
+        spacesNeedingTrustReview,
+        spacesWithContestedMemory,
+        spacesWithStaleMemory,
+      },
+      spaces: entries.sort((left, right) => left.space.name.localeCompare(right.space.name)),
+      trustRegistry,
+    };
+  }
+
+  async exportSpaceInspectorIndexHtml(
+    outputPath: string,
+    options: SpaceInspectorIndexSnapshotOptions = {},
+  ): Promise<SpaceInspectorIndexExportResult> {
+    const snapshot = await this.buildSpaceInspectorIndexSnapshot(options);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, renderSpaceInspectorIndexHtml(snapshot), "utf8");
+    return {
+      outputPath: resolvedOutputPath,
+      snapshot,
+    };
+  }
+
+  async exportSpaceInspectorIndexSnapshotToFile(
+    outputPath: string,
+    options: SpaceInspectorIndexSnapshotOptions = {},
+  ): Promise<SpaceInspectorIndexSnapshotExportResult> {
+    const snapshot = await this.buildSpaceInspectorIndexSnapshot(options);
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    writeFileSync(resolvedOutputPath, JSON.stringify(snapshot, null, 2), "utf8");
+    return {
+      outputPath: resolvedOutputPath,
+      snapshot,
+    };
+  }
+
+  async exportSpaceInspectorPack(
+    outputDirectory: string,
+    options: SpaceInspectorPackExportOptions = {},
+  ): Promise<SpaceInspectorPackExportResult> {
+    const resolvedOutputDirectory = resolve(outputDirectory);
+    const spacesDirectory = join(resolvedOutputDirectory, "spaces");
+    mkdirSync(spacesDirectory, { recursive: true });
+
+    const includeTrustRegistry = options.includeTrustRegistry ?? true;
+    const includeGraphCounts = options.includeGraphCounts ?? true;
+    const indexSnapshot = await this.buildSpaceInspectorIndexSnapshot({
+      recentEventLimit: options.recentEventLimit,
+      includeTrustRegistry,
+      includeGraphCounts,
+      presetDirectory: options.presetDirectory,
+    });
+
+    const indexHtmlPath = join(resolvedOutputDirectory, "index.html");
+    const indexSnapshotPath = join(resolvedOutputDirectory, "index.snapshot.json");
+    const indexScreenshotPath = join(resolvedOutputDirectory, "index.png");
+    writeFileSync(indexHtmlPath, renderSpaceInspectorIndexHtml(indexSnapshot), "utf8");
+    writeFileSync(indexSnapshotPath, JSON.stringify(indexSnapshot, null, 2), "utf8");
+    const capturedIndexScreenshot = options.captureScreenshots
+      ? await captureHtmlScreenshot(indexHtmlPath, indexScreenshotPath, options.screenshotViewport)
+      : undefined;
+
+    const spaces: SpaceInspectorPackManifest["spaces"] = [];
+    for (const entry of indexSnapshot.spaces) {
+      const spaceSnapshot = await this.buildSpaceInspectorSnapshot(entry.space.id, {
+        recentEventLimit: options.recentEventLimit,
+        includeScopes: options.includeScopes,
+        includeEvents: options.includeEvents,
+        includeTrustRegistry,
+        presetDirectory: options.presetDirectory,
+        recall: options.recall,
+      });
+      const spaceSlug = toSafePathSegment(entry.space.name);
+      const spaceStem = `${spaceSlug}-${entry.space.id}`;
+      const htmlPath = join(spacesDirectory, `${spaceStem}.html`);
+      const snapshotPath = join(spacesDirectory, `${spaceStem}.snapshot.json`);
+      const screenshotPath = join(spacesDirectory, `${spaceStem}.png`);
+      writeFileSync(htmlPath, renderSpaceInspectorHtml(spaceSnapshot), "utf8");
+      writeFileSync(snapshotPath, JSON.stringify(spaceSnapshot, null, 2), "utf8");
+      const capturedSpaceScreenshot = options.captureScreenshots
+        ? await captureHtmlScreenshot(htmlPath, screenshotPath, options.screenshotViewport)
+        : undefined;
+      spaces.push({
+        spaceId: entry.space.id,
+        spaceName: entry.space.name,
+        html: htmlPath,
+        snapshot: snapshotPath,
+        screenshot: capturedSpaceScreenshot,
+        riskLevel: spaceSnapshot.risk.riskLevel,
+      });
+    }
+
+    const manifest: SpaceInspectorPackManifest = {
+      metadata: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        outputDirectory: resolvedOutputDirectory,
+        spaceCount: spaces.length,
+      },
+      files: {
+        indexHtml: indexHtmlPath,
+        indexSnapshot: indexSnapshotPath,
+        indexScreenshot: capturedIndexScreenshot,
+      },
+      spaces,
+      totals: indexSnapshot.totals,
+    };
+    const manifestPath = join(resolvedOutputDirectory, "manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+
+    return {
+      outputDirectory: resolvedOutputDirectory,
+      manifestPath,
+      manifest,
+    };
+  }
+
+  async exportSpaceGraph(
+    spaceId: string,
+    options: SpaceGraphExportOptions = {},
+  ): Promise<SpaceGraphExport> {
+    const includeScopes = options.includeScopes ?? true;
+    const includeEvents = options.includeEvents ?? true;
+    const space = await requireSpace(this.repository, spaceId);
+    const [scopes, events, records, links] = await Promise.all([
+      this.repository.listScopes(spaceId),
+      this.repository.listEvents(spaceId, Number.MAX_SAFE_INTEGER),
+      this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER),
+      this.repository.listLinks(spaceId, Number.MAX_SAFE_INTEGER),
+    ]);
+
+    return buildSpaceGraphExport(space, scopes, events, records, links, {
+      includeScopes,
+      includeEvents,
+    });
+  }
+
+  async exportSpaceGraphCytoscape(
+    spaceId: string,
+    options: SpaceGraphExportOptions = {},
+  ): Promise<SpaceGraphCytoscapeExport> {
+    const graph = await this.exportSpaceGraph(spaceId, options);
+    return convertSpaceGraphToCytoscape(graph);
+  }
+
+  async exportSpaceGraphDot(
+    spaceId: string,
+    options: SpaceGraphExportOptions = {},
+  ): Promise<string> {
+    const graph = await this.exportSpaceGraph(spaceId, options);
+    return convertSpaceGraphToDot(graph);
+  }
+
+  async exportSpaceGraphToFile(
+    spaceId: string,
+    outputPath: string,
+    options: SpaceGraphExportToFileOptions = {},
+  ): Promise<string> {
+    const includeScopes = options.includeScopes ?? true;
+    const includeEvents = options.includeEvents ?? true;
+    const format = options.format ?? "native";
+    const graph = await this.exportSpaceGraph(spaceId, { includeScopes, includeEvents });
+    const resolvedOutputPath = resolve(outputPath);
+    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
+    if (format === "dot") {
+      writeFileSync(resolvedOutputPath, convertSpaceGraphToDot(graph), "utf8");
+    } else if (format === "cytoscape") {
+      writeFileSync(resolvedOutputPath, JSON.stringify(convertSpaceGraphToCytoscape(graph), null, 2), "utf8");
+    } else {
+      writeFileSync(resolvedOutputPath, JSON.stringify(graph, null, 2), "utf8");
+    }
+    return resolvedOutputPath;
+  }
+
   async exportSpace(spaceId: string, options: ExportSpaceSnapshotOptions = {}): Promise<SpaceSnapshot> {
     const space = await requireSpace(this.repository, spaceId);
     const [scopes, events, records, links] = await Promise.all([
@@ -1570,6 +2336,84 @@ export class GlialNodeClient {
   ): Promise<SpaceSnapshot> {
     const snapshot = parseSpaceSnapshot(readFileSync(resolve(inputPath), "utf8"));
     return this.importSnapshot(snapshot, options);
+  }
+
+  async previewSnapshotImport(
+    snapshot: SpaceSnapshot,
+    options: ImportSpaceSnapshotOptions = {},
+  ): Promise<SnapshotImportPreview> {
+    const normalizedSnapshot = normalizeSpaceSnapshot(snapshot);
+    const collisionPolicy = options.collisionPolicy ?? "error";
+    const trustProfile = options.trustProfile ?? "permissive";
+    const blockingIssues: string[] = [];
+    let validation: SpaceSnapshotValidationResult | null = null;
+
+    try {
+      validation = await this.validateSnapshot(
+        normalizedSnapshot,
+        options.trustPolicy,
+        trustProfile,
+        options.directory,
+      );
+    } catch (error) {
+      blockingIssues.push(error instanceof Error ? error.message : String(error));
+    }
+
+    const existingSpace = await this.repository.getSpace(normalizedSnapshot.space.id);
+    let preparedSnapshot = normalizedSnapshot;
+    try {
+      preparedSnapshot = await prepareSnapshotForImport(
+        this.repository,
+        normalizedSnapshot,
+        collisionPolicy,
+      );
+    } catch (error) {
+      blockingIssues.push(error instanceof Error ? error.message : String(error));
+    }
+
+    const requestedSpace = {
+      id: normalizedSnapshot.space.id,
+      name: normalizedSnapshot.space.name,
+    };
+    const targetSpace = {
+      id: preparedSnapshot.space.id,
+      name: preparedSnapshot.space.name,
+    };
+
+    return {
+      collisionPolicy,
+      trustProfile,
+      requestedSpace,
+      targetSpace,
+      existingSpace: existingSpace
+        ? {
+            id: existingSpace.id,
+            name: existingSpace.name,
+          }
+        : null,
+      identityRemapped: requestedSpace.id !== targetSpace.id || requestedSpace.name !== targetSpace.name,
+      applyAllowed: blockingIssues.length === 0,
+      blockingIssues,
+      importedCounts: {
+        scopes: normalizedSnapshot.scopes.length,
+        events: normalizedSnapshot.events.length,
+        records: normalizedSnapshot.records.length,
+        links: normalizedSnapshot.links.length,
+      },
+      snapshotMetadata: {
+        snapshotFormatVersion: normalizedSnapshot.metadata.snapshotFormatVersion,
+        signed: Boolean(normalizedSnapshot.metadata.signature),
+      },
+      validation,
+    };
+  }
+
+  async previewSnapshotImportFromFile(
+    inputPath: string,
+    options: ImportSpaceSnapshotOptions = {},
+  ): Promise<SnapshotImportPreview> {
+    const snapshot = parseSpaceSnapshot(readFileSync(resolve(inputPath), "utf8"));
+    return this.previewSnapshotImport(snapshot, options);
   }
 
   close(): void {
@@ -1787,6 +2631,129 @@ function toSigningKeySummary(record: SigningKeyRecord): SigningKeySummary {
 
 function getTrustedSignersDirectory(directory: string): string {
   return join(directory, ".trusted");
+}
+
+function getTrustPolicyPacksDirectory(directory: string): string {
+  return join(directory, ".trust-packs");
+}
+
+function getTrustPolicyPackPath(directory: string, name: string): string {
+  return join(getTrustPolicyPacksDirectory(directory), `${toPresetFileName(name)}.json`);
+}
+
+function writeTrustPolicyPackRecord(directory: string, record: TrustPolicyPackRecord): void {
+  const packsDirectory = getTrustPolicyPacksDirectory(directory);
+  ensureDirectoryWithMode(packsDirectory, 0o755);
+  writeJsonFileAtomic(getTrustPolicyPackPath(directory, record.name), JSON.stringify(record, null, 2), 0o644);
+}
+
+function readTrustPolicyPackRecord(directory: string, name: string): TrustPolicyPackRecord {
+  const recordPath = getTrustPolicyPackPath(directory, name);
+  if (!existsSync(recordPath)) {
+    throw new Error(`Unknown trust policy pack: ${name}`);
+  }
+
+  return parseTrustPolicyPackRecord(readFileSync(recordPath, "utf8"));
+}
+
+function listTrustPolicyPackRecords(directory: string): TrustPolicyPackRecord[] {
+  const packsDirectory = getTrustPolicyPacksDirectory(directory);
+  if (!existsSync(packsDirectory)) {
+    return [];
+  }
+
+  return readdirSync(packsDirectory)
+    .filter((entry) => entry.toLowerCase().endsWith(".json"))
+    .map((entry) => parseTrustPolicyPackRecord(readFileSync(join(packsDirectory, entry), "utf8")))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseTrustPolicyPackRecord(value: string): TrustPolicyPackRecord {
+  const parsed = JSON.parse(value) as Partial<TrustPolicyPackRecord>;
+  if (typeof parsed.name !== "string" || !parsed.name) {
+    throw new Error("Invalid trust policy pack: missing name.");
+  }
+
+  const baseProfile = parsed.baseProfile;
+  if (baseProfile !== undefined && baseProfile !== "permissive" && baseProfile !== "signed" && baseProfile !== "anchored") {
+    throw new Error(`Invalid trust policy pack base profile: ${String(baseProfile)}`);
+  }
+
+  const timestamp = new Date().toISOString();
+  return {
+    name: parsed.name,
+    description: typeof parsed.description === "string" ? parsed.description : undefined,
+    inheritsFrom: typeof parsed.inheritsFrom === "string" ? parsed.inheritsFrom : undefined,
+    baseProfile,
+    policy: sanitizeTrustPolicy(parsed.policy),
+    createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : timestamp,
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : timestamp,
+  };
+}
+
+function sanitizeTrustPolicy(value: unknown): PresetBundleTrustPolicy {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const raw = value as Record<string, unknown>;
+  const asStringArray = (entry: unknown): string[] | undefined => {
+    if (!Array.isArray(entry)) {
+      return undefined;
+    }
+    const values = entry
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return values.length > 0 ? values : undefined;
+  };
+
+  return {
+    requireSigner: typeof raw.requireSigner === "boolean" ? raw.requireSigner : undefined,
+    requireSignature: typeof raw.requireSignature === "boolean" ? raw.requireSignature : undefined,
+    allowedOrigins: asStringArray(raw.allowedOrigins),
+    allowedSigners: asStringArray(raw.allowedSigners),
+    allowedSignerKeyIds: asStringArray(raw.allowedSignerKeyIds),
+    trustedSignerNames: asStringArray(raw.trustedSignerNames),
+  };
+}
+
+function mergePresetBundleTrustPolicy(
+  base: PresetBundleTrustPolicy | undefined,
+  override: PresetBundleTrustPolicy | undefined,
+): PresetBundleTrustPolicy {
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
+    allowedOrigins: mergeStringArrays(base?.allowedOrigins, override?.allowedOrigins),
+    allowedSigners: mergeStringArrays(base?.allowedSigners, override?.allowedSigners),
+    allowedSignerKeyIds: mergeStringArrays(base?.allowedSignerKeyIds, override?.allowedSignerKeyIds),
+    trustedSignerNames: mergeStringArrays(base?.trustedSignerNames, override?.trustedSignerNames),
+  };
+}
+
+function resolveTrustPolicyPackRecord(name: string, directory: string): TrustPolicyPackRecord {
+  const visited = new Set<string>();
+
+  const resolveRecursive = (currentName: string): TrustPolicyPackRecord => {
+    if (visited.has(currentName)) {
+      throw new Error(`Circular trust policy pack inheritance detected at: ${currentName}`);
+    }
+    visited.add(currentName);
+
+    const current = readTrustPolicyPackRecord(directory, currentName);
+    const parent = current.inheritsFrom ? resolveRecursive(current.inheritsFrom) : undefined;
+    const resolvedBaseProfile = current.baseProfile ?? parent?.baseProfile;
+    const resolvedPolicy = mergePresetBundleTrustPolicy(parent?.policy, current.policy);
+
+    return {
+      ...current,
+      baseProfile: resolvedBaseProfile,
+      policy: resolvedPolicy,
+    };
+  };
+
+  return resolveRecursive(name);
 }
 
 function getTrustedSignerPath(directory: string, name: string): string {
@@ -2251,6 +3218,812 @@ function createPresetBundleSignaturePayload(bundle: PresetBundle): Buffer {
 
 function parseSpaceSnapshot(value: string): SpaceSnapshot {
   return normalizeSpaceSnapshot(JSON.parse(value) as Partial<SpaceSnapshot>);
+}
+
+export function convertSpaceGraphToCytoscape(graph: SpaceGraphExport): SpaceGraphCytoscapeExport {
+  return {
+    metadata: graph.metadata,
+    counts: graph.counts,
+    elements: {
+      nodes: graph.nodes.map((node) => ({
+        data: node,
+      })),
+      edges: graph.edges.map((edge) => ({
+        data: {
+          ...edge,
+          source: edge.fromId,
+          target: edge.toId,
+        },
+      })),
+    },
+  };
+}
+
+export function convertSpaceGraphToDot(graph: SpaceGraphExport): string {
+  const lines: string[] = [];
+  lines.push(`digraph ${toDotId(graph.metadata.spaceId)} {`);
+  lines.push(`  graph [label=${toDotLabel(`Space Graph: ${graph.metadata.spaceName}`)}, labelloc="t"];`);
+  lines.push("  rankdir=LR;");
+
+  for (const node of graph.nodes) {
+    const shape = getDotShapeForNodeType(node.type);
+    const label = node.label || `${node.type}:${node.id}`;
+    lines.push(`  ${toDotId(node.id)} [shape=${shape}, label=${toDotLabel(label)}];`);
+  }
+
+  for (const edge of graph.edges) {
+    lines.push(
+      `  ${toDotId(edge.fromId)} -> ${toDotId(edge.toId)} [label=${toDotLabel(edge.label)}];`,
+    );
+  }
+
+  lines.push("}");
+  return lines.join("\n");
+}
+
+function buildSpaceGraphExport(
+  space: MemorySpace,
+  scopes: ScopeRecord[],
+  events: MemoryEvent[],
+  records: MemoryRecord[],
+  links: MemoryRecordLink[],
+  options: {
+    includeScopes: boolean;
+    includeEvents: boolean;
+  },
+): SpaceGraphExport {
+  const exportedAt = new Date().toISOString();
+  const nodes: SpaceGraphNode[] = [
+    {
+      id: space.id,
+      type: "space",
+      label: space.name,
+      summary: space.description,
+      createdAt: space.createdAt,
+      updatedAt: space.updatedAt,
+    },
+    ...records.map((record) => ({
+      id: record.id,
+      type: "record" as const,
+      label: record.summary ?? record.content,
+      tier: record.tier,
+      kind: record.kind,
+      status: record.status,
+      visibility: record.visibility,
+      scopeId: record.scope.id,
+      tags: record.tags,
+      importance: record.importance,
+      confidence: record.confidence,
+      freshness: record.freshness,
+      summary: record.summary,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    })),
+  ];
+
+  if (options.includeScopes) {
+    nodes.push(...scopes.map((scope) => ({
+      id: scope.id,
+      type: "scope" as const,
+      label: scope.label ?? `${scope.type}:${scope.id}`,
+      scopeType: scope.type,
+      parentScopeId: scope.parentScopeId,
+      createdAt: scope.createdAt,
+      updatedAt: scope.updatedAt,
+    })));
+  }
+
+  if (options.includeEvents) {
+    nodes.push(...events.map((event) => ({
+      id: event.id,
+      type: "event" as const,
+      label: event.summary,
+      eventType: event.type,
+      actorType: event.actorType,
+      actorId: event.actorId,
+      scopeId: event.scope.id,
+      summary: event.summary,
+      createdAt: event.createdAt,
+    })));
+  }
+
+  const edges: SpaceGraphEdge[] = [
+    ...links.map((link) => ({
+      id: link.id,
+      type: "record_link" as const,
+      fromId: link.fromRecordId,
+      toId: link.toRecordId,
+      label: link.type,
+      relation: link.type,
+      createdAt: link.createdAt,
+    })),
+    ...records.map((record) => ({
+      id: `space:${space.id}:record:${record.id}`,
+      type: "contains_record" as const,
+      fromId: space.id,
+      toId: record.id,
+      label: "contains",
+      createdAt: record.createdAt,
+    })),
+    ...records
+      .filter((record) => Boolean(record.sourceEventId))
+      .map((record) => ({
+        id: `record:${record.id}:source:${record.sourceEventId}`,
+        type: "source_event" as const,
+        fromId: record.sourceEventId as string,
+        toId: record.id,
+        label: "source_event",
+        createdAt: record.createdAt,
+      })),
+  ];
+
+  if (options.includeScopes) {
+    edges.push(...scopes.map((scope) => ({
+      id: `space:${space.id}:scope:${scope.id}`,
+      type: "contains_scope" as const,
+      fromId: space.id,
+      toId: scope.id,
+      label: "contains",
+      createdAt: scope.createdAt,
+    })));
+    edges.push(...records.map((record) => ({
+      id: `scope:${record.scope.id}:record:${record.id}`,
+      type: "contains_record" as const,
+      fromId: record.scope.id,
+      toId: record.id,
+      label: "contains",
+      createdAt: record.createdAt,
+    })));
+    edges.push(...scopes
+      .filter((scope) => Boolean(scope.parentScopeId))
+      .map((scope) => ({
+        id: `scope:${scope.parentScopeId}:child:${scope.id}`,
+        type: "scope_parent" as const,
+        fromId: scope.parentScopeId as string,
+        toId: scope.id,
+        label: "parent_of",
+        createdAt: scope.createdAt,
+      })));
+  }
+
+  if (options.includeEvents) {
+    edges.push(...events.map((event) => ({
+      id: `space:${space.id}:event:${event.id}`,
+      type: "contains_event" as const,
+      fromId: space.id,
+      toId: event.id,
+      label: "contains",
+      createdAt: event.createdAt,
+    })));
+    if (options.includeScopes) {
+      edges.push(...events.map((event) => ({
+        id: `scope:${event.scope.id}:event:${event.id}`,
+        type: "contains_event" as const,
+        fromId: event.scope.id,
+        toId: event.id,
+        label: "contains",
+        createdAt: event.createdAt,
+      })));
+    }
+  }
+
+  const sortedNodes = nodes
+    .slice()
+    .sort((left, right) => `${left.type}:${left.id}`.localeCompare(`${right.type}:${right.id}`));
+  const sortedEdges = edges
+    .slice()
+    .sort((left, right) => `${left.type}:${left.fromId}:${left.toId}:${left.id}`.localeCompare(`${right.type}:${right.fromId}:${right.toId}:${right.id}`));
+
+  return {
+    metadata: {
+      schemaVersion: 1,
+      exportedAt,
+      spaceId: space.id,
+      spaceName: space.name,
+      nodeCount: sortedNodes.length,
+      edgeCount: sortedEdges.length,
+      options: {
+        includeScopes: options.includeScopes,
+        includeEvents: options.includeEvents,
+      },
+    },
+    counts: {
+      scopes: scopes.length,
+      events: events.length,
+      records: records.length,
+      links: links.length,
+    },
+    nodes: sortedNodes,
+    edges: sortedEdges,
+  };
+}
+
+function getDotShapeForNodeType(type: SpaceGraphNodeType): string {
+  switch (type) {
+    case "space":
+      return "doubleoctagon";
+    case "scope":
+      return "ellipse";
+    case "record":
+      return "box";
+    case "event":
+      return "diamond";
+    default:
+      return "box";
+  }
+}
+
+function toDotId(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
+
+function toDotLabel(value: string): string {
+  const normalized = value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\\"")
+    .replace(/\r?\n/g, "\\n");
+  return `"${normalized}"`;
+}
+
+function buildSpaceInspectorPolicyView(settings: MemorySpace["settings"] | undefined): SpaceInspectorPolicyView {
+  return {
+    effective: {
+      maxShortTermRecords: settings?.maxShortTermRecords ?? defaultConfig.maxWorkingMemoryRecords,
+      retentionDays: {
+        short: settings?.retentionDays?.short ?? defaultRetentionPolicy.short,
+        mid: settings?.retentionDays?.mid ?? defaultRetentionPolicy.mid,
+        long: settings?.retentionDays?.long,
+      },
+      compaction: {
+        shortPromoteImportanceMin: settings?.compaction?.shortPromoteImportanceMin ?? defaultCompactionPolicy.shortPromoteImportanceMin,
+        shortPromoteConfidenceMin: settings?.compaction?.shortPromoteConfidenceMin ?? defaultCompactionPolicy.shortPromoteConfidenceMin,
+        midPromoteImportanceMin: settings?.compaction?.midPromoteImportanceMin ?? defaultCompactionPolicy.midPromoteImportanceMin,
+        midPromoteConfidenceMin: settings?.compaction?.midPromoteConfidenceMin ?? defaultCompactionPolicy.midPromoteConfidenceMin,
+        midPromoteFreshnessMin: settings?.compaction?.midPromoteFreshnessMin ?? defaultCompactionPolicy.midPromoteFreshnessMin,
+        archiveImportanceMax: settings?.compaction?.archiveImportanceMax ?? defaultCompactionPolicy.archiveImportanceMax,
+        archiveConfidenceMax: settings?.compaction?.archiveConfidenceMax ?? defaultCompactionPolicy.archiveConfidenceMax,
+        archiveFreshnessMax: settings?.compaction?.archiveFreshnessMax ?? defaultCompactionPolicy.archiveFreshnessMax,
+        distillMinClusterSize: settings?.compaction?.distillMinClusterSize ?? defaultCompactionPolicy.distillMinClusterSize,
+        distillMinTokenOverlap: settings?.compaction?.distillMinTokenOverlap ?? defaultCompactionPolicy.distillMinTokenOverlap,
+        distillSupersedeSources: settings?.compaction?.distillSupersedeSources ?? defaultCompactionPolicy.distillSupersedeSources,
+        distillSupersedeMinConfidence: settings?.compaction?.distillSupersedeMinConfidence ?? defaultCompactionPolicy.distillSupersedeMinConfidence,
+      },
+      conflict: {
+        enabled: settings?.conflict?.enabled ?? defaultConflictPolicy.enabled,
+        minTokenOverlap: settings?.conflict?.minTokenOverlap ?? defaultConflictPolicy.minTokenOverlap,
+        confidencePenalty: settings?.conflict?.confidencePenalty ?? defaultConflictPolicy.confidencePenalty,
+      },
+      decay: {
+        enabled: settings?.decay?.enabled ?? defaultDecayPolicy.enabled,
+        minAgeDays: settings?.decay?.minAgeDays ?? defaultDecayPolicy.minAgeDays,
+        confidenceDecayPerDay: settings?.decay?.confidenceDecayPerDay ?? defaultDecayPolicy.confidenceDecayPerDay,
+        freshnessDecayPerDay: settings?.decay?.freshnessDecayPerDay ?? defaultDecayPolicy.freshnessDecayPerDay,
+        minConfidence: settings?.decay?.minConfidence ?? defaultDecayPolicy.minConfidence,
+        minFreshness: settings?.decay?.minFreshness ?? defaultDecayPolicy.minFreshness,
+      },
+      reinforcement: {
+        enabled: settings?.reinforcement?.enabled ?? defaultReinforcementPolicy.enabled,
+        confidenceBoost: settings?.reinforcement?.confidenceBoost ?? defaultReinforcementPolicy.confidenceBoost,
+        freshnessBoost: settings?.reinforcement?.freshnessBoost ?? defaultReinforcementPolicy.freshnessBoost,
+        maxConfidence: settings?.reinforcement?.maxConfidence ?? defaultReinforcementPolicy.maxConfidence,
+        maxFreshness: settings?.reinforcement?.maxFreshness ?? defaultReinforcementPolicy.maxFreshness,
+      },
+      routing: {
+        preferReviewerOnContested: settings?.routing?.preferReviewerOnContested ?? defaultRoutingPolicy.preferReviewerOnContested,
+        preferReviewerOnStale: settings?.routing?.preferReviewerOnStale ?? defaultRoutingPolicy.preferReviewerOnStale,
+        preferReviewerOnProvenance: settings?.routing?.preferReviewerOnProvenance ?? defaultRoutingPolicy.preferReviewerOnProvenance,
+        staleThreshold: settings?.routing?.staleThreshold ?? defaultRoutingPolicy.staleThreshold,
+        preferExecutorOnActionable: settings?.routing?.preferExecutorOnActionable ?? defaultRoutingPolicy.preferExecutorOnActionable,
+        preferPlannerOnDistilled: settings?.routing?.preferPlannerOnDistilled ?? defaultRoutingPolicy.preferPlannerOnDistilled,
+      },
+      provenance: {
+        trustProfile: settings?.provenance?.trustProfile,
+        trustedSignerNames: settings?.provenance?.trustedSignerNames,
+        allowedOrigins: settings?.provenance?.allowedOrigins,
+        allowedSigners: settings?.provenance?.allowedSigners,
+        allowedSignerKeyIds: settings?.provenance?.allowedSignerKeyIds,
+      },
+    },
+    origin: {
+      maxShortTermRecords: settings?.maxShortTermRecords !== undefined ? "space" : "default",
+      retentionDays: {
+        short: settings?.retentionDays?.short !== undefined ? "space" : "default",
+        mid: settings?.retentionDays?.mid !== undefined ? "space" : "default",
+        long: settings?.retentionDays?.long !== undefined ? "space" : "unset",
+      },
+      compaction: {
+        shortPromoteImportanceMin: settings?.compaction?.shortPromoteImportanceMin !== undefined ? "space" : "default",
+        shortPromoteConfidenceMin: settings?.compaction?.shortPromoteConfidenceMin !== undefined ? "space" : "default",
+        midPromoteImportanceMin: settings?.compaction?.midPromoteImportanceMin !== undefined ? "space" : "default",
+        midPromoteConfidenceMin: settings?.compaction?.midPromoteConfidenceMin !== undefined ? "space" : "default",
+        midPromoteFreshnessMin: settings?.compaction?.midPromoteFreshnessMin !== undefined ? "space" : "default",
+        archiveImportanceMax: settings?.compaction?.archiveImportanceMax !== undefined ? "space" : "default",
+        archiveConfidenceMax: settings?.compaction?.archiveConfidenceMax !== undefined ? "space" : "default",
+        archiveFreshnessMax: settings?.compaction?.archiveFreshnessMax !== undefined ? "space" : "default",
+        distillMinClusterSize: settings?.compaction?.distillMinClusterSize !== undefined ? "space" : "default",
+        distillMinTokenOverlap: settings?.compaction?.distillMinTokenOverlap !== undefined ? "space" : "default",
+        distillSupersedeSources: settings?.compaction?.distillSupersedeSources !== undefined ? "space" : "default",
+        distillSupersedeMinConfidence: settings?.compaction?.distillSupersedeMinConfidence !== undefined ? "space" : "default",
+      },
+      conflict: {
+        enabled: settings?.conflict?.enabled !== undefined ? "space" : "default",
+        minTokenOverlap: settings?.conflict?.minTokenOverlap !== undefined ? "space" : "default",
+        confidencePenalty: settings?.conflict?.confidencePenalty !== undefined ? "space" : "default",
+      },
+      decay: {
+        enabled: settings?.decay?.enabled !== undefined ? "space" : "default",
+        minAgeDays: settings?.decay?.minAgeDays !== undefined ? "space" : "default",
+        confidenceDecayPerDay: settings?.decay?.confidenceDecayPerDay !== undefined ? "space" : "default",
+        freshnessDecayPerDay: settings?.decay?.freshnessDecayPerDay !== undefined ? "space" : "default",
+        minConfidence: settings?.decay?.minConfidence !== undefined ? "space" : "default",
+        minFreshness: settings?.decay?.minFreshness !== undefined ? "space" : "default",
+      },
+      reinforcement: {
+        enabled: settings?.reinforcement?.enabled !== undefined ? "space" : "default",
+        confidenceBoost: settings?.reinforcement?.confidenceBoost !== undefined ? "space" : "default",
+        freshnessBoost: settings?.reinforcement?.freshnessBoost !== undefined ? "space" : "default",
+        maxConfidence: settings?.reinforcement?.maxConfidence !== undefined ? "space" : "default",
+        maxFreshness: settings?.reinforcement?.maxFreshness !== undefined ? "space" : "default",
+      },
+      routing: {
+        preferReviewerOnContested: settings?.routing?.preferReviewerOnContested !== undefined ? "space" : "default",
+        preferReviewerOnStale: settings?.routing?.preferReviewerOnStale !== undefined ? "space" : "default",
+        preferReviewerOnProvenance: settings?.routing?.preferReviewerOnProvenance !== undefined ? "space" : "default",
+        staleThreshold: settings?.routing?.staleThreshold !== undefined ? "space" : "default",
+        preferExecutorOnActionable: settings?.routing?.preferExecutorOnActionable !== undefined ? "space" : "default",
+        preferPlannerOnDistilled: settings?.routing?.preferPlannerOnDistilled !== undefined ? "space" : "default",
+      },
+      provenance: {
+        trustProfile: settings?.provenance?.trustProfile !== undefined ? "space" : "unset",
+        trustedSignerNames: settings?.provenance?.trustedSignerNames !== undefined ? "space" : "unset",
+        allowedOrigins: settings?.provenance?.allowedOrigins !== undefined ? "space" : "unset",
+        allowedSigners: settings?.provenance?.allowedSigners !== undefined ? "space" : "unset",
+        allowedSignerKeyIds: settings?.provenance?.allowedSignerKeyIds !== undefined ? "space" : "unset",
+      },
+    },
+  };
+}
+
+function buildSpaceInspectorRiskSummary(report: SpaceReport): SpaceInspectorRiskSummary {
+  const contestedMemoryEvents = report.eventCountsByType.memory_conflicted ?? 0;
+  const decayedMemoryEvents = report.eventCountsByType.memory_decayed ?? 0;
+  const provenanceSummaryRecords = report.provenanceSummaryCount;
+  const needsTrustReview = (report.recentProvenanceEvents.length > 0) && (provenanceSummaryRecords === 0);
+  const maintenanceStale = !report.maintenance.latestRunAt;
+  const riskScore =
+    (needsTrustReview ? 3 : 0) +
+    (maintenanceStale ? 2 : 0) +
+    (contestedMemoryEvents > 0 ? 2 : 0) +
+    (decayedMemoryEvents > 0 ? 1 : 0);
+
+  const riskLevel = riskScore >= 4
+    ? "high"
+    : riskScore >= 2
+      ? "moderate"
+      : "low";
+
+  return {
+    contestedMemoryEvents,
+    decayedMemoryEvents,
+    provenanceSummaryRecords,
+    needsTrustReview,
+    maintenanceStale,
+    riskLevel,
+  };
+}
+
+function renderSpaceInspectorHtml(snapshot: SpaceInspectorSnapshot): string {
+  const serializedSnapshot = JSON.stringify(snapshot)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GlialNode Inspector - ${escapeHtml(snapshot.space.name)}</title>
+    <style>
+      :root {
+        --bg: #f2efe9;
+        --surface: #fffdf9;
+        --ink: #1f2328;
+        --muted: #5e6772;
+        --accent: #0d5c63;
+        --border: #d8d1c4;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at 20% 0%, #f8f4eb 0%, var(--bg) 40%, #e7e2d8 100%);
+        color: var(--ink);
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+      h1, h2 { margin: 0 0 0.8rem; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.8rem;
+        margin-bottom: 1rem;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.9rem;
+      }
+      .metric {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: var(--accent);
+      }
+      .label {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      details {
+        margin-top: 0.8rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.7rem 0.8rem;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      pre {
+        margin: 0.7rem 0 0;
+        max-height: 320px;
+        overflow: auto;
+        background: #191c20;
+        color: #e8edf2;
+        padding: 0.8rem;
+        border-radius: 8px;
+        font-size: 0.8rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.6rem;
+        font-size: 0.9rem;
+      }
+      td, th {
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        padding: 0.45rem 0.2rem;
+      }
+      .muted { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GlialNode Space Inspector</h1>
+      <p class="muted">Read-only snapshot generated at ${escapeHtml(snapshot.metadata.generatedAt)}.</p>
+      <section class="grid" id="summary"></section>
+      <details open>
+        <summary>Policy (effective + origin)</summary>
+        <pre id="policy"></pre>
+      </details>
+      <details>
+        <summary>Report (event types + maintenance)</summary>
+        <pre id="report"></pre>
+      </details>
+      <details>
+        <summary>Graph (counts + topology)</summary>
+        <table id="graphCounts"></table>
+        <pre id="graph"></pre>
+      </details>
+      <details>
+        <summary>Trust Registry</summary>
+        <pre id="trust"></pre>
+      </details>
+      <details>
+        <summary>Recall Preview</summary>
+        <pre id="recall"></pre>
+      </details>
+    </main>
+    <script id="snapshot-data" type="application/json">${serializedSnapshot}</script>
+    <script>
+      const snapshot = JSON.parse(document.getElementById("snapshot-data").textContent || "{}");
+      const summary = document.getElementById("summary");
+      const cards = [
+        ["Space", snapshot.space?.name || ""],
+        ["Space ID", snapshot.space?.id || ""],
+        ["Records", String(snapshot.report?.recordCount ?? 0)],
+        ["Events", String(snapshot.report?.eventCount ?? 0)],
+        ["Links", String(snapshot.report?.linkCount ?? 0)],
+        ["Risk Level", String(snapshot.risk?.riskLevel ?? "low")],
+        ["Contested Memory Events", String(snapshot.risk?.contestedMemoryEvents ?? 0)],
+        ["Decayed Memory Events", String(snapshot.risk?.decayedMemoryEvents ?? 0)],
+        ["Graph Nodes", String(snapshot.graph?.metadata?.nodeCount ?? 0)],
+        ["Graph Edges", String(snapshot.graph?.metadata?.edgeCount ?? 0)],
+        ["Recent Lifecycle Events", String(snapshot.report?.recentLifecycleEvents?.length ?? 0)]
+      ];
+      summary.innerHTML = cards.map(([label, value]) => (
+        '<div class="card"><div class="metric">' + escapeHtml(value) + '</div><div class="label">' + escapeHtml(label) + '</div></div>'
+      )).join("");
+
+      document.getElementById("policy").textContent = JSON.stringify(snapshot.policy, null, 2);
+      document.getElementById("report").textContent = JSON.stringify({
+        eventCountsByType: snapshot.report?.eventCountsByType || {},
+        maintenance: snapshot.report?.maintenance || {},
+        recentLifecycleEvents: snapshot.report?.recentLifecycleEvents || [],
+        recentProvenanceEvents: snapshot.report?.recentProvenanceEvents || []
+      }, null, 2);
+      document.getElementById("graph").textContent = JSON.stringify(snapshot.graph, null, 2);
+      document.getElementById("trust").textContent = JSON.stringify(snapshot.trustRegistry || { note: "Not included." }, null, 2);
+      document.getElementById("recall").textContent = JSON.stringify(snapshot.recall || { note: "No recall query requested." }, null, 2);
+      document.getElementById("graphCounts").innerHTML = [
+        ["Scopes", snapshot.graph?.counts?.scopes ?? 0],
+        ["Records", snapshot.graph?.counts?.records ?? 0],
+        ["Events", snapshot.graph?.counts?.events ?? 0],
+        ["Links", snapshot.graph?.counts?.links ?? 0]
+      ].map(([label, value]) => (
+        "<tr><th>" + escapeHtml(String(label)) + "</th><td>" + escapeHtml(String(value)) + "</td></tr>"
+      )).join("");
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+    </script>
+  </body>
+</html>`;
+}
+
+function renderSpaceInspectorIndexHtml(snapshot: SpaceInspectorIndexSnapshot): string {
+  const serializedSnapshot = JSON.stringify(snapshot)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GlialNode Inspector Index</title>
+    <style>
+      :root {
+        --bg: #eef4f8;
+        --surface: #fbfdff;
+        --ink: #15202a;
+        --muted: #5a6773;
+        --accent: #0b7285;
+        --border: #d1dce5;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: linear-gradient(180deg, #f5f9fc 0%, var(--bg) 100%);
+      }
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1.4rem 1rem 2.2rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.7rem;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.75rem;
+      }
+      .metric {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: var(--accent);
+      }
+      .label {
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+      table {
+        margin-top: 1rem;
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      th, td {
+        text-align: left;
+        padding: 0.5rem;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.9rem;
+        vertical-align: top;
+      }
+      th {
+        background: #f0f7fb;
+      }
+      pre {
+        margin-top: 1rem;
+        padding: 0.8rem;
+        border-radius: 8px;
+        overflow: auto;
+        max-height: 280px;
+        font-size: 0.8rem;
+        background: #1b222a;
+        color: #e9eef3;
+      }
+      .muted { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GlialNode Space Inspector Index</h1>
+      <p class="muted">Generated at ${escapeHtml(snapshot.metadata.generatedAt)}. Space count: ${snapshot.metadata.spaceCount}.</p>
+      <section class="grid" id="totals"></section>
+      <table>
+        <thead>
+          <tr>
+            <th>Space</th>
+            <th>Records</th>
+            <th>Events</th>
+            <th>Links</th>
+            <th>Provenance Summaries</th>
+            <th>Risk</th>
+            <th>Policy</th>
+            <th>Graph</th>
+          </tr>
+        </thead>
+        <tbody id="spaceRows"></tbody>
+      </table>
+      <pre id="trust"></pre>
+    </main>
+    <script id="snapshot-data" type="application/json">${serializedSnapshot}</script>
+    <script>
+      const snapshot = JSON.parse(document.getElementById("snapshot-data").textContent || "{}");
+      const totals = document.getElementById("totals");
+      const spaceRows = document.getElementById("spaceRows");
+      const trust = document.getElementById("trust");
+      const cards = [
+        ["Total Spaces", snapshot.metadata?.spaceCount ?? 0],
+        ["Total Records", snapshot.totals?.records ?? 0],
+        ["Total Events", snapshot.totals?.events ?? 0],
+        ["Total Links", snapshot.totals?.links ?? 0],
+        ["Total Graph Nodes", snapshot.totals?.graphNodes ?? 0],
+        ["Total Graph Edges", snapshot.totals?.graphEdges ?? 0],
+        ["Spaces Need Trust Review", snapshot.totals?.spacesNeedingTrustReview ?? 0],
+        ["Spaces With Contested", snapshot.totals?.spacesWithContestedMemory ?? 0],
+        ["Spaces With Stale", snapshot.totals?.spacesWithStaleMemory ?? 0],
+      ];
+      totals.innerHTML = cards.map(([label, value]) => (
+        '<div class="card"><div class="metric">' + escapeHtml(String(value)) + '</div><div class="label">' + escapeHtml(String(label)) + '</div></div>'
+      )).join("");
+      const rows = (snapshot.spaces || []).map((entry) => (
+        "<tr>" +
+          "<td><strong>" + escapeHtml(entry.space?.name || "") + "</strong><br><span class='muted'>" + escapeHtml(entry.space?.id || "") + "</span></td>" +
+          "<td>" + escapeHtml(String(entry.report?.recordCount ?? 0)) + "</td>" +
+          "<td>" + escapeHtml(String(entry.report?.eventCount ?? 0)) + "</td>" +
+          "<td>" + escapeHtml(String(entry.report?.linkCount ?? 0)) + "</td>" +
+          "<td>" + escapeHtml(String(entry.report?.provenanceSummaryCount ?? 0)) + "</td>" +
+          "<td>level=" + escapeHtml(String(entry.risk?.riskLevel || "low")) + "<br>contested=" + escapeHtml(String(entry.risk?.contestedMemoryEvents ?? 0)) + "<br>decayed=" + escapeHtml(String(entry.risk?.decayedMemoryEvents ?? 0)) + "</td>" +
+          "<td>maxShort=" + escapeHtml(String(entry.policy?.maxShortTermRecords ?? "")) + "<br>trust=" + escapeHtml(String(entry.policy?.provenanceTrustProfile || "unset")) + "</td>" +
+          "<td>" + escapeHtml(entry.graph ? (entry.graph.nodes + " nodes / " + entry.graph.edges + " edges") : "not included") + "</td>" +
+        "</tr>"
+      ));
+      spaceRows.innerHTML = rows.join("");
+      trust.textContent = JSON.stringify(snapshot.trustRegistry || { note: "Trust registry not included." }, null, 2);
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+    </script>
+  </body>
+</html>`;
+}
+
+async function buildInspectorRecall(
+  client: GlialNodeClient,
+  spaceId: string,
+  options: SpaceInspectorRecallOptions,
+): Promise<NonNullable<SpaceInspectorSnapshot["recall"]>> {
+  const primaryLimit = options.primaryLimit ?? 3;
+  const supportLimit = options.supportLimit ?? 3;
+  const query: MemorySearchQuery = {
+    ...options.query,
+    spaceId,
+    limit: options.query.limit ?? primaryLimit,
+  };
+  const traces = await client.traceRecall(query, {
+    primaryLimit,
+    supportLimit,
+  });
+  const bundles = await client.bundleRecall(query, {
+    primaryLimit,
+    supportLimit,
+    bundleConsumer: options.bundleConsumer,
+    bundleProvenanceMode: options.bundleProvenanceMode,
+  });
+  return {
+    query,
+    traceCount: traces.length,
+    traces,
+    bundles,
+  };
+}
+
+async function captureHtmlScreenshot(
+  htmlPath: string,
+  screenshotPath: string,
+  viewport: { width: number; height: number } | undefined,
+): Promise<string> {
+  const runtimeImport = Function("specifier", "return import(specifier);") as (
+    specifier: string,
+  ) => Promise<{ chromium?: { launch?: (options?: { headless?: boolean }) => Promise<{
+    newPage: (options: { viewportSize: { width: number; height: number } }) => Promise<{
+      goto: (url: string, options: { waitUntil: string }) => Promise<void>;
+      screenshot: (options: { path: string; fullPage: boolean; type: "png" }) => Promise<void>;
+    }>;
+    close: () => Promise<void>;
+  }> } }>;
+  const playwrightModule = await runtimeImport("playwright").catch(() => null);
+  if (!playwrightModule || typeof playwrightModule.chromium?.launch !== "function") {
+    throw new Error(
+      "Inspector screenshot capture requires the 'playwright' package. Install it or disable --capture-screenshots.",
+    );
+  }
+
+  const browser = await playwrightModule.chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewportSize: {
+        width: viewport?.width ?? 1440,
+        height: viewport?.height ?? 900,
+      },
+    });
+    await page.goto(pathToFileURL(htmlPath).toString(), {
+      waitUntil: "networkidle",
+    });
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+      type: "png",
+    });
+  } finally {
+    await browser.close();
+  }
+
+  return screenshotPath;
+}
+
+function toSafePathSegment(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : "space";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function normalizeSpaceSnapshot(value: Partial<SpaceSnapshot>): SpaceSnapshot {

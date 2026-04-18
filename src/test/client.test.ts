@@ -66,6 +66,13 @@ test("GlialNodeClient supports the core programmatic memory workflow", async () 
     const report = await client.getSpaceReport(space.id, 10);
     assert.equal(report.recordCount, 5);
     assert.ok(report.eventCount >= 2);
+    assert.ok((report.eventCountsByType.memory_promoted ?? 0) >= 1);
+    assert.ok((report.eventCountsByType.memory_expired ?? 0) >= 1);
+    assert.ok(Boolean(report.maintenance.latestRunAt));
+    assert.ok(Boolean(report.maintenance.latestCompactionAt));
+    assert.ok(Boolean(report.maintenance.latestRetentionAt));
+    assert.ok((report.maintenance.latestCompactionDelta?.promoted ?? 0) >= 1);
+    assert.ok((report.maintenance.latestRetentionDelta?.expired ?? 0) >= 1);
 
     const promotedRecord = await client.getRecord(promotable.id);
     const expiredRecord = await client.getRecord(expirable.id);
@@ -73,6 +80,126 @@ test("GlialNodeClient supports the core programmatic memory workflow", async () 
     assert.equal(expiredRecord.status, "expired");
   } finally {
     client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient keeps lifecycle state stable across a deterministic 48-step long-run loop", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-lifecycle-longrun-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = new SqliteMemoryRepository({ filename: databasePath });
+  const client = new GlialNodeClient({ repository });
+
+  try {
+    const space = await client.createSpace({
+      name: "Lifecycle Long-Run Space",
+      settings: {
+        retentionDays: {
+          short: 0,
+          mid: 2,
+          long: 365,
+        },
+        compaction: {
+          shortPromoteImportanceMin: 0.72,
+          shortPromoteConfidenceMin: 0.7,
+          midPromoteImportanceMin: 0.8,
+          midPromoteConfidenceMin: 0.75,
+          midPromoteFreshnessMin: 0.5,
+          archiveImportanceMax: 0.25,
+          archiveConfidenceMax: 0.35,
+          archiveFreshnessMax: 0.25,
+        },
+        decay: {
+          minAgeDays: 0,
+          confidenceDecayPerDay: 0.03,
+          freshnessDecayPerDay: 0.04,
+          minConfidence: 0.2,
+          minFreshness: 0.15,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    let lifecycleSteps = 0;
+    const decayNow = new Date("2030-01-01T00:00:00.000Z");
+
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      await client.addRecord({
+        spaceId: space.id,
+        scope: { id: scope.id, type: scope.type },
+        tier: "short",
+        kind: "task",
+        content: `Promotable cycle ${cycle}`,
+        summary: `Promotable ${cycle}`,
+        importance: 0.93,
+        confidence: 0.88,
+        freshness: 0.84,
+        tags: ["longrun", "promotable"],
+      });
+
+      await client.addRecord({
+        spaceId: space.id,
+        scope: { id: scope.id, type: scope.type },
+        tier: "short",
+        kind: "task",
+        content: `Expirable cycle ${cycle}`,
+        summary: `Expirable ${cycle}`,
+        importance: 0.42,
+        confidence: 0.6,
+        freshness: 0.62,
+        tags: ["longrun", "expirable"],
+      });
+
+      const decaying = await client.addRecord({
+        spaceId: space.id,
+        scope: { id: scope.id, type: scope.type },
+        tier: "long",
+        kind: "fact",
+        content: `Durable fact cycle ${cycle}`,
+        summary: `Durable fact ${cycle}`,
+        importance: 0.76,
+        confidence: 0.9,
+        freshness: 0.86,
+        tags: ["longrun", "decay"],
+      });
+
+      const stale = await repository.getRecord(decaying.id);
+      assert.ok(stale);
+      stale.updatedAt = "2029-12-25T00:00:00.000Z";
+      await repository.writeRecord(stale);
+
+      await client.maintainSpace(space.id, { apply: true });
+      lifecycleSteps += 1;
+      await client.compactSpace(space.id, { apply: true });
+      lifecycleSteps += 1;
+      await client.retainSpace(space.id, { apply: true });
+      lifecycleSteps += 1;
+      await client.decaySpace(space.id, { apply: true, now: decayNow });
+      lifecycleSteps += 1;
+    }
+
+    assert.equal(lifecycleSteps, 48);
+
+    const report = await client.getSpaceReport(space.id, 20);
+    assert.ok((report.eventCountsByType.memory_promoted ?? 0) >= 1);
+    assert.ok((report.eventCountsByType.memory_expired ?? 0) >= 1);
+    assert.ok((report.eventCountsByType.memory_decayed ?? 0) >= 1);
+    assert.ok((report.maintenance.latestRunAt ?? "").length > 0);
+
+    const records = await repository.listRecords(space.id, Number.MAX_SAFE_INTEGER);
+    for (const record of records) {
+      if (record.status === "active" || record.status === "superseded") {
+        assert.ok(record.confidence >= 0.2);
+        assert.ok(record.freshness >= 0.15);
+      }
+    }
+  } finally {
+    client.close();
+    repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
@@ -242,6 +369,45 @@ test("GlialNodeClient can manage trusted signers", async () => {
 
     const explicitlyRevoked = client.revokeTrustedSigner("team-public");
     assert.ok(explicitlyRevoked.revokedAt);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can manage trust policy packs with inheritance", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-trust-packs-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    const base = client.registerTrustPolicyPack("strict-signed", {
+      description: "Require signed artifacts from production origins.",
+      baseProfile: "signed",
+      policy: {
+        allowedOrigins: ["production"],
+      },
+    });
+    assert.equal(base.baseProfile, "signed");
+
+    const child = client.registerTrustPolicyPack("strict-signed-anchored", {
+      inheritsFrom: "strict-signed",
+      policy: {
+        trustedSignerNames: ["team-anchor"],
+      },
+    });
+    assert.equal(child.inheritsFrom, "strict-signed");
+
+    const listed = client.listTrustPolicyPacks();
+    assert.equal(listed.length, 2);
+    assert.ok(listed.some((pack) => pack.name === "strict-signed"));
+    assert.ok(listed.some((pack) => pack.name === "strict-signed-anchored"));
+
+    const resolved = client.resolveTrustPolicyPack("strict-signed-anchored");
+    assert.equal(resolved.baseProfile, "signed");
+    assert.deepEqual(resolved.policy.allowedOrigins, ["production"]);
+    assert.deepEqual(resolved.policy.trustedSignerNames, ["team-anchor"]);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -757,6 +923,7 @@ test("GlialNodeClient validates preset bundle metadata and rejects unsupported f
     const provenanceReport = await client.getSpaceReport(provenanceSpace.id);
     assert.match(provenanceReport.recentProvenanceEvents.map((event) => event.type).join(","), /bundle_reviewed/);
     assert.match(provenanceReport.recentProvenanceEvents.map((event) => event.type).join(","), /bundle_imported/);
+    assert.equal(provenanceReport.provenanceSummaryCount, 2);
 
     const auditRecords = await client.searchRecords({
       spaceId: provenanceSpace.id,
@@ -927,6 +1094,279 @@ test("GlialNodeClient can export and import a versioned snapshot without the CLI
   }
 });
 
+test("GlialNodeClient can export a space graph for topology inspection", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-graph-export-"));
+  const databasePath = join(tempDirectory, "graph.sqlite");
+  const outputPath = join(tempDirectory, "space.graph.json");
+  const cytoscapeOutputPath = join(tempDirectory, "space.graph.cytoscape.json");
+  const dotOutputPath = join(tempDirectory, "space.graph.dot");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Graph Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+    await client.addEvent({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      actorType: "agent",
+      actorId: "writer-1",
+      type: "decision_made",
+      summary: "Captured graph event.",
+    });
+    const first = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "First graph node.",
+      summary: "First node",
+    });
+    const second = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "summary",
+      content: "Second graph node.",
+      summary: "Second node",
+    });
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: first.id,
+      toRecordId: second.id,
+      type: "supports",
+    });
+
+    const graph = await client.exportSpaceGraph(space.id);
+    assert.equal(graph.metadata.schemaVersion, 1);
+    assert.equal(graph.metadata.spaceId, space.id);
+    assert.ok(graph.nodes.some((node) => node.type === "space" && node.id === space.id));
+    assert.ok(graph.nodes.some((node) => node.type === "scope" && node.id === scope.id));
+    assert.ok(graph.nodes.some((node) => node.type === "event"));
+    assert.ok(graph.nodes.some((node) => node.type === "record" && node.id === first.id));
+    assert.ok(graph.edges.some((edge) => edge.type === "record_link" && edge.relation === "supports"));
+    assert.ok(graph.edges.some((edge) => edge.type === "contains_scope" && edge.toId === scope.id));
+
+    const cytoscape = await client.exportSpaceGraphCytoscape(space.id);
+    assert.equal(cytoscape.metadata.schemaVersion, 1);
+    assert.ok(cytoscape.elements.nodes.some((node) => node.data.type === "scope"));
+    assert.ok(cytoscape.elements.edges.some((edge) => edge.data.type === "record_link"));
+
+    const dot = await client.exportSpaceGraphDot(space.id);
+    assert.match(dot, /^digraph /);
+    assert.match(dot, /label="supports"/);
+
+    const minimalGraph = await client.exportSpaceGraph(space.id, {
+      includeEvents: false,
+      includeScopes: false,
+    });
+    assert.equal(minimalGraph.metadata.options.includeEvents, false);
+    assert.equal(minimalGraph.metadata.options.includeScopes, false);
+    assert.equal(minimalGraph.nodes.some((node) => node.type === "event"), false);
+    assert.equal(minimalGraph.nodes.some((node) => node.type === "scope"), false);
+
+    const exportedPath = await client.exportSpaceGraphToFile(space.id, outputPath, {
+      includeEvents: false,
+      includeScopes: false,
+    });
+    assert.equal(exportedPath, outputPath);
+    const stored = JSON.parse(readFileSync(outputPath, "utf8")) as {
+      metadata: { spaceId: string; nodeCount: number };
+    };
+    assert.equal(stored.metadata.spaceId, space.id);
+    assert.equal(typeof stored.metadata.nodeCount, "number");
+
+    await client.exportSpaceGraphToFile(space.id, cytoscapeOutputPath, {
+      format: "cytoscape",
+    });
+    const storedCytoscape = JSON.parse(readFileSync(cytoscapeOutputPath, "utf8")) as {
+      elements: { nodes: Array<{ data: { type: string } }> };
+    };
+    assert.ok(storedCytoscape.elements.nodes.some((node) => node.data.type === "scope"));
+
+    await client.exportSpaceGraphToFile(space.id, dotOutputPath, {
+      format: "dot",
+    });
+    const storedDot = readFileSync(dotOutputPath, "utf8");
+    assert.match(storedDot, /^digraph /);
+    assert.match(storedDot, /label="contains"/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can export a standalone space inspector artifact", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-space-inspector-"));
+  const databasePath = join(tempDirectory, "inspector.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const outputPath = join(tempDirectory, "space-inspector.html");
+  const snapshotOutputPath = join(tempDirectory, "space-inspector.snapshot.json");
+  const indexOutputPath = join(tempDirectory, "space-inspector-index.html");
+  const indexSnapshotOutputPath = join(tempDirectory, "space-inspector-index.snapshot.json");
+  const packOutputDirectory = join(tempDirectory, "space-inspector-pack");
+  const client = new GlialNodeClient({ filename: databasePath, presetDirectory });
+
+  try {
+    const space = await client.createSpace({
+      name: "Inspector Space",
+      settings: {
+        routing: {
+          preferExecutorOnActionable: false,
+        },
+      },
+    });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "reviewer",
+    });
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Inspector artifacts should include policy and trust context.",
+      summary: "Inspector policy",
+    });
+    await client.generateSigningKey("inspector-key", {
+      signer: "Inspector Signer",
+      overwrite: true,
+    });
+    client.trustSigningKey("inspector-key", {
+      trustName: "inspector-anchor",
+      overwrite: true,
+    });
+    client.registerTrustPolicyPack("inspector-pack", {
+      description: "Inspector trust pack",
+      baseProfile: "anchored",
+      policy: {
+        trustedSignerNames: ["inspector-anchor"],
+      },
+      overwrite: true,
+    });
+
+    const snapshot = await client.buildSpaceInspectorSnapshot(space.id, {
+      presetDirectory,
+      recentEventLimit: 5,
+      recall: {
+        query: {
+          text: "policy trust context",
+          limit: 2,
+        },
+        primaryLimit: 2,
+        supportLimit: 2,
+        bundleConsumer: "reviewer",
+      },
+    });
+    assert.equal(snapshot.metadata.schemaVersion, 1);
+    assert.equal(snapshot.space.id, space.id);
+    assert.equal(snapshot.report.spaceId, space.id);
+    assert.equal(snapshot.risk.contestedMemoryEvents, 0);
+    assert.equal(snapshot.risk.riskLevel, "moderate");
+    assert.equal(snapshot.policy.effective.routing.preferExecutorOnActionable, false);
+    assert.equal(snapshot.policy.origin.routing.preferExecutorOnActionable, "space");
+    assert.equal(snapshot.recall?.traceCount, 1);
+    assert.equal(snapshot.recall?.query.text, "policy trust context");
+    assert.ok(snapshot.recall?.traces[0]?.summary);
+    assert.equal(snapshot.recall?.bundles[0]?.route.resolvedConsumer, "reviewer");
+    assert.ok((snapshot.trustRegistry?.trustedSigners.length ?? 0) >= 1);
+    assert.ok(snapshot.trustRegistry?.trustPolicyPacks.some((pack) => pack.name === "inspector-pack"));
+
+    const exportResult = await client.exportSpaceInspectorHtml(space.id, outputPath, {
+      presetDirectory,
+    });
+    assert.equal(exportResult.outputPath, outputPath);
+    const snapshotResult = await client.exportSpaceInspectorSnapshotToFile(space.id, snapshotOutputPath, {
+      presetDirectory,
+      recall: {
+        query: { text: "policy trust context", limit: 1 },
+      },
+    });
+    assert.equal(snapshotResult.outputPath, snapshotOutputPath);
+    const snapshotFile = JSON.parse(readFileSync(snapshotOutputPath, "utf8")) as {
+      space: { id: string };
+      risk: { riskLevel: string };
+      recall?: { traceCount: number };
+    };
+    assert.equal(snapshotFile.space.id, space.id);
+    assert.equal(snapshotFile.risk.riskLevel, "moderate");
+    assert.equal(snapshotFile.recall?.traceCount, 1);
+
+    const html = readFileSync(outputPath, "utf8");
+    assert.match(html, /GlialNode Space Inspector/);
+    assert.match(html, /Inspector Space/);
+    assert.match(html, /snapshot-data/);
+
+    const secondSpace = await client.createSpace({ name: "Inspector Space B" });
+    await client.addScope({
+      spaceId: secondSpace.id,
+      type: "agent",
+      label: "observer",
+    });
+    const index = await client.buildSpaceInspectorIndexSnapshot({
+      presetDirectory,
+      includeGraphCounts: true,
+      recentEventLimit: 3,
+    });
+    assert.ok(index.metadata.spaceCount >= 2);
+    assert.ok(index.totals.records >= 1);
+    assert.ok(index.totals.graphNodes >= 2);
+    assert.ok(index.totals.spacesNeedingTrustReview >= 0);
+    assert.ok(index.spaces.some((entry) => entry.space.name === "Inspector Space B"));
+
+    const indexResult = await client.exportSpaceInspectorIndexHtml(indexOutputPath, {
+      presetDirectory,
+      includeGraphCounts: true,
+    });
+    assert.equal(indexResult.outputPath, indexOutputPath);
+    const indexHtml = readFileSync(indexOutputPath, "utf8");
+    assert.match(indexHtml, /GlialNode Space Inspector Index/);
+    assert.match(indexHtml, /Inspector Space B/);
+    const indexSnapshotResult = await client.exportSpaceInspectorIndexSnapshotToFile(indexSnapshotOutputPath, {
+      presetDirectory,
+      includeGraphCounts: true,
+    });
+    assert.equal(indexSnapshotResult.outputPath, indexSnapshotOutputPath);
+    const indexSnapshotFile = JSON.parse(readFileSync(indexSnapshotOutputPath, "utf8")) as {
+      metadata: { spaceCount: number };
+      totals: { spacesWithContestedMemory: number };
+      spaces: Array<{ risk: { riskLevel: string } }>;
+    };
+    assert.ok(indexSnapshotFile.metadata.spaceCount >= 2);
+    assert.ok(indexSnapshotFile.totals.spacesWithContestedMemory >= 0);
+    assert.ok(indexSnapshotFile.spaces.length >= 2);
+
+    const packResult = await client.exportSpaceInspectorPack(packOutputDirectory, {
+      presetDirectory,
+      includeGraphCounts: true,
+      recall: {
+        query: { text: "inspector", limit: 1 },
+      },
+    });
+    assert.equal(packResult.outputDirectory, packOutputDirectory);
+    assert.equal(packResult.manifest.metadata.spaceCount, indexSnapshotFile.metadata.spaceCount);
+    assert.ok(packResult.manifest.spaces.length >= 2);
+    const manifestFile = JSON.parse(readFileSync(packResult.manifestPath, "utf8")) as {
+      metadata: { spaceCount: number };
+      files: { indexHtml: string; indexSnapshot: string; indexScreenshot?: string };
+      spaces: Array<{ html: string; snapshot: string; screenshot?: string }>;
+    };
+    assert.ok(manifestFile.metadata.spaceCount >= 2);
+    assert.match(readFileSync(manifestFile.files.indexHtml, "utf8"), /GlialNode Space Inspector Index/);
+    assert.equal(manifestFile.files.indexScreenshot, undefined);
+    assert.ok(manifestFile.spaces.every((entry) => entry.html.endsWith(".html")));
+    assert.ok(manifestFile.spaces.every((entry) => entry.snapshot.endsWith(".snapshot.json")));
+    assert.ok(manifestFile.spaces.every((entry) => entry.screenshot === undefined));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient importSnapshot enforces explicit collision policy", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-collision-"));
   const sourcePath = join(tempDirectory, "source.sqlite");
@@ -976,6 +1416,54 @@ test("GlialNodeClient importSnapshot enforces explicit collision policy", async 
     });
     assert.equal(renamedRecords.length, 1);
     assert.notEqual(renamedRecords[0]?.id, record.id);
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can preview snapshot imports without mutating storage", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-preview-"));
+  const sourcePath = join(tempDirectory, "source.sqlite");
+  const targetPath = join(tempDirectory, "target.sqlite");
+  const sourceClient = new GlialNodeClient({ filename: sourcePath });
+  const targetClient = new GlialNodeClient({ filename: targetPath });
+
+  try {
+    const space = await sourceClient.createSpace({ name: "Preview Space" });
+    const scope = await sourceClient.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+
+    await sourceClient.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Preview should surface collisions before apply.",
+      summary: "Preview rule",
+    });
+
+    const snapshot = await sourceClient.exportSpace(space.id);
+    const firstPreview = await targetClient.previewSnapshotImport(snapshot);
+    assert.equal(firstPreview.applyAllowed, true);
+    assert.equal(firstPreview.identityRemapped, false);
+    assert.equal(firstPreview.importedCounts.records, 1);
+
+    await targetClient.importSnapshot(snapshot);
+    const errorPreview = await targetClient.previewSnapshotImport(snapshot);
+    assert.equal(errorPreview.applyAllowed, false);
+    assert.ok(errorPreview.blockingIssues.some((issue) => /Space already exists:/i.test(issue)));
+
+    const renamePreview = await targetClient.previewSnapshotImport(snapshot, {
+      collisionPolicy: "rename",
+    });
+    assert.equal(renamePreview.applyAllowed, true);
+    assert.equal(renamePreview.identityRemapped, true);
+    assert.equal(renamePreview.targetSpace.name, "Preview Space (imported)");
   } finally {
     sourceClient.close();
     targetClient.close();
@@ -1039,6 +1527,88 @@ test("GlialNodeClient validates signed snapshots against trusted signers", async
 
     const importedSpace = await targetClient.getSpace(space.id);
     assert.equal(importedSpace.name, "Signed Portable Space");
+  } finally {
+    sourceClient.close();
+    targetClient.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient snapshot trust enforces rotated anchors and rejects revoked ones", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-snapshot-rotation-"));
+  const sourcePath = join(tempDirectory, "source.sqlite");
+  const targetPath = join(tempDirectory, "target.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const rotatedPublicKeyPath = join(tempDirectory, "snapshot-key-v2.public.pem");
+  const sourceClient = new GlialNodeClient({ filename: sourcePath, presetDirectory });
+  const targetClient = new GlialNodeClient({ filename: targetPath, presetDirectory });
+
+  try {
+    const signingKeyV1 = sourceClient.generateSigningKey("snapshot-key-v1", {
+      signer: "GlialNode Test",
+    });
+    sourceClient.trustSigningKey("snapshot-key-v1", {
+      trustName: "snapshot-anchor",
+    });
+    const signingKeyV2 = sourceClient.generateSigningKey("snapshot-key-v2", {
+      signer: "GlialNode Test",
+    });
+    sourceClient.exportSigningPublicKey("snapshot-key-v2", rotatedPublicKeyPath);
+    sourceClient.rotateTrustedSigner("snapshot-anchor", rotatedPublicKeyPath, {
+      nextName: "snapshot-anchor-v2",
+    });
+
+    const space = await sourceClient.createSpace({ name: "Signed Rotation Space" });
+    const scope = await sourceClient.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "writer",
+    });
+
+    await sourceClient.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Rotated trust anchors should control snapshot imports.",
+      summary: "Signed rotation rule",
+    });
+
+    const snapshotV1 = await sourceClient.exportSpace(space.id, {
+      origin: "client-test",
+      signer: signingKeyV1.signer,
+      signingPrivateKeyPem: sourceClient.getSigningKey("snapshot-key-v1").privateKeyPem,
+    });
+    await assert.rejects(
+      () => targetClient.importSnapshot(snapshotV1, {
+        trustPolicy: { trustedSignerNames: ["snapshot-anchor"] },
+        trustProfile: "anchored",
+        directory: presetDirectory,
+      }),
+      /Trusted signers are revoked: snapshot-anchor/,
+    );
+
+    const snapshotV2 = await sourceClient.exportSpace(space.id, {
+      origin: "client-test",
+      signer: signingKeyV2.signer,
+      signingPrivateKeyPem: sourceClient.getSigningKey("snapshot-key-v2").privateKeyPem,
+    });
+    const validationV2 = await targetClient.validateSnapshot(
+      snapshotV2,
+      { trustedSignerNames: ["snapshot-anchor-v2"] },
+      "anchored",
+      presetDirectory,
+    );
+    assert.equal(validationV2.trusted, true);
+    assert.deepEqual(validationV2.report.matchedTrustedSignerNames, ["snapshot-anchor-v2"]);
+
+    await targetClient.importSnapshot(snapshotV2, {
+      trustPolicy: { trustedSignerNames: ["snapshot-anchor-v2"] },
+      trustProfile: "anchored",
+      directory: presetDirectory,
+    });
+    const importedSpace = await targetClient.getSpace(space.id);
+    assert.equal(importedSpace.name, "Signed Rotation Space");
   } finally {
     sourceClient.close();
     targetClient.close();
@@ -1454,6 +2024,41 @@ test("GlialNodeClient can reinforce successful search results when explicitly re
       },
     );
     assert.equal(results.length, 1);
+
+    const semanticResults = await client.searchRecords(
+      {
+        spaceId: space.id,
+        text: "preferred retrieval default",
+        limit: 5,
+      },
+      {
+        semantic: {
+          enabled: true,
+          semanticWeight: 0.6,
+        },
+      },
+    );
+    assert.equal(semanticResults.length, 1);
+
+    const gatedResults = await client.searchRecords(
+      {
+        spaceId: space.id,
+        text: "preferred retrieval default",
+        limit: 5,
+      },
+      {
+        semantic: {
+          enabled: true,
+          semanticWeight: 0.6,
+          gate: {
+            requirePass: true,
+            passed: false,
+            reportId: "semantic-eval-failed",
+          },
+        },
+      },
+    );
+    assert.equal(gatedResults.length, 1);
 
     const updated = await client.getRecord(record.id);
     assert.equal(updated.confidence, 0.78);
@@ -2062,6 +2667,114 @@ test("GlialNodeClient can auto-route bundles toward reviewer context when proven
     assert.equal(bundles[0]?.route.profileUsed, "reviewer");
     assert.equal(bundles[0]?.route.source, "auto");
     assert.ok(bundles[0]?.route.warnings.includes("contains_provenance_memory"));
+    assert.match(bundles[0]?.trace.summary ?? "", /Reviewer hint: includes 1 provenance memory item\(s\)\./);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient de-prioritizes provenance supporting memory for executor bundles unless risk is present", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-bundle-provenance-pruning-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Bundle Provenance Pruning Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "executor",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "task",
+      content: "Ship the rollout checklist and deployment notes.",
+      summary: "Ship rollout checklist",
+      tags: ["release", "actionable"],
+      importance: 0.9,
+      confidence: 0.92,
+      freshness: 0.9,
+    });
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Rollout checklist requires signed artifact verification.",
+      summary: "Signed artifact verification",
+      tags: ["release", "execution"],
+      importance: 0.8,
+      confidence: 0.85,
+      freshness: 0.86,
+    });
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "summary",
+      content: "Bundle import audit for rollout trust review.",
+      summary: "Bundle import audit",
+      tags: ["provenance", "bundle", "audit"],
+      importance: 0.7,
+      confidence: 0.84,
+      freshness: 0.88,
+    });
+
+    const noRiskBundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "rollout checklist",
+      limit: 1,
+    }, {
+      bundleConsumer: "executor",
+      bundleProvenanceMode: "auto",
+      primaryLimit: 1,
+      supportLimit: 4,
+      bundleMaxSupporting: 4,
+    });
+
+    assert.equal(noRiskBundles.length, 1);
+    assert.equal(noRiskBundles[0]?.route.resolvedConsumer, "executor");
+    assert.equal(
+      noRiskBundles[0]?.supporting.some((entry) => entry.annotations.includes("provenance")),
+      false,
+    );
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "summary",
+      content: "Second bundle audit record for risky rollout checklist review.",
+      summary: "Secondary rollout provenance audit",
+      tags: ["provenance", "bundle", "audit"],
+      importance: 0.65,
+      confidence: 0.82,
+      freshness: 0.18,
+    });
+
+    const riskBundles = await client.bundleRecall({
+      spaceId: space.id,
+      text: "rollout checklist",
+      limit: 1,
+    }, {
+      bundleConsumer: "executor",
+      bundleProvenanceMode: "auto",
+      primaryLimit: 1,
+      supportLimit: 5,
+      bundleMaxSupporting: 5,
+    });
+
+    assert.equal(riskBundles.length, 1);
+    const provenanceSupporting = riskBundles[0]?.supporting.filter((entry) => entry.annotations.includes("provenance")) ?? [];
+    const primaryHasProvenance = riskBundles[0]?.primary.annotations.includes("provenance") ?? false;
+    const totalProvenanceItems = provenanceSupporting.length + (primaryHasProvenance ? 1 : 0);
+    assert.ok(riskBundles[0]?.route.warnings.includes("contains_stale_memory"));
+    assert.ok(totalProvenanceItems >= 1);
+    assert.ok(provenanceSupporting.length <= 1);
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

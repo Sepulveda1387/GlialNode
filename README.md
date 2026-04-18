@@ -35,7 +35,9 @@ GlialNode takes a different path:
 
 The goal is not just to save facts. The goal is to manage memory as a living system.
 
-For automation and integrations, GlialNode also supports stable `--json` output on key read/report flows such as `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
+For automation and integrations, GlialNode also supports stable `--json` output on key read/report flows such as `space show`, `space report`, `space graph-export`, `space inspect-export`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
+If you want a versioned machine contract wrapper, add `--json-envelope` together with `--json` to receive `{ schemaVersion, command, generatedAt, data }`.
+`space show` and `space report` now include a `policy` block with `raw`, `effective`, and `origin` fields so you can inspect what was set directly vs what came from defaults.
 
 For operator diagnostics, GlialNode also includes `glialnode doctor`, which inspects the live SQLite runtime, schema version, database path, preset registry, signing-key store, and trusted-signer store in one health report. Use `glialnode doctor --json` when you want a machine-readable readiness check.
 
@@ -82,6 +84,7 @@ flowchart TD
 - store curated records, raw events, and provenance links
 - store both human-readable memory text and compact internal memory text
 - search memory with query-aware lexical retrieval and structured filters
+- optionally apply an explicit semantic-prototype reranker on top of lexical search for eval-only experiments
 - promote, archive, compact, and expire records through explicit policy workflows
 - distill related active records into durable summary memory with provenance links
 - detect contradictory durable memory and preserve it as contested state
@@ -92,6 +95,7 @@ flowchart TD
 - apply hardened SQLite defaults for file-backed databases
 - track applied SQLite schema versions inside the database
 - inspect memory health through reporting and maintenance commands
+- export space topology as graph JSON for link/provenance visualization or external graph tooling
 - import and export versioned full-space snapshots with checksum validation
 - optionally sign full-space snapshots and enforce trust policies during restore
 
@@ -173,10 +177,16 @@ GlialNode now treats that explicitly as a write-mode contract:
 - default `writeMode=single_writer`
 - optional `writeMode=serialized_local` for host applications that already serialize writes through one local queue or coordination boundary
 
+You can request serialized local write queuing via:
+
+- client: `new GlialNodeClient({ filename: "...", writeMode: "serialized_local" })`
+- CLI: `glialnode status --write-mode serialized_local`
+
 What GlialNode does guarantee:
 
 - the default runtime is tuned for local durability and reduced immediate lock failures
 - the status surface reports the active write-mode contract and its guarantees
+- `serialized_local` mode applies a lightweight in-process write queue adapter so concurrent mutation calls are serialized locally
 
 What GlialNode does not guarantee:
 
@@ -210,6 +220,7 @@ Current import collision behavior:
 - default `collision=error`
 - explicit `collision=overwrite` to reuse existing target ids
 - explicit `collision=rename` to import a second copy under new ids
+- optional `--preview` mode to inspect counts, conflicts, schema status, trust validation, and remap outcomes before apply
 
 GlialNode also records applied SQLite migrations inside the database so bootstrap stays idempotent and the runtime can report the actual schema version that has been applied.
 
@@ -225,6 +236,7 @@ npm run demo
 npm run demo:client
 npm run pack:check
 glialnode doctor --json
+glialnode status --json --json-envelope
 ```
 
 You can also start a space from a preset brain style:
@@ -258,6 +270,9 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"`
 - `glialnode preset trust-list`
 - `glialnode preset trust-show --name team-anchor`
+- `glialnode preset trust-pack-register --name strict-signed --base-profile signed --allow-origin production`
+- `glialnode preset trust-pack-list --json`
+- `glialnode preset trust-pack-show --name strict-signed --json`
 - `glialnode preset trust-revoke --name team-anchor`
 - `glialnode preset trust-rotate --name team-anchor --input ./team-executor-v2.public.pem --next-name team-anchor-v2`
 - `glialnode preset trust-profile-list`
@@ -275,10 +290,12 @@ If you want to keep a reusable local registry of custom brain styles, you can al
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor`
+- `glialnode preset bundle-show --input ./team-executor.bundle.json --allow-origin production --trust-explain --json`
+- `glialnode preset bundle-show --input ./team-executor.bundle.json --trust-pack strict-signed`
 - `glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>`
 - `glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy`
 
-`bundle-show` now reports the selected trust profile, effective policy, signer key id, and matched trusted signers so provenance decisions are inspectable instead of opaque. When a bundle is reviewed or imported with `--space-id`, GlialNode also records `bundle_reviewed` and `bundle_imported` events for that space so trust decisions become part of the audit trail and show up in `space report`. Those same workflows now also write searchable audit summary records, so bundle trust decisions can be recalled later through normal memory search instead of living only in event output.
+`bundle-show` now reports the selected trust profile, effective policy, signer key id, matched trusted signers, requested trusted signers, and unmatched trusted signers so provenance decisions are inspectable instead of opaque. Add `--trust-explain` (and optionally `--json`) to inspect policy failures without throwing. When a bundle is reviewed or imported with `--space-id`, GlialNode also records `bundle_reviewed` and `bundle_imported` events for that space so trust decisions become part of the audit trail and show up in `space report`. Those same workflows now also write searchable audit summary records, so bundle trust decisions can be recalled later through normal memory search instead of living only in event output.
 - `glialnode space create --name "Stable Memory" --preset-local team-executor --preset-channel stable`
 - `glialnode space configure --id <space-id> --preset-local team-executor --preset-channel candidate`
 
@@ -290,6 +307,8 @@ The demo paths are Node-based and intended to run on Windows, Linux, and macOS:
 
 - `npm run demo` exercises the CLI workflow
 - `npm run demo:client` exercises the typed client API directly
+- `npm run example:service` exercises a realistic embedded service loop using `GlialNodeClient`
+- `npm run example:agent-loop` exercises a trust+recall+maintenance loop with signed snapshot preview/import
 
 ## Example Report
 
@@ -303,6 +322,17 @@ links=2
 tiers=mid:3,short:1
 statuses=active:3,expired:1
 kinds=summary:2,task:2
+eventTypes=memory_expired:1,memory_promoted:1,memory_written:2
+provenanceSummaryRecords=0
+maintenanceLatestRunAt=2026-04-17T12:00:03.000Z
+maintenanceLatestCompactionAt=2026-04-17T12:00:02.000Z
+maintenanceLatestRetentionAt=2026-04-17T12:00:03.000Z
+maintenanceLatestDecayAt=
+maintenanceLatestReinforcementAt=
+maintenanceCompactionDelta={"promoted":1,"archived":0,"refreshed":0,"distilled":0,"superseded":0}
+maintenanceRetentionDelta={"expired":1}
+maintenanceDecayDelta={}
+maintenanceReinforcementDelta={}
 recentLifecycleEvents=2
 evt_x memory_expired Retention expired mem_y after 0 day(s).
 evt_z memory_promoted Compaction promoted mem_a from short to mid.
@@ -322,6 +352,31 @@ The demo flow exercises the main operational loop:
 That makes it a good first check for whether the current project shape matches your use case.
 
 The client demo follows the same lifecycle through `GlialNodeClient`, which makes it a better fit if you plan to embed GlialNode into another Node application.
+
+## Benchmark Harness
+
+GlialNode includes a local benchmark harness for search, recall, bundle build, compaction dry-run, and report generation across 1k/10k/50k seeded records:
+
+```bash
+npm run bench
+npm run bench:provenance
+npm run eval:semantic
+```
+
+Latest baseline details are documented in `docs/benchmarks.md` and raw machine output is written to:
+- `docs/benchmarks/latest.json`
+- `docs/benchmarks/provenance-latest.json`
+
+## Example Service
+
+For a more production-like embedding flow, run:
+
+```bash
+npm run example:service
+npm run example:agent-loop
+```
+
+The example service ingests session events/records, builds pre-reply context, runs maintenance, emits report telemetry, and exports a portable snapshot. The agent-loop example adds trust-anchor setup, signed snapshot export, import preview, and anchored restore. See `examples/memory-service/README.md` and `examples/agent-loop/README.md` for details.
 
 ## Library Example
 
@@ -745,6 +800,9 @@ glialnode preset trust-local-key --name team-executor-key --trust-name team-anch
 glialnode preset trust-register --input ./team-executor.public.pem --name team-public --signer "GlialNode Test"
 glialnode preset trust-list
 glialnode preset trust-show --name team-anchor
+glialnode preset trust-pack-register --name strict-signed --base-profile signed --allow-origin production
+glialnode preset trust-pack-list --json
+glialnode preset trust-pack-show --name strict-signed --json
 glialnode preset trust-revoke --name team-anchor
 glialnode preset trust-rotate --name team-anchor --input ./team-executor-v2.public.pem --next-name team-anchor-v2
 glialnode preset trust-profile-list
@@ -759,6 +817,8 @@ glialnode preset bundle-show --input ./team-executor.bundle.json --require-signe
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --allow-key-id <fingerprint>
 glialnode preset bundle-show --input ./team-executor.bundle.json --require-signature --trust-signer team-anchor
 glialnode preset bundle-show --input ./team-executor.bundle.json --trust-profile anchored --trust-signer team-anchor
+glialnode preset bundle-show --input ./team-executor.bundle.json --allow-origin production --trust-explain --json
+glialnode preset bundle-show --input ./team-executor.bundle.json --trust-pack strict-signed
 glialnode preset bundle-show --input ./team-executor.bundle.json --space-id <space-id>
 glialnode preset bundle-show --input ./team-executor.bundle.json --json
 glialnode preset bundle-import --input ./team-executor.bundle.json --name team-executor-copy
@@ -771,18 +831,36 @@ glialnode space create --name "Custom Memory" --preset-file ./execution-first.js
 glialnode scope add --space-id <space-id> --type agent --label planner
 glialnode space show --id <space-id> --json
 glialnode space report --id <space-id> --json
+glialnode space graph-export --id <space-id> --json
+glialnode space graph-export --id <space-id> --format cytoscape --json
+glialnode space graph-export --id <space-id> --format dot --output ./exports/space.graph.dot
+glialnode space graph-export --id <space-id> --include-events false --output ./exports/space.graph.json
+glialnode space inspect-export --id <space-id> --output ./exports/space.inspector.html
+glialnode space inspect-export --id <space-id> --output ./exports/space.inspector.html --recent-events 30 --json
+glialnode space inspect-export --id <space-id> --output ./exports/space.inspector.html --query-text "trust review" --query-limit 2 --query-support-limit 2 --query-bundle-consumer reviewer
+glialnode space inspect-snapshot --id <space-id> --output ./exports/space.inspector.snapshot.json --query-text "trust review" --query-limit 2
+glialnode space inspect-index-export --output ./exports/space-inspector-index.html --json
+glialnode space inspect-index-snapshot --output ./exports/space-inspector-index.snapshot.json --json
+glialnode space inspect-pack-export --output-dir ./exports/space-inspector-pack --query-text "trust review" --query-limit 1 --json
+glialnode space inspect-pack-export --output-dir ./exports/space-inspector-pack --capture-screenshots true --screenshot-width 1600 --screenshot-height 1000
+glialnode space inspect-pack-serve --input-dir ./exports/space-inspector-pack --duration-ms 60000 --port 4173 --probe-path /index.html
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first."
 glialnode memory add --space-id <space-id> --scope-id <scope-id> --scope-type agent --tier mid --kind decision --content "Prefer lexical retrieval first." --compact-content "U:req retrieval=lexical_first"
 glialnode memory search --space-id <space-id> --text lexical
 glialnode memory search --space-id <space-id> --text lexical --json
+glialnode memory search --space-id <space-id> --text lexical --semantic-prototype true --semantic-weight 0.35 --json
+glialnode memory semantic-eval --corpus docs/evals/retrieval-corpus.v1.json --output docs/evals/semantic-eval.latest.json --json
+glialnode memory search --space-id <space-id> --text lexical --semantic-prototype true --semantic-weight 0.35 --semantic-gate-report docs/evals/semantic-eval.latest.json --semantic-gate-require-pass true --json
 glialnode memory search --space-id <space-id> --text lexical --reinforce --reinforce-limit 2 --reinforce-strength 1.5
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3
+glialnode memory recall --space-id <space-id> --text lexical --semantic-prototype true --semantic-weight 0.35 --limit 1 --support-limit 3 --json
 glialnode memory recall --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory trace --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3
 glialnode memory bundle --space-id <space-id> --text lexical --limit 1 --support-limit 3 --json
 glialnode memory bundle --space-id <space-id> --text lexical --bundle-profile executor --bundle-max-supporting 1 --bundle-max-content-chars 160 --bundle-prefer-compact true
+glialnode memory bundle --space-id <space-id> --text lexical --bundle-consumer executor --bundle-provenance-mode minimal
 glialnode memory bundle --space-id <space-id> --text lexical --bundle-consumer auto
 glialnode event add --space-id <space-id> --scope-id <scope-id> --scope-type agent --actor-type agent --actor-id planner-1 --event-type decision_made --summary "Recorded a durable design choice."
 glialnode memory promote --record-id <record-id>
@@ -814,7 +892,9 @@ glialnode preset keygen --name ops-snapshot-key --signer "Ops Team"
 glialnode preset trust-local-key --name ops-snapshot-key --trust-name ops-anchor
 glialnode export --space-id <space-id> --output ./exports/team-memory.json --origin local-backup --signing-key ops-snapshot-key
 glialnode import --input ./exports/team-memory.json --trust-profile anchored --trust-signer ops-anchor
+glialnode import --input ./exports/team-memory.json --trust-pack strict-signed
 glialnode import --input ./exports/team-memory.json --trust-profile anchored --trust-signer ops-anchor --json
+glialnode import --input ./exports/team-memory.json --collision rename --preview --json
 ```
 
 ## Comparison
@@ -828,9 +908,44 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 ## Current Limitations
 
 - SQLite now uses WAL and a busy timeout by default, but it is still best treated as local single-writer infrastructure
-- retrieval is lexical-first; semantic retrieval is not implemented yet
+- retrieval stays lexical-first by default; semantic prototype rerank is opt-in and intended for eval-gated experiments
 - policy is explicit and heuristic-driven; it is not model-driven
 - the extra PowerShell demo script remains Windows-oriented; use `npm run demo` for the portable path
+
+## Host App Helpers
+
+GlialNode now exports reusable low-level helpers for host applications:
+
+- `buildSafeFtsQuery(...)` for consistent literal-safe FTS query construction
+- `buildMemoryBundleHints(...)` for route hint introspection
+- `resolveMemoryBundleRouteReasoning(...)` for route + reasoning metadata before bundle construction
+
+These helpers are available from the main package entrypoint and match internal retrieval/runtime behavior.
+
+## Retrieval Eval Corpus
+
+GlialNode now includes a versioned retrieval-eval corpus for golden route/support checks:
+
+- `docs/evals/retrieval-corpus.v1.json`
+
+The corpus scenarios are validated by the normal test suite (`npm test`) to catch route/shaping regressions across executor, planner, and reviewer handoff behavior.
+
+## Data Classification
+
+Default operational classification guidance:
+
+- space metadata/settings: internal configuration
+- memory records and free-text content: potentially sensitive context data
+- memory events and audit summaries: operational telemetry that can still contain sensitive context
+- bundle/snapshot provenance metadata (`origin`, `signer`, key ids): internal provenance data
+- `.keys/*.json`: secret signing material
+- `.trusted/*.json`: policy-critical trust-anchor data
+
+Recommended handling:
+
+- keep `.keys/` out of source control
+- distribute public-key exports, not private key JSON
+- treat snapshot and bundle artifacts as internal unless explicitly scrubbed
 
 ## Publishing Checklist
 
@@ -845,7 +960,22 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - review `docs/operator-guide.md`
 - review `docs/compatibility.md`
 - review `docs/troubleshooting.md`
+- review `docs/json-contract.md`
+- review `docs/decision-notes.md`
+- review `docs/graph-export.md`
+- review `docs/trust-packs.md`
+- review `docs/space-inspector.md`
+- review `docs/semantic-retrieval-prototype.md`
 - follow `docs/publish-guide.md` for the first push
+
+## Release Docs Chain
+
+Use this handoff order for release preparation:
+
+1. `README.md`
+2. `docs/live-roadmap.gnl.md`
+3. `docs/launch-checklist.md`
+4. `docs/publish-guide.md`
 
 ## Project Files
 
@@ -861,7 +991,16 @@ GlialNode is closest to a memory-management layer, not just a context cache.
 - `docs/operator-guide.md`: safe backup, restore, trust, signing, and rotation workflows
 - `docs/compatibility.md`: versioning and compatibility expectations for CLI, API, schema, and portable formats
 - `docs/troubleshooting.md`: fast diagnosis for lock contention, trust failures, signer rotation, and snapshot import issues
+- `docs/json-contract.md`: versioned `--json-envelope` contract for automation surfaces
+- `docs/decision-notes.md`: compact architecture decisions for previously open roadmap research items
+- `docs/graph-export.md`: space graph export schema and usage for topology/provenance tooling
+- `docs/trust-packs.md`: named trust policy pack management and `--trust-pack` application
+- `docs/space-inspector.md`: standalone and pack inspector exports (`space inspect-export`, `space inspect-pack-export`)
+- `docs/semantic-retrieval-prototype.md`: opt-in semantic reranker notes and CLI/client usage
+- `docs/benchmarks.md`: benchmark harness usage and baseline performance numbers
 - `docs/publish-guide.md`: first-publish handoff steps
 - `scripts/demo.mjs`: cross-platform end-to-end demo flow for Windows, Linux, and macOS
 - `scripts/client-demo.mjs`: cross-platform end-to-end client API demo flow
 - `scripts/demo.ps1`: end-to-end local demo flow
+- `scripts/benchmark.mjs`: benchmark harness for 1k/10k/50k seeded dataset performance runs
+- `examples/memory-service/`: realistic embedded-service loop using `GlialNodeClient`

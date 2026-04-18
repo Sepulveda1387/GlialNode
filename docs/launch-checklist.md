@@ -10,7 +10,13 @@
 - review `CHANGELOG.md`
 - review `docs/operator-guide.md`
 - review `docs/compatibility.md`
+- review `docs/json-contract.md`
+- review `docs/decision-notes.md`
+- review `docs/graph-export.md`
+- review `docs/trust-packs.md`
 - review `docs/troubleshooting.md`
+- run `glialnode status --json --json-envelope` and verify `schemaVersion` is present
+- follow `docs/publish-guide.md`
 - review `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`
 - confirm `.gitignore` excludes local demo artifacts
 

@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-04-17T18:31:28.730Z",
+  "nodeVersion": "v24.14.0",
+  "platform": "win32 x64",
+  "cpuModel": "13th Gen Intel(R) Core(TM) i5-1335U",
+  "totalMemoryBytes": 8249057280,
+  "datasetSizes": [
+    1000,
+    10000,
+    50000
+  ],
+  "results": [
+    {
+      "records": 1000,
+      "seedMs": 187.503,
+      "searchMs": 27.221,
+      "recallMs": 3437.781,
+      "bundleBuildMs": 215.352,
+      "compactionDryRunMs": 51.114,
+      "reportMs": 2.675
+    },
+    {
+      "records": 10000,
+      "seedMs": 2320.223,
+      "searchMs": 300.038,
+      "recallMs": 48277.97,
+      "bundleBuildMs": 3071.636,
+      "compactionDryRunMs": 1799.303,
+      "reportMs": 62.406
+    },
+    {
+      "records": 50000,
+      "seedMs": 12281.486,
+      "searchMs": 1661.308,
+      "recallMs": 272242.166,
+      "bundleBuildMs": 17061.806,
+      "compactionDryRunMs": 147914.104,
+      "reportMs": 316.647
+    }
+  ]
+}

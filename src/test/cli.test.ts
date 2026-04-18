@@ -78,8 +78,29 @@ test("CLI status reports the SQLite write-mode contract", async () => {
     );
 
     assert.match(result.lines.join("\n"), /writeMode=single_writer/);
+    assert.match(result.lines.join("\n"), /maintenanceSpaces=/);
+    assert.match(result.lines.join("\n"), /maintenanceCompactionDeltas=/);
     assert.match(result.lines.join("\n"), /writeGuarantee=One writer should own durable mutations/);
     assert.match(result.lines.join("\n"), /writeNonGoal=GlialNode does not provide a cross-process write broker/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI status can report serialized_local write mode when requested", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-status-serialized-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath, { writeMode: "serialized_local" });
+
+  try {
+    const result = await runCommand(
+      parseArgs(["status"]),
+      { repository },
+    );
+
+    assert.match(result.lines.join("\n"), /writeMode=serialized_local/);
+    assert.match(result.lines.join("\n"), /writeGuarantee=Caller serializes writes within one local coordination boundary\./);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -107,6 +128,7 @@ test("CLI status supports machine-readable JSON runtime output", async () => {
       storage: string;
       database: { path: string; existedAtStartup: boolean; parentExistedAtStartup: boolean };
       schema: { upToDate: boolean; latest: number; version: number };
+      maintenance: { spacesWithMaintenance: number };
       runtime: { writeMode: string };
     };
 
@@ -116,7 +138,45 @@ test("CLI status supports machine-readable JSON runtime output", async () => {
     assert.equal(parsed.database.existedAtStartup, true);
     assert.equal(parsed.database.parentExistedAtStartup, true);
     assert.equal(parsed.schema.upToDate, true);
+    assert.equal(parsed.maintenance.spacesWithMaintenance, 0);
     assert.equal(parsed.runtime.writeMode, "single_writer");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI status supports versioned JSON envelope output", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-status-envelope-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const result = await runCommand(
+      parseArgs(["status", "--json", "--json-envelope"]),
+      {
+        repository,
+        databasePath,
+        databaseExistedAtStartup: true,
+        databaseParentExistedAtStartup: true,
+      },
+    );
+
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      schemaVersion: string;
+      command: string;
+      generatedAt: string;
+      data: {
+        status: string;
+        runtime: { writeMode: string };
+      };
+    };
+
+    assert.equal(parsed.schemaVersion, "1.0.0");
+    assert.equal(parsed.command, "status");
+    assert.equal(typeof parsed.generatedAt, "string");
+    assert.equal(parsed.data.status, "ready");
+    assert.equal(parsed.data.runtime.writeMode, "single_writer");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -245,7 +305,11 @@ test("CLI can create and configure spaces from presets with explicit overrides",
     );
 
     const settingsLine = showResult.lines.find((line) => line.startsWith("settings="));
+    const effectiveSettingsLine = showResult.lines.find((line) => line.startsWith("effectiveSettings="));
+    const settingsOriginLine = showResult.lines.find((line) => line.startsWith("settingsOrigin="));
     assert.ok(settingsLine);
+    assert.ok(effectiveSettingsLine);
+    assert.ok(settingsOriginLine);
     const settings = JSON.parse(settingsLine!.slice("settings=".length)) as {
       routing?: {
         preferExecutorOnActionable?: boolean;
@@ -259,10 +323,26 @@ test("CLI can create and configure spaces from presets with explicit overrides",
         trustedSignerNames?: string[];
       };
     };
+    const effectiveSettings = JSON.parse(effectiveSettingsLine!.slice("effectiveSettings=".length)) as {
+      routing?: {
+        preferExecutorOnActionable?: boolean;
+        preferPlannerOnDistilled?: boolean;
+      };
+    };
+    const settingsOrigin = JSON.parse(settingsOriginLine!.slice("settingsOrigin=".length)) as {
+      routing?: {
+        preferExecutorOnActionable?: string;
+        preferPlannerOnDistilled?: string;
+      };
+    };
 
     assert.equal(settings.routing?.preferExecutorOnActionable, false);
     assert.equal(settings.routing?.preferPlannerOnDistilled, false);
     assert.equal(settings.reinforcement?.confidenceBoost, 0.1);
+    assert.equal(effectiveSettings.routing?.preferExecutorOnActionable, false);
+    assert.equal(effectiveSettings.routing?.preferPlannerOnDistilled, false);
+    assert.equal(settingsOrigin.routing?.preferExecutorOnActionable, "space");
+    assert.equal(settingsOrigin.routing?.preferPlannerOnDistilled, "space");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -362,6 +442,7 @@ test("CLI can store provenance settings on a space and use them for bundle valid
       { repository },
     );
     assert.match(report.lines.join("\n"), /recentProvenanceEvents=2/);
+    assert.match(report.lines.join("\n"), /provenanceSummaryRecords=2/);
     assert.match(report.lines.join("\n"), /bundle_reviewed/);
     assert.match(report.lines.join("\n"), /bundle_imported/);
 
@@ -446,19 +527,28 @@ test("CLI supports stable machine-readable JSON output for space and memory read
     );
     const parsedShow = JSON.parse(showResult.lines.join("\n")) as {
       space: { id: string; name: string };
+      policy: {
+        effective: { maxShortTermRecords: number };
+        origin: { maxShortTermRecords: string };
+      };
     };
     assert.equal(parsedShow.space.id, spaceId);
     assert.equal(parsedShow.space.name, "JSON Space");
+    assert.equal(parsedShow.policy.effective.maxShortTermRecords, 50);
+    assert.equal(parsedShow.policy.origin.maxShortTermRecords, "default");
 
     const reportResult = await runCommand(
       parseArgs(["space", "report", "--id", spaceId, "--json"]),
       { repository },
     );
     const parsedReport = JSON.parse(reportResult.lines.join("\n")) as {
-      report: { spaceId: string; recordCount: number };
+      report: { spaceId: string; recordCount: number; eventCountsByType: Record<string, number> };
+      policy: { effective: { routing: { staleThreshold: number } } };
     };
     assert.equal(parsedReport.report.spaceId, spaceId);
     assert.equal(parsedReport.report.recordCount, 1);
+    assert.equal(typeof parsedReport.report.eventCountsByType, "object");
+    assert.equal(parsedReport.policy.effective.routing.staleThreshold, 0.35);
 
     const searchResult = await runCommand(
       parseArgs(["memory", "search", "--space-id", spaceId, "--text", "working memory", "--json"]),
@@ -470,6 +560,24 @@ test("CLI supports stable machine-readable JSON output for space and memory read
     };
     assert.equal(parsedSearch.count, 1);
     assert.equal(parsedSearch.records[0]?.summary, "Working memory guideline");
+
+    const semanticSearchResult = await runCommand(
+      parseArgs([
+        "memory", "search",
+        "--space-id", spaceId,
+        "--text", "working memory",
+        "--semantic-prototype", "true",
+        "--semantic-weight", "0.6",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedSemanticSearch = JSON.parse(semanticSearchResult.lines.join("\n")) as {
+      count: number;
+      records: Array<{ summary?: string }>;
+    };
+    assert.equal(parsedSemanticSearch.count, 1);
+    assert.equal(parsedSemanticSearch.records[0]?.summary, "Working memory guideline");
 
     const recallResult = await runCommand(
       parseArgs(["memory", "recall", "--space-id", spaceId, "--text", "working memory", "--json"]),
@@ -503,6 +611,119 @@ test("CLI supports stable machine-readable JSON output for space and memory read
     };
     assert.equal(parsedBundle.count, 1);
     assert.equal(parsedBundle.bundles[0]?.primary.summary, "Working memory guideline");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI memory semantic-eval emits a gate report and can write it to disk", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-semantic-eval-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const corpusPath = join(tempDirectory, "semantic-corpus.json");
+  const outputPath = join(tempDirectory, "semantic-eval-report.json");
+  const repository = createRepository(databasePath);
+
+  try {
+    writeFileSync(corpusPath, JSON.stringify({
+      version: 1,
+      scenarios: [
+        {
+          id: "semantic_eval_basic",
+          description: "Basic lexical match",
+          queryText: "rollout checklist",
+          records: [
+            {
+              summary: "Rollout checklist",
+              content: "Ship rollout checklist with validation.",
+              kind: "task",
+            },
+          ],
+          expect: {
+            primarySummaryContains: "rollout checklist",
+          },
+        },
+      ],
+    }, null, 2), "utf8");
+
+    const result = await runCommand(
+      parseArgs([
+        "memory", "semantic-eval",
+        "--corpus", corpusPath,
+        "--output", outputPath,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      schemaVersion: string;
+      passed: boolean;
+      reportId: string;
+      gate: { reason: string };
+    };
+
+    assert.equal(parsed.schemaVersion, "1.0.0");
+    assert.equal(typeof parsed.passed, "boolean");
+    assert.equal(typeof parsed.reportId, "string");
+    assert.equal(typeof parsed.gate.reason, "string");
+
+    const written = JSON.parse(readFileSync(outputPath, "utf8")) as {
+      schemaVersion: string;
+      reportId: string;
+    };
+    assert.equal(written.schemaVersion, "1.0.0");
+    assert.equal(written.reportId, parsed.reportId);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects semantic gate require-pass mode without a report file", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-semantic-gate-require-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const created = await runCommand(
+      parseArgs(["space", "create", "--name", "Semantic Gate Space"]),
+      { repository },
+    );
+    const spaceId = created.lines.find((line) => line.startsWith("id="))?.slice(3) ?? "";
+    const scope = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = scope.lines.find((line) => line.startsWith("id="))?.slice(3) ?? "";
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Lexical retrieval baseline",
+        "--summary", "Lexical baseline",
+      ]),
+      { repository },
+    );
+
+    await assert.rejects(
+      runCommand(
+        parseArgs([
+          "memory", "search",
+          "--space-id", spaceId,
+          "--text", "lexical baseline",
+          "--semantic-prototype", "true",
+          "--semantic-gate-require-pass", "true",
+          "--json",
+        ]),
+        { repository },
+      ),
+      /Missing required semantic gate report/,
+    );
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -923,6 +1144,126 @@ test("CLI lists trust profiles", async () => {
     assert.match(result.lines.join("\n"), /permissive/);
     assert.match(result.lines.join("\n"), /signed/);
     assert.match(result.lines.join("\n"), /anchored/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can manage trust policy packs and apply them to bundle validation", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-trust-packs-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetPath = join(tempDirectory, "execution-first.json");
+  const bundlePath = join(tempDirectory, "team-executor.bundle.json");
+  const presetDirectory = join(tempDirectory, "presets");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs(["preset", "export", "--name", "execution-first", "--output", presetPath]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "register",
+        "--input", presetPath,
+        "--name", "team-executor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["preset", "keygen", "--name", "team-executor-key", "--signer", "GlialNode Test", "--directory", presetDirectory]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "bundle-export",
+        "--name", "team-executor",
+        "--output", bundlePath,
+        "--directory", presetDirectory,
+        "--origin", "local-dev",
+        "--signing-key", "team-executor-key",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "preset", "trust-pack-register",
+        "--name", "strict-signed",
+        "--base-profile", "signed",
+        "--allow-origin", "production",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-pack-register",
+        "--name", "strict-signed-anchor",
+        "--inherits", "strict-signed",
+        "--trust-signer", "team-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const listed = await runCommand(
+      parseArgs(["preset", "trust-pack-list", "--directory", presetDirectory, "--json"]),
+      { repository },
+    );
+    const parsedList = JSON.parse(listed.lines.join("\n")) as {
+      count: number;
+      packs: Array<{ name: string }>;
+    };
+    assert.equal(parsedList.count, 2);
+    assert.ok(parsedList.packs.some((pack) => pack.name === "strict-signed"));
+    assert.ok(parsedList.packs.some((pack) => pack.name === "strict-signed-anchor"));
+
+    const shown = await runCommand(
+      parseArgs(["preset", "trust-pack-show", "--name", "strict-signed-anchor", "--directory", presetDirectory, "--json"]),
+      { repository },
+    );
+    const parsedShow = JSON.parse(shown.lines.join("\n")) as {
+      baseProfile?: string;
+      policy: { allowedOrigins?: string[]; trustedSignerNames?: string[] };
+    };
+    assert.equal(parsedShow.baseProfile, "signed");
+    assert.deepEqual(parsedShow.policy.allowedOrigins, ["production"]);
+    assert.deepEqual(parsedShow.policy.trustedSignerNames, ["team-anchor"]);
+
+    const failed = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--trust-pack", "strict-signed",
+        "--trust-explain",
+        "--json",
+      ]),
+      { repository },
+    );
+    const failedPayload = JSON.parse(failed.lines.join("\n")) as {
+      validation: {
+        trusted: boolean;
+        report: { policyFailures: string[] };
+      };
+    };
+    assert.equal(failedPayload.validation.trusted, false);
+    assert.ok(failedPayload.validation.report.policyFailures.some((failure) => /origin is not allowed/i.test(failure)));
+
+    const passed = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--directory", presetDirectory,
+        "--trust-pack", "strict-signed",
+        "--allow-origin", "local-dev",
+      ]),
+      { repository },
+    );
+    assert.match(passed.lines.join("\n"), /trusted=true/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -1658,6 +1999,9 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
     );
     assert.match(trustedByName.lines.join("\n"), /trusted=true/);
     assert.match(trustedByName.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
+    assert.match(trustedByName.lines.join("\n"), /requestedTrustedSigners=team-anchor/);
+    assert.match(trustedByName.lines.join("\n"), /unmatchedTrustedSigners=/);
+    assert.match(trustedByName.lines.join("\n"), /policyFailures=0/);
     assert.match(trustedByName.lines.join("\n"), /effectivePolicy=/);
 
     await runCommand(
@@ -1690,7 +2034,29 @@ test("CLI validates preset bundle metadata and rejects unsupported formats", asy
       { repository },
     );
     assert.match(multiAnchorTrust.lines.join("\n"), /matchedTrustedSigners=team-anchor/);
-    assert.doesNotMatch(multiAnchorTrust.lines.join("\n"), /matchedTrustedSigners=.*other-anchor/);
+    assert.match(multiAnchorTrust.lines.join("\n"), /requestedTrustedSigners=team-anchor,other-anchor/);
+    assert.match(multiAnchorTrust.lines.join("\n"), /unmatchedTrustedSigners=other-anchor/);
+
+    const explainedOriginFailure = await runCommand(
+      parseArgs([
+        "preset", "bundle-show",
+        "--input", bundlePath,
+        "--allow-origin", "production",
+        "--trust-explain",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedOriginFailure = JSON.parse(explainedOriginFailure.lines.join("\n")) as {
+      validation: {
+        trusted: boolean;
+        report: {
+          policyFailures: string[];
+        };
+      };
+    };
+    assert.equal(parsedOriginFailure.validation.trusted, false);
+    assert.ok(parsedOriginFailure.validation.report.policyFailures.some((failure) => /origin is not allowed/i.test(failure)));
 
     await assert.rejects(
       () => runCommand(parseArgs([
@@ -2087,6 +2453,17 @@ test("CLI snapshot import enforces explicit collision policy", async () => {
       repository: targetRepository,
     });
 
+    const previewConflict = await runCommand(
+      parseArgs(["import", "--input", exportPath, "--preview", "--json"]),
+      { repository: targetRepository },
+    );
+    const parsedPreviewConflict = JSON.parse(previewConflict.lines.join("\n")) as {
+      applyAllowed: boolean;
+      blockingIssues: string[];
+    };
+    assert.equal(parsedPreviewConflict.applyAllowed, false);
+    assert.ok(parsedPreviewConflict.blockingIssues.some((issue) => /Space already exists:/i.test(issue)));
+
     await assert.rejects(
       () => runCommand(parseArgs(["import", "--input", exportPath]), {
         repository: targetRepository,
@@ -2112,6 +2489,19 @@ test("CLI snapshot import enforces explicit collision policy", async () => {
     assert.equal(parsed.collisionPolicy, "rename");
     assert.equal(parsed.spaceName, "Collision Space (imported)");
     assert.notEqual(parsed.spaceId, spaceId);
+
+    const previewRename = await runCommand(
+      parseArgs(["import", "--input", exportPath, "--collision", "rename", "--preview", "--json"]),
+      { repository: targetRepository },
+    );
+    const parsedPreviewRename = JSON.parse(previewRename.lines.join("\n")) as {
+      applyAllowed: boolean;
+      identityRemapped: boolean;
+      targetSpace: { name: string };
+    };
+    assert.equal(parsedPreviewRename.applyAllowed, true);
+    assert.equal(parsedPreviewRename.identityRemapped, true);
+    assert.equal(parsedPreviewRename.targetSpace.name, "Collision Space (imported)");
   } finally {
     sourceRepository.close();
     targetRepository.close();
@@ -2211,9 +2601,591 @@ test("CLI export and import can sign and trust a snapshot", async () => {
     assert.equal(parsedImport.validation.trusted, true);
     assert.equal(parsedImport.validation.report.signed, true);
     assert.deepEqual(parsedImport.validation.report.matchedTrustedSignerNames, ["snapshot-anchor"]);
+
+    const failingPreview = await runCommand(
+      parseArgs([
+        "import",
+        "--input", exportPath,
+        "--allow-origin", "production",
+        "--preview",
+        "--json",
+      ]),
+      { repository: targetRepository },
+    );
+    const parsedFailingPreview = JSON.parse(failingPreview.lines.join("\n")) as {
+      applyAllowed: boolean;
+      blockingIssues: string[];
+    };
+    assert.equal(parsedFailingPreview.applyAllowed, false);
+    assert.ok(parsedFailingPreview.blockingIssues.some((issue) => /origin is not allowed/i.test(issue)));
   } finally {
     sourceRepository.close();
     targetRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI snapshot trust enforces rotated anchors and rejects revoked ones", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-snapshot-trust-rotation-"));
+  const sourceDbPath = join(tempDirectory, "source.sqlite");
+  const targetDbPath = join(tempDirectory, "target.sqlite");
+  const exportPathV1 = join(tempDirectory, "signed-space-export-v1.json");
+  const exportPathV2 = join(tempDirectory, "signed-space-export-v2.json");
+  const rotatedPublicKeyPath = join(tempDirectory, "snapshot-key-v2.public.pem");
+  const presetDirectory = join(tempDirectory, "presets");
+  const sourceRepository = createRepository(sourceDbPath);
+  const targetRepository = createRepository(targetDbPath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Signed Rotation Space"]),
+      { repository: sourceRepository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository: sourceRepository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Rotated trust anchors should control snapshot imports.",
+        "--summary", "Signed rotation preference",
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "snapshot-key-v1",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "snapshot-key-v1",
+        "--trust-name", "snapshot-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "snapshot-key-v2",
+        "--signer", "GlialNode Test",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "key-export",
+        "--name", "snapshot-key-v2",
+        "--output", rotatedPublicKeyPath,
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-rotate",
+        "--name", "snapshot-anchor",
+        "--input", rotatedPublicKeyPath,
+        "--next-name", "snapshot-anchor-v2",
+        "--directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "export",
+        "--space-id", spaceId,
+        "--output", exportPathV1,
+        "--origin", "cli-test",
+        "--signing-key", "snapshot-key-v1",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+
+    await assert.rejects(
+      () => runCommand(
+        parseArgs([
+          "import",
+          "--input", exportPathV1,
+          "--trust-profile", "anchored",
+          "--trust-signer", "snapshot-anchor",
+          "--preset-directory", presetDirectory,
+        ]),
+        { repository: targetRepository },
+      ),
+      /Trusted signers are revoked: snapshot-anchor/,
+    );
+
+    await runCommand(
+      parseArgs([
+        "export",
+        "--space-id", spaceId,
+        "--output", exportPathV2,
+        "--origin", "cli-test",
+        "--signing-key", "snapshot-key-v2",
+        "--preset-directory", presetDirectory,
+      ]),
+      { repository: sourceRepository },
+    );
+
+    const importResult = await runCommand(
+      parseArgs([
+        "import",
+        "--input", exportPathV2,
+        "--trust-profile", "anchored",
+        "--trust-signer", "snapshot-anchor-v2",
+        "--preset-directory", presetDirectory,
+        "--json",
+      ]),
+      { repository: targetRepository },
+    );
+    const parsedImport = JSON.parse(importResult.lines.join("\n")) as {
+      spaceId: string;
+      validation: {
+        trusted: boolean;
+        report: { matchedTrustedSignerNames: string[] };
+      };
+    };
+    assert.equal(parsedImport.spaceId, spaceId);
+    assert.equal(parsedImport.validation.trusted, true);
+    assert.deepEqual(parsedImport.validation.report.matchedTrustedSignerNames, ["snapshot-anchor-v2"]);
+  } finally {
+    sourceRepository.close();
+    targetRepository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can export a space graph for topology inspection", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-graph-export-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const outputPath = join(tempDirectory, "space.graph.json");
+  const dotPath = join(tempDirectory, "space.graph.dot");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Graph Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "writer"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "event", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--actor-type", "agent",
+        "--actor-id", "writer-1",
+        "--event-type", "decision_made",
+        "--summary", "Captured graph event.",
+      ]),
+      { repository },
+    );
+
+    const first = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "First graph node.",
+        "--summary", "First node",
+      ]),
+      { repository },
+    );
+    const firstId = first.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(firstId);
+
+    const second = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "summary",
+        "--content", "Second graph node.",
+        "--summary", "Second node",
+      ]),
+      { repository },
+    );
+    const secondId = second.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(secondId);
+
+    await runCommand(
+      parseArgs([
+        "link", "add",
+        "--space-id", spaceId,
+        "--from-record-id", firstId,
+        "--to-record-id", secondId,
+        "--type", "supports",
+      ]),
+      { repository },
+    );
+
+    const graphResult = await runCommand(
+      parseArgs(["space", "graph-export", "--id", spaceId, "--json"]),
+      { repository },
+    );
+    const graph = JSON.parse(graphResult.lines.join("\n")) as {
+      metadata: { schemaVersion: number; spaceId: string; options: { includeEvents: boolean; includeScopes: boolean } };
+      nodes: Array<{ type: string; id: string }>;
+      edges: Array<{ type: string; relation?: string; toId: string }>;
+    };
+    assert.equal(graph.metadata.schemaVersion, 1);
+    assert.equal(graph.metadata.spaceId, spaceId);
+    assert.equal(graph.metadata.options.includeEvents, true);
+    assert.equal(graph.metadata.options.includeScopes, true);
+    assert.ok(graph.nodes.some((node) => node.type === "scope" && node.id === scopeId));
+    assert.ok(graph.nodes.some((node) => node.type === "event"));
+    assert.ok(graph.edges.some((edge) => edge.type === "record_link" && edge.relation === "supports"));
+
+    const cytoscapeResult = await runCommand(
+      parseArgs(["space", "graph-export", "--id", spaceId, "--format", "cytoscape", "--json"]),
+      { repository },
+    );
+    const cytoscape = JSON.parse(cytoscapeResult.lines.join("\n")) as {
+      elements: {
+        nodes: Array<{ data: { type: string } }>;
+        edges: Array<{ data: { type: string } }>;
+      };
+    };
+    assert.ok(cytoscape.elements.nodes.some((node) => node.data.type === "scope"));
+    assert.ok(cytoscape.elements.edges.some((edge) => edge.data.type === "record_link"));
+
+    const dotResult = await runCommand(
+      parseArgs(["space", "graph-export", "--id", spaceId, "--format", "dot", "--json"]),
+      { repository },
+    );
+    const dotPayload = JSON.parse(dotResult.lines.join("\n")) as {
+      format: string;
+      dot: string;
+    };
+    assert.equal(dotPayload.format, "dot");
+    assert.match(dotPayload.dot, /^digraph /);
+    assert.match(dotPayload.dot, /label="supports"/);
+
+    const minimal = await runCommand(
+      parseArgs([
+        "space", "graph-export",
+        "--id", spaceId,
+        "--include-events", "false",
+        "--include-scopes", "false",
+        "--output", outputPath,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedMinimal = JSON.parse(minimal.lines.join("\n")) as {
+      output: string;
+      metadata: { options: { includeEvents: boolean; includeScopes: boolean } };
+    };
+    assert.equal(parsedMinimal.output, outputPath);
+    assert.equal(parsedMinimal.metadata.options.includeEvents, false);
+    assert.equal(parsedMinimal.metadata.options.includeScopes, false);
+    const stored = JSON.parse(readFileSync(outputPath, "utf8")) as {
+      metadata: { options: { includeEvents: boolean; includeScopes: boolean } };
+      nodes: Array<{ type: string }>;
+    };
+    assert.equal(stored.metadata.options.includeEvents, false);
+    assert.equal(stored.metadata.options.includeScopes, false);
+    assert.equal(stored.nodes.some((node) => node.type === "event"), false);
+    assert.equal(stored.nodes.some((node) => node.type === "scope"), false);
+
+    await runCommand(
+      parseArgs([
+        "space", "graph-export",
+        "--id", spaceId,
+        "--format", "dot",
+        "--output", dotPath,
+      ]),
+      { repository },
+    );
+    const dotFile = readFileSync(dotPath, "utf8");
+    assert.match(dotFile, /^digraph /);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can export a standalone space inspector HTML artifact", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-space-inspector-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const presetDirectory = join(tempDirectory, "presets");
+  const outputPath = join(tempDirectory, "space-inspector.html");
+  const snapshotOutputPath = join(tempDirectory, "space-inspector.snapshot.json");
+  const indexOutputPath = join(tempDirectory, "space-inspector-index.html");
+  const indexSnapshotOutputPath = join(tempDirectory, "space-inspector-index.snapshot.json");
+  const packOutputDirectory = join(tempDirectory, "space-inspector-pack");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Inspector CLI Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "inspector"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "decision",
+        "--content", "Inspector exports should be stable and reviewable.",
+        "--summary", "Inspector export record",
+      ]),
+      { repository },
+    );
+
+    await runCommand(
+      parseArgs([
+        "preset", "keygen",
+        "--name", "inspector-key",
+        "--signer", "Inspector",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-local-key",
+        "--name", "inspector-key",
+        "--trust-name", "inspector-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "preset", "trust-pack-register",
+        "--name", "inspector-pack",
+        "--base-profile", "anchored",
+        "--trust-signer", "inspector-anchor",
+        "--directory", presetDirectory,
+      ]),
+      { repository },
+    );
+
+    const result = await runCommand(
+      parseArgs([
+        "space", "inspect-export",
+        "--id", spaceId,
+        "--output", outputPath,
+        "--query-text", "stable reviewable",
+        "--query-limit", "2",
+        "--query-support-limit", "2",
+        "--query-bundle-consumer", "reviewer",
+        "--directory", presetDirectory,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      output: string;
+      space: { id: string; name: string };
+      graph: { nodes: number; edges: number };
+      recall: { query: { text?: string }; traceCount: number } | null;
+      trustRegistryIncluded: boolean;
+    };
+    assert.equal(parsed.output, outputPath);
+    assert.equal(parsed.space.id, spaceId);
+    assert.equal(parsed.space.name, "Inspector CLI Space");
+    assert.ok(parsed.graph.nodes >= 2);
+    assert.equal(parsed.recall?.query.text, "stable reviewable");
+    assert.equal(parsed.recall?.traceCount, 1);
+    assert.equal(parsed.trustRegistryIncluded, true);
+
+    const html = readFileSync(outputPath, "utf8");
+    assert.match(html, /GlialNode Space Inspector/);
+    assert.match(html, /Inspector CLI Space/);
+    assert.match(html, /snapshot-data/);
+
+    const snapshotResult = await runCommand(
+      parseArgs([
+        "space", "inspect-snapshot",
+        "--id", spaceId,
+        "--output", snapshotOutputPath,
+        "--query-text", "stable reviewable",
+        "--query-limit", "2",
+        "--directory", presetDirectory,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedSnapshot = JSON.parse(snapshotResult.lines.join("\n")) as {
+      output: string;
+      risk: { riskLevel: string };
+      recall: { traceCount: number } | null;
+    };
+    assert.equal(parsedSnapshot.output, snapshotOutputPath);
+    assert.equal(parsedSnapshot.risk.riskLevel, "moderate");
+    assert.equal(parsedSnapshot.recall?.traceCount, 1);
+    const snapshotFile = JSON.parse(readFileSync(snapshotOutputPath, "utf8")) as {
+      space: { id: string };
+      risk: { maintenanceStale: boolean };
+    };
+    assert.equal(snapshotFile.space.id, spaceId);
+    assert.equal(snapshotFile.risk.maintenanceStale, true);
+
+    await runCommand(
+      parseArgs(["space", "create", "--name", "Inspector CLI Space B"]),
+      { repository },
+    );
+
+    const indexResult = await runCommand(
+      parseArgs([
+        "space", "inspect-index-export",
+        "--output", indexOutputPath,
+        "--directory", presetDirectory,
+        "--json",
+      ]),
+      { repository },
+    );
+    const indexParsed = JSON.parse(indexResult.lines.join("\n")) as {
+      output: string;
+      totals: { records: number; graphNodes: number };
+      spaceCount: number;
+      trustRegistryIncluded: boolean;
+    };
+    assert.equal(indexParsed.output, indexOutputPath);
+    assert.ok(indexParsed.spaceCount >= 2);
+    assert.ok(indexParsed.totals.records >= 1);
+    assert.ok(indexParsed.totals.graphNodes >= 2);
+    assert.equal(indexParsed.trustRegistryIncluded, true);
+
+    const indexHtml = readFileSync(indexOutputPath, "utf8");
+    assert.match(indexHtml, /GlialNode Space Inspector Index/);
+    assert.match(indexHtml, /Inspector CLI Space B/);
+
+    const indexSnapshotResult = await runCommand(
+      parseArgs([
+        "space", "inspect-index-snapshot",
+        "--output", indexSnapshotOutputPath,
+        "--directory", presetDirectory,
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedIndexSnapshot = JSON.parse(indexSnapshotResult.lines.join("\n")) as {
+      output: string;
+      totals: { spacesNeedingTrustReview: number };
+      spaceCount: number;
+    };
+    assert.equal(parsedIndexSnapshot.output, indexSnapshotOutputPath);
+    assert.ok(parsedIndexSnapshot.spaceCount >= 2);
+    assert.ok(parsedIndexSnapshot.totals.spacesNeedingTrustReview >= 0);
+    const indexSnapshotFile = JSON.parse(readFileSync(indexSnapshotOutputPath, "utf8")) as {
+      totals: { spacesWithStaleMemory: number };
+      spaces: Array<{ risk: { riskLevel: string } }>;
+    };
+    assert.ok(indexSnapshotFile.totals.spacesWithStaleMemory >= 0);
+    assert.ok(indexSnapshotFile.spaces.some((spaceEntry) => spaceEntry.risk.riskLevel === "moderate"));
+
+    const packResult = await runCommand(
+      parseArgs([
+        "space", "inspect-pack-export",
+        "--output-dir", packOutputDirectory,
+        "--directory", presetDirectory,
+        "--query-text", "stable",
+        "--query-limit", "1",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedPack = JSON.parse(packResult.lines.join("\n")) as {
+      outputDirectory: string;
+      manifestPath: string;
+      spaceCount: number;
+      screenshotsCaptured: boolean;
+      totals: { records: number };
+    };
+    assert.equal(parsedPack.outputDirectory, packOutputDirectory);
+    assert.ok(parsedPack.spaceCount >= 2);
+    assert.equal(parsedPack.screenshotsCaptured, false);
+    assert.ok(parsedPack.totals.records >= 1);
+    const manifestFile = JSON.parse(readFileSync(parsedPack.manifestPath, "utf8")) as {
+      files: { indexHtml: string; indexSnapshot: string; indexScreenshot?: string };
+      spaces: Array<{ html: string; snapshot: string; screenshot?: string }>;
+    };
+    assert.match(readFileSync(manifestFile.files.indexHtml, "utf8"), /GlialNode Space Inspector Index/);
+    assert.equal(manifestFile.files.indexScreenshot, undefined);
+    assert.ok(manifestFile.spaces.length >= 2);
+    assert.ok(manifestFile.spaces.every((entry) => /[\\/]spaces[\\/]/.test(entry.html)));
+    assert.ok(manifestFile.spaces.every((entry) => entry.screenshot === undefined));
+
+    const serveResult = await runCommand(
+      parseArgs([
+        "space", "inspect-pack-serve",
+        "--input-dir", packOutputDirectory,
+        "--duration-ms", "25",
+        "--port", "0",
+        "--probe-path", "/index.html",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsedServe = JSON.parse(serveResult.lines.join("\n")) as {
+      directory: string;
+      baseUrl: string;
+      port: number;
+      durationMs: number;
+      probePath?: string;
+      probeStatus?: number;
+    };
+    assert.equal(parsedServe.directory, packOutputDirectory);
+    assert.match(parsedServe.baseUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.ok(parsedServe.port > 0);
+    assert.equal(parsedServe.durationMs, 25);
+    assert.equal(parsedServe.probePath, "/index.html");
+    assert.equal(parsedServe.probeStatus, 200);
+  } finally {
+    repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
@@ -2597,6 +3569,19 @@ test("Space report summarizes records, links, and lifecycle activity", async () 
     assert.match(output, /^links=/m);
     assert.match(output, /tiers=/);
     assert.match(output, /statuses=/);
+    assert.match(output, /eventTypes=/);
+    assert.match(output, /provenanceSummaryRecords=/);
+    assert.match(output, /maintenanceLatestRunAt=/);
+    assert.match(output, /maintenanceLatestCompactionAt=/);
+    assert.match(output, /maintenanceLatestRetentionAt=/);
+    assert.match(output, /maintenanceLatestDecayAt=/);
+    assert.match(output, /maintenanceLatestReinforcementAt=/);
+    assert.match(output, /maintenanceCompactionDelta=/);
+    assert.match(output, /maintenanceRetentionDelta=/);
+    assert.match(output, /maintenanceDecayDelta=/);
+    assert.match(output, /maintenanceReinforcementDelta=/);
+    assert.match(output, /effectiveSettings=/);
+    assert.match(output, /settingsOrigin=/);
     assert.match(output, /recentLifecycleEvents=/);
     assert.match(output, /memory_promoted|memory_expired|memory_archived/);
   } finally {
@@ -2693,6 +3678,8 @@ test("Space maintain runs compaction and retention in one workflow", async () =>
     const reportOutput = report.lines.join("\n");
     assert.match(reportOutput, /memory_promoted/);
     assert.match(reportOutput, /memory_expired/);
+    assert.match(reportOutput, /maintenanceCompactionDelta=\{"promoted":\d+/);
+    assert.match(reportOutput, /maintenanceRetentionDelta=\{"expired":\d+\}/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -3713,6 +4700,79 @@ test("CLI bundle can auto-route actionable memory toward executor handoff", asyn
   }
 });
 
+test("CLI bundle supports versioned JSON envelope output", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-envelope-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Envelope Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "long",
+        "--kind", "decision",
+        "--content", "Prefer lexical retrieval first for stable execution-time search.",
+        "--summary", "Execution retrieval decision",
+        "--tags", "retrieval,search",
+      ]),
+      { repository },
+    );
+
+    const bundle = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "execution retrieval",
+        "--limit", "1",
+        "--bundle-consumer", "auto",
+        "--json",
+        "--json-envelope",
+      ]),
+      { repository },
+    );
+
+    const parsed = JSON.parse(bundle.lines.join("\n")) as {
+      schemaVersion: string;
+      command: string;
+      generatedAt: string;
+      data: {
+        count: number;
+        bundles: Array<{
+          route: {
+            resolvedConsumer: string;
+          };
+        }>;
+      };
+    };
+
+    assert.equal(parsed.schemaVersion, "1.0.0");
+    assert.equal(parsed.command, "memory bundle");
+    assert.equal(typeof parsed.generatedAt, "string");
+    assert.equal(parsed.data.count, 1);
+    assert.equal(parsed.data.bundles[0]?.route.resolvedConsumer, "executor");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI bundle can auto-route provenance memory toward reviewer handoff", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-routing-provenance-cli-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -3763,6 +4823,7 @@ test("CLI bundle can auto-route provenance memory toward reviewer handoff", asyn
     );
 
     const parsed = JSON.parse(bundle.lines.join("\n")) as Array<{
+      trace: { summary: string };
       route: {
         resolvedConsumer: string;
         profileUsed: string;
@@ -3776,6 +4837,131 @@ test("CLI bundle can auto-route provenance memory toward reviewer handoff", asyn
     assert.equal(parsed[0]?.route.profileUsed, "reviewer");
     assert.equal(parsed[0]?.route.source, "auto");
     assert.ok(parsed[0]?.route.warnings.includes("contains_provenance_memory"));
+    assert.match(parsed[0]?.trace.summary ?? "", /Reviewer hint: includes 1 provenance memory item\(s\)\./);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI bundle provenance mode can keep executor handoffs lean while preserving one risky provenance item", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-bundle-provenance-mode-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Bundle Provenance Mode Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "executor"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "task",
+        "--content", "Ship rollout checklist with signed artifact validation.",
+        "--summary", "Ship rollout checklist",
+        "--importance", "0.92",
+        "--confidence", "0.93",
+        "--freshness", "0.91",
+      ]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "summary",
+        "--content", "Bundle import audit for rollout trust review.",
+        "--summary", "Bundle import audit",
+        "--tags", "provenance,bundle,audit",
+        "--importance", "0.7",
+        "--confidence", "0.84",
+        "--freshness", "0.88",
+      ]),
+      { repository },
+    );
+
+    const noRisk = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "rollout checklist",
+        "--limit", "1",
+        "--bundle-consumer", "executor",
+        "--bundle-provenance-mode", "auto",
+        "--bundle-max-supporting", "4",
+      ]),
+      { repository },
+    );
+    const parsedNoRisk = JSON.parse(noRisk.lines.join("\n")) as Array<{
+      primary: { annotations: string[] };
+      supporting: Array<{ annotations: string[] }>;
+    }>;
+    assert.equal(parsedNoRisk.length, 1);
+    assert.equal(
+      parsedNoRisk[0]?.supporting.some((entry) => entry.annotations.includes("provenance")),
+      false,
+    );
+
+    await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "summary",
+        "--content", "Secondary audit note with stale provenance risk for rollout checklist.",
+        "--summary", "Secondary rollout provenance audit",
+        "--tags", "provenance,bundle,audit",
+        "--importance", "0.66",
+        "--confidence", "0.82",
+        "--freshness", "0.18",
+      ]),
+      { repository },
+    );
+
+    const risk = await runCommand(
+      parseArgs([
+        "memory", "bundle",
+        "--space-id", spaceId,
+        "--text", "rollout checklist",
+        "--limit", "1",
+        "--bundle-consumer", "executor",
+        "--bundle-provenance-mode", "auto",
+        "--bundle-max-supporting", "5",
+      ]),
+      { repository },
+    );
+    const parsedRisk = JSON.parse(risk.lines.join("\n")) as Array<{
+      primary: { annotations: string[] };
+      route: { warnings: string[] };
+      supporting: Array<{ annotations: string[] }>;
+    }>;
+    assert.equal(parsedRisk.length, 1);
+    const provenanceSupporting = parsedRisk[0]?.supporting.filter((entry) => entry.annotations.includes("provenance")) ?? [];
+    const primaryHasProvenance = parsedRisk[0]?.primary.annotations.includes("provenance") ?? false;
+    const totalProvenanceItems = provenanceSupporting.length + (primaryHasProvenance ? 1 : 0);
+    assert.ok(parsedRisk[0]?.route.warnings.includes("contains_stale_memory"));
+    assert.ok(totalProvenanceItems >= 1);
+    assert.ok(provenanceSupporting.length <= 1);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

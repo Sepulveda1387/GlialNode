@@ -71,6 +71,12 @@ For a straightforward local restore:
 glialnode import --input ./exports/space.snapshot.json
 ```
 
+For a no-write dry-run preview (counts, conflicts, schema/trust status):
+
+```bash
+glialnode import --input ./exports/space.snapshot.json --preview --json
+```
+
 If the target space already exists and you want an explicit duplicate instead of a hard failure:
 
 ```bash
@@ -101,6 +107,7 @@ Collision policy rules:
 - default is `error`
 - use `overwrite` only when you mean to reuse the imported ids
 - use `rename` when you want a second imported copy to coexist safely
+- use `--preview` first when restore risk is unclear or automation is about to apply changes
 
 Preset bundle import follows the same pattern:
 
@@ -190,7 +197,68 @@ Recommended usage:
 Trust reports now distinguish:
 
 - which trusted signer names were actually matched by the artifact signer key
+- which trusted signer names were requested but unmatched
 - which requested signer names were revoked and therefore unusable
+
+For structured failure diagnostics without immediate command failure, use:
+
+```bash
+glialnode preset bundle-show --input ./team-executor.bundle.json --allow-origin production --trust-explain --json
+```
+
+That output includes policy failures plus requested/matched/unmatched signer-name sets for faster trust-policy debugging.
+
+For reusable team policies, you can also define named trust packs and apply them with `--trust-pack`:
+
+```bash
+glialnode preset trust-pack-register --name strict-signed --base-profile signed --allow-origin production
+glialnode preset bundle-show --input ./team-executor.bundle.json --trust-pack strict-signed
+glialnode import --input ./exports/space.snapshot.json --trust-pack strict-signed
+```
+
+Automation can set `GLIALNODE_TRUST_POLICY_PACK=<name>` as a default pack for trust-sensitive CLI flows.
+
+## Trust Lifecycle Verification Drill
+
+Before release or major trust-policy changes, run one explicit revoke/rotate drill:
+
+1. generate a signer key and trust anchor
+2. export a signed snapshot
+3. rotate the trusted anchor to a new public key
+4. verify imports anchored to the revoked name now fail
+5. verify imports anchored to the rotated replacement succeed
+
+CLI example:
+
+```bash
+glialnode preset keygen --name snapshot-key-v1 --signer "Ops Team"
+glialnode preset trust-local-key --name snapshot-key-v1 --trust-name snapshot-anchor
+glialnode preset keygen --name snapshot-key-v2 --signer "Ops Team"
+glialnode preset key-export --name snapshot-key-v2 --output ./snapshot-key-v2.public.pem
+glialnode preset trust-rotate --name snapshot-anchor --input ./snapshot-key-v2.public.pem --next-name snapshot-anchor-v2
+glialnode export --space-id <space-id> --output ./space-v2.snapshot.json --signing-key snapshot-key-v2
+glialnode import --input ./space-v2.snapshot.json --trust-profile anchored --trust-signer snapshot-anchor-v2 --json
+```
+
+Expected behavior:
+
+- revoked anchor names fail with `Trusted signers are revoked: ...`
+- replacement anchors validate and import cleanly under `anchored`
+
+## Data Classification
+
+Treat these artifact classes differently during operations:
+
+- `.keys/*.json`: secret private-key material
+- `.trusted/*.json`: trust-policy control data
+- snapshots and preset bundles: internal portable data that may include sensitive memory content
+- memory records/events/summary artifacts: operational data that can include user/project context
+
+Recommended handling:
+
+- keep `.keys/` out of source control and tightly scoped in backups
+- share `key-export` outputs (public keys), not local key records
+- encrypt/scope backup media that stores snapshots or bundle artifacts
 
 ## Operational Notes
 
@@ -198,6 +266,7 @@ Trust reports now distinguish:
 - snapshots are for portability and recovery, not concurrent multi-writer coordination
 - verify snapshots before destructive restore or migration steps
 - prefer restoring into a new database path first, then validating memory/search behavior
+- if one process may trigger overlapping writes, prefer `writeMode=serialized_local` so writes are queued through one local adapter boundary
 
 ## Post-Restore Verification
 
@@ -208,6 +277,12 @@ glialnode space report --id <space-id>
 glialnode memory search --space-id <space-id> --text "<known phrase>"
 glialnode status
 ```
+
+The space report now also includes:
+- `eventTypes=` aggregated counts by event type
+- `provenanceSummaryRecords=` count of durable provenance audit summaries
+- `maintenanceLatest*=` timestamps for the most recent maintenance runs
+- `maintenance*Delta=` latest maintenance-summary deltas (compaction/retention/decay/reinforcement)
 
 If the restored snapshot will be used by automation:
 

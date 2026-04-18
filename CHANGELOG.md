@@ -14,8 +14,47 @@
 - Added `glialnode doctor` with JSON-capable operator diagnostics for runtime, schema, database path, preset registry, signing keys, and trusted signers.
 - Added explicit import collision policies for preset bundles and full-space snapshots: `error`, `overwrite`, and `rename`.
 - Added stable `--json` output for high-value CLI read/report flows including `space show`, `space report`, `memory search`, `memory recall`, `memory trace`, `memory bundle`, `preset bundle-show`, and `preset bundle-import`.
+- Extended `space report` with event-type counts, provenance summary record counts, and latest maintenance timestamps for compaction, retention, decay, and reinforcement workflows.
 - Added `prepareReplyContext(...)` so host apps can build pre-reply memory injection context from GlialNode's recall, trace, and bundle layers without manual orchestration.
 - Added a compact GNL live roadmap/checklist for tracking completion, best practices, and upcoming work.
+- Added a benchmark harness (`npm run bench`) with 1k/10k/50k seeded datasets and baseline perf output for search, recall, bundle build, compaction dry-run, and report generation.
+- Added a realistic embedded-service example (`npm run example:service`) that uses `GlialNodeClient` for ingest, recall context prep, maintenance, and snapshot export.
+- Added a troubleshooting failure matrix and explicit query-parse edge-case guidance for lock, trust, signer, snapshot, and recall/search diagnostics.
+- Added a deterministic 48-step long-run lifecycle test covering repeated maintain/compact/retain/decay loops over one dataset.
+- Added an explicit release-doc link chain (`README -> live roadmap -> launch checklist -> publish guide`) for publish handoff consistency.
+- Extended report/status observability with maintenance delta summaries so latest compaction/retention/decay/reinforcement outcomes are visible without manual search.
+- Added exported host-app helpers for safe query building and route reasoning (`buildSafeFtsQuery`, `buildMemoryBundleHints`, `resolveMemoryBundleRouteReasoning`).
+- Extended `preset bundle-show` trust observability with requested/unmatched signer-name reporting and optional `--trust-explain` diagnostics mode.
+- Added explicit data-classification guidance for spaces, records/events, snapshots/bundles, and local key/trust stores.
+- Added snapshot import dry-run previews via `GlialNodeClient.previewSnapshotImport(...)` and `glialnode import --preview` with JSON diagnostics for counts, conflicts, schema status, trust validation, and remap outcomes.
+- Extended reviewer-routed bundle trace summaries with provenance memory count hints for denser review context.
+- Added provenance-sensitive bundle shaping controls (`bundleProvenanceMode` / `--bundle-provenance-mode`) so executor handoffs stay lean while reviewer handoffs preserve richer provenance context.
+- Added route-aware provenance weighting so reviewer bundles prefer provenance summaries and executor bundles de-prioritize provenance unless risk hints are present.
+- Added retrieval eval corpus fixtures (`docs/evals/retrieval-corpus.v1.json`) with a 10-scenario golden test for route/primary/support regression checks.
+- Added provenance-heavy benchmark flow (`npm run bench:provenance`) and tuning notes for monitoring provenance-share distortion in normal queries.
+- Added `examples/agent-loop` with a trust+recall+maintenance cycle, signed snapshot export, import preview, and anchored restore verification.
+- Added `SerializedLocalRepository` write-queue adapter and `writeMode=serialized_local` client/CLI path for safer in-process concurrent mutation handling.
+- Added an additive `--json-envelope` CLI mode with versioned automation metadata (`schemaVersion`, `command`, `generatedAt`, `data`) while preserving existing `--json` payload shapes.
+- Added `docs/json-contract.md` and linked release checklists so machine-readable automation contracts are explicitly versioned and reviewed before publish.
+- Expanded signed snapshot trust regression coverage so revoke/rotate anchor behavior is explicitly tested in both CLI and client anchored-import workflows.
+- Added a trust lifecycle verification drill to the operator guide for pre-release revoke/rotate validation.
+- Added `docs/decision-notes.md` and resolved open research decisions for container unification, provenance supporting-context eligibility, and detached signatures.
+- Added first-pass space graph export for topology inspection with `GlialNodeClient.exportSpaceGraph(...)`, `exportSpaceGraphToFile(...)`, and CLI `space graph-export`.
+- Added graph export coverage in CLI and client tests, including minimal graph mode (`--include-events false --include-scopes false`) and file-output paths.
+- Added graph export adapters for `cytoscape` and Graphviz `dot`, plus CLI `space graph-export --format native|cytoscape|dot`.
+- Added `docs/graph-export.md` with graph schema and usage guidance for downstream topology/provenance tooling.
+- Added named trust policy packs (`.trust-packs`) with inheritance, CLI management commands (`trust-pack-register/list/show`), and trust flow wiring via `--trust-pack`.
+- Added default trust-pack environment support (`GLIALNODE_TRUST_POLICY_PACK`) for trust-sensitive CLI bundle/snapshot workflows.
+- Added trust-pack docs and regression tests covering inheritance and pack-based bundle validation behavior.
+- Added standalone read-only space inspector exports via `GlialNodeClient.buildSpaceInspectorSnapshot(...)`, `exportSpaceInspectorHtml(...)`, and CLI `space inspect-export`.
+- Extended inspector exports with optional recall trace/bundle previews (`--query-*` flags) for query-focused diagnostics.
+- Added multi-space inspector index exports via `GlialNodeClient.buildSpaceInspectorIndexSnapshot(...)`, `exportSpaceInspectorIndexHtml(...)`, and CLI `space inspect-index-export`.
+- Added portable inspector JSON snapshot exports via `exportSpaceInspectorSnapshotToFile(...)`, `exportSpaceInspectorIndexSnapshotToFile(...)`, and CLI `space inspect-snapshot` / `space inspect-index-snapshot`.
+- Added inspector risk summaries and index risk totals for contested/decayed/trust-review/stale-maintenance visibility.
+- Added inspector pack exports via `exportSpaceInspectorPack(...)` and CLI `space inspect-pack-export` to generate index + per-space HTML/JSON artifacts with a manifest.
+- Added optional inspector screenshot automation (`--capture-screenshots`) for pack exports, producing index/per-space PNG artifacts when Playwright is available.
+- Added temporary local serving for exported inspector packs via `space inspect-pack-serve` with probe support and auto-shutdown duration.
+- Added `docs/space-inspector.md` with inspector export usage, options, and schema notes.
 - Added provenance-aware reviewer routing policy for auto-routed bundles.
 - Added provenance-aware recall annotations and bundle hints for bundle trust summaries.
 - Added provenance audit events for space-scoped preset bundle review and import.
@@ -27,6 +66,8 @@
 - Added controlled source-record supersession for strong distilled summaries.
 - Made normal memory search default to active records unless a status filter is provided.
 - Added query-aware lexical ranking so broad queries can favor distilled memory while narrow queries can still favor specific records.
+- Added an opt-in semantic prototype reranker with client/CLI controls and lexical-first default preservation.
+- Added semantic retrieval eval reporting (`memory semantic-eval`) and optional gate-pass enforcement for semantic rerank activation.
 - Added contradiction detection for new durable memory with `contradicts` links and confidence penalties on older conflicting records.
 - Added explicit stale-memory decay with configurable confidence and freshness reduction during maintenance.
 - Added explicit memory reinforcement with configurable confidence and freshness boosts for revalidated records.

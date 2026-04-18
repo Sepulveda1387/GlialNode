@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-04-17T21:07:04.879Z",
+  "nodeVersion": "v24.14.0",
+  "datasetSize": 1500,
+  "profiles": [
+    {
+      "name": "balanced_mix",
+      "provenanceEvery": 8
+    },
+    {
+      "name": "provenance_heavy",
+      "provenanceEvery": 2
+    }
+  ],
+  "results": [
+    {
+      "profile": "balanced_mix",
+      "records": 1500,
+      "seedMs": 23344.128,
+      "normalSearchMs": 60.621,
+      "provenanceSearchMs": 101.307,
+      "normalTopProvenanceShare": 0,
+      "provenanceTopProvenanceShare": 1
+    },
+    {
+      "profile": "provenance_heavy",
+      "records": 1500,
+      "seedMs": 18152.514,
+      "normalSearchMs": 59.801,
+      "provenanceSearchMs": 64.196,
+      "normalTopProvenanceShare": 0,
+      "provenanceTopProvenanceShare": 1
+    }
+  ]
+}

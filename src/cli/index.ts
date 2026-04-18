@@ -12,10 +12,11 @@ async function main(): Promise<void> {
   const databasePath = resolve(parsed.flags.db ?? ".glialnode/glialnode.sqlite");
   const databaseExistedAtStartup = existsSync(databasePath);
   const databaseParentExistedAtStartup = existsSync(dirname(databasePath));
+  const writeMode = parseWriteMode(parsed.flags["write-mode"]);
   let repository: ReturnType<typeof createRepository> | undefined;
 
   try {
-    repository = createRepository(databasePath);
+    repository = createRepository(databasePath, { writeMode });
     const result = await runCommand(parsed, {
       repository,
       databasePath,
@@ -77,3 +78,15 @@ async function main(): Promise<void> {
 }
 
 void main();
+
+function parseWriteMode(value: string | undefined): "single_writer" | "serialized_local" | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "single_writer" || value === "serialized_local") {
+    return value;
+  }
+
+  throw new Error(`Invalid write mode: ${value}`);
+}
