@@ -78,6 +78,8 @@ test("CLI status reports the SQLite write-mode contract", async () => {
     );
 
     assert.match(result.lines.join("\n"), /writeMode=single_writer/);
+    assert.match(result.lines.join("\n"), /storageAdapter=sqlite/);
+    assert.match(result.lines.join("\n"), /storageCrossProcessWrites=single_writer/);
     assert.match(result.lines.join("\n"), /maintenanceSpaces=/);
     assert.match(result.lines.join("\n"), /maintenanceCompactionDeltas=/);
     assert.match(result.lines.join("\n"), /writeGuarantee=One writer should own durable mutations/);
@@ -177,6 +179,107 @@ test("CLI status supports versioned JSON envelope output", async () => {
     assert.equal(typeof parsed.generatedAt, "string");
     assert.equal(parsed.data.status, "ready");
     assert.equal(parsed.data.runtime.writeMode, "single_writer");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can inspect storage contracts and migration plans", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-storage-contract-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const contractResult = await runCommand(
+      parseArgs(["storage", "contract", "--json"]),
+      { repository },
+    );
+    const contract = JSON.parse(contractResult.lines.join("\n")) as {
+      name: string;
+      capabilities: { fullTextSearch: boolean; crossProcessWrites: string };
+    };
+
+    assert.equal(contract.name, "sqlite");
+    assert.equal(contract.capabilities.fullTextSearch, true);
+    assert.equal(contract.capabilities.crossProcessWrites, "single_writer");
+
+    const planResult = await runCommand(
+      parseArgs(["storage", "migration-plan", "--target", "postgres", "--json"]),
+      { repository },
+    );
+    const plan = JSON.parse(planResult.lines.join("\n")) as {
+      source: { name: string };
+      target: { name: string; dialect: string };
+      requiresSnapshotExport: boolean;
+      warnings: string[];
+      steps: string[];
+    };
+
+    assert.equal(plan.source.name, "sqlite");
+    assert.equal(plan.target.name, "postgres");
+    assert.equal(plan.target.dialect, "postgres");
+    assert.equal(plan.requiresSnapshotExport, true);
+    assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));
+    assert.ok(plan.steps.some((step) => /snapshot restore path/i.test(step)));
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can report release readiness gates without mutating state", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-release-readiness-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const blockedResult = await runCommand(
+      parseArgs(["release", "readiness", "--json"]),
+      { repository },
+    );
+    const blocked = JSON.parse(blockedResult.lines.join("\n")) as {
+      status: string;
+      checks: Array<{ id: string; status: string }>;
+      blockers: string[];
+    };
+
+    assert.equal(blocked.status, "blocked");
+    assert.ok(blocked.checks.some((check) => check.id === "v1_p0_roadmap" && check.status === "pass"));
+    assert.ok(blocked.checks.some((check) => check.id === "user_approved" && check.status === "fail"));
+    assert.ok(blocked.blockers.some((blocker) => /user_approved/.test(blocker)));
+
+    const readyResult = await runCommand(
+      parseArgs([
+        "release",
+        "readiness",
+        "--tests-green",
+        "true",
+        "--pack-green",
+        "true",
+        "--docs-reviewed",
+        "true",
+        "--tree-clean",
+        "true",
+        "--user-approved",
+        "true",
+        "--json",
+      ]),
+      { repository },
+    );
+    const ready = JSON.parse(readyResult.lines.join("\n")) as {
+      status: string;
+      blockers: string[];
+      manualInputs: { testsGreen: boolean; packGreen: boolean; docsReviewed: boolean; treeClean: boolean; userApproved: boolean };
+    };
+
+    assert.equal(ready.status, "ready");
+    assert.deepEqual(ready.blockers, []);
+    assert.equal(ready.manualInputs.testsGreen, true);
+    assert.equal(ready.manualInputs.packGreen, true);
+    assert.equal(ready.manualInputs.docsReviewed, true);
+    assert.equal(ready.manualInputs.treeClean, true);
+    assert.equal(ready.manualInputs.userApproved, true);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
@@ -4115,6 +4218,83 @@ test("CLI can reinforce successful search matches when explicitly requested", as
       { repository },
     );
     assert.match(report.lines.join("\n"), /memory_reinforced/);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI can emit a JSON learning loop plan without mutating records", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-learn-plan-cli-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const createSpaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Learning Loop CLI Space"]),
+      { repository },
+    );
+    const spaceId = createSpaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const addScopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository },
+    );
+    const scopeId = addScopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    const addRecordResult = await runCommand(
+      parseArgs([
+        "memory", "add",
+        "--space-id", spaceId,
+        "--scope-id", scopeId,
+        "--scope-type", "agent",
+        "--tier", "mid",
+        "--kind", "fact",
+        "--content", "Keep lexical retrieval as the default memory search mode.",
+        "--summary", "Lexical retrieval default",
+        "--confidence", "0.72",
+        "--freshness", "0.62",
+      ]),
+      { repository },
+    );
+    const recordId = addRecordResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(recordId);
+
+    await runCommand(
+      parseArgs(["memory", "reinforce", "--record-id", recordId, "--reason", "successful-retrieval"]),
+      { repository },
+    );
+    await runCommand(
+      parseArgs(["memory", "reinforce", "--record-id", recordId, "--reason", "successful-retrieval"]),
+      { repository },
+    );
+
+    const result = await runCommand(
+      parseArgs([
+        "memory", "learn-plan",
+        "--space-id", spaceId,
+        "--min-successful-uses", "2",
+        "--json",
+      ]),
+      { repository },
+    );
+    const parsed = JSON.parse(result.lines.join("\n")) as {
+      spaceId: string;
+      plan: {
+        summary: { suggestions: number };
+        suggestions: Array<{ type: string; recordId: string; recommendedAction: string }>;
+      };
+    };
+
+    assert.equal(parsed.spaceId, spaceId);
+    assert.ok(parsed.plan.summary.suggestions >= 1);
+    assert.ok(parsed.plan.suggestions.some((suggestion) =>
+      suggestion.type === "reinforce_repeated_success" &&
+      suggestion.recordId === recordId &&
+      suggestion.recommendedAction === "reinforce",
+    ));
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

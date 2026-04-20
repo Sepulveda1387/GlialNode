@@ -7,9 +7,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  assertStorageAdapterContract,
+  createServerBackedStorageContract,
   createId,
   createMemoryRecord,
+  describeStorageAdapter,
   listAppliedSqliteMigrations,
+  planStorageBackendMigration,
+  sqliteAdapter,
   SqliteMemoryRepository,
   type MemoryEvent,
   type MemorySpace,
@@ -152,6 +157,35 @@ test("SqliteMemoryRepository applies durable defaults for file-backed databases"
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
+});
+
+test("sqlite storage adapter declares a valid local-first contract", () => {
+  assert.doesNotThrow(() => assertStorageAdapterContract(sqliteAdapter));
+
+  const contract = describeStorageAdapter(sqliteAdapter);
+  assert.equal(contract.name, "sqlite");
+  assert.equal(contract.dialect, "sqlite");
+  assert.equal(contract.capabilities.localFirst, true);
+  assert.equal(contract.capabilities.fullTextSearch, true);
+  assert.equal(contract.capabilities.crossProcessWrites, "single_writer");
+  assert.match(contract.guarantees.join(" "), /Schema versioning and migrations/i);
+  assert.match(contract.nonGoals.join(" "), /not a team\/server source-of-truth backend/i);
+});
+
+test("storage backend migration planner describes sqlite to server-backed migration risks", () => {
+  const target = createServerBackedStorageContract({
+    name: "postgres",
+    dialect: "postgres",
+    schemaVersion: 1,
+  });
+  const plan = planStorageBackendMigration(sqliteAdapter, target);
+
+  assert.equal(plan.source.name, "sqlite");
+  assert.equal(plan.target.name, "postgres");
+  assert.equal(plan.requiresSnapshotExport, true);
+  assert.equal(plan.requiresSchemaMigration, true);
+  assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));
+  assert.ok(plan.steps.some((step) => /snapshot restore path/i.test(step)));
 });
 
 test("SqliteMemoryRepository honors busy timeout during write contention", async () => {

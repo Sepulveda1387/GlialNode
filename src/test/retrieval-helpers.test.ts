@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   buildSafeFtsQuery,
+  createId,
   createMemoryRecord,
+  planLearningLoop,
   rankRecordsForRetrieval,
   rerankRecordsWithSemanticPrototype,
   resolveMemoryBundleRouteReasoning,
@@ -154,4 +156,93 @@ test("semantic prototype reranker respects a failed required gate and leaves lex
   assert.equal(blocked.gate.allowed, false);
   assert.equal(blocked.gate.reportId, "eval-report-1");
   assert.deepEqual(blocked.records.map((record) => record.id), records.map((record) => record.id));
+});
+
+test("learning loop planner suggests repeated-use reinforcement and contradiction review", () => {
+  const stable = createMemoryRecord({
+    spaceId: "space_1",
+    tier: "mid",
+    kind: "fact",
+    content: "Use lexical retrieval first for local memory search.",
+    summary: "Lexical-first retrieval",
+    scope: { id: "scope_1", type: "agent" },
+    confidence: 0.72,
+    freshness: 0.6,
+  });
+  const newerDecision = createMemoryRecord({
+    spaceId: "space_1",
+    tier: "mid",
+    kind: "decision",
+    content: "Prefer serialized local writes for concurrent host calls.",
+    summary: "Serialized local writes",
+    scope: { id: "scope_1", type: "agent" },
+    confidence: 0.9,
+    freshness: 0.82,
+  });
+  const olderDecision = createMemoryRecord({
+    spaceId: "space_1",
+    tier: "mid",
+    kind: "decision",
+    content: "Prefer direct SQLite writes for concurrent host calls.",
+    summary: "Direct SQLite writes",
+    scope: { id: "scope_1", type: "agent" },
+    confidence: 0.55,
+    freshness: 0.7,
+  });
+
+  const plan = planLearningLoop(
+    [stable, newerDecision, olderDecision],
+    [
+      {
+        id: createId("evt"),
+        spaceId: stable.spaceId,
+        scope: stable.scope,
+        actorType: "system",
+        actorId: "test",
+        type: "memory_reinforced",
+        summary: "reinforced",
+        payload: { recordId: stable.id },
+        createdAt: stable.createdAt,
+      },
+      {
+        id: createId("evt"),
+        spaceId: stable.spaceId,
+        scope: stable.scope,
+        actorType: "system",
+        actorId: "test",
+        type: "memory_reinforced",
+        summary: "reinforced again",
+        payload: { recordId: stable.id },
+        createdAt: stable.createdAt,
+      },
+    ],
+    [
+      {
+        id: createId("link"),
+        spaceId: stable.spaceId,
+        fromRecordId: newerDecision.id,
+        toRecordId: olderDecision.id,
+        type: "contradicts",
+        createdAt: stable.createdAt,
+      },
+    ],
+    {
+      policy: {
+        minSuccessfulUses: 2,
+      },
+    },
+  );
+
+  assert.equal(plan.summary.recordsReviewed, 3);
+  assert.ok(plan.suggestions.some((suggestion) =>
+    suggestion.type === "reinforce_repeated_success" &&
+    suggestion.recordId === stable.id &&
+    suggestion.evidence.successfulUses === 2,
+  ));
+  assert.ok(plan.suggestions.some((suggestion) =>
+    suggestion.type === "review_contradiction" &&
+    suggestion.recordId === newerDecision.id &&
+    suggestion.relatedRecordId === olderDecision.id &&
+    suggestion.recommendedAction === "supersede_lower_confidence",
+  ));
 });

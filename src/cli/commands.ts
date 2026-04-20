@@ -60,6 +60,8 @@ import {
   planDecay,
   summarizeDecayPlan,
 } from "../memory/decay.js";
+import { planLearningLoop, type LearningLoopPolicy } from "../memory/learning.js";
+import { buildReleaseReadinessReport } from "../release/readiness.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyReinforcementPlan,
@@ -81,6 +83,11 @@ import {
 } from "../memory/retention.js";
 import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import { SqliteMemoryRepository, sqliteAdapter } from "../storage/index.js";
+import {
+  createServerBackedStorageContract,
+  describeStorageAdapter,
+  planStorageBackendMigration,
+} from "../storage/adapter.js";
 import type { MemoryRepository, SpaceReport } from "../storage/repository.js";
 import type { SqliteWriteMode } from "../storage/sqlite/connection.js";
 import type { ParsedArgs } from "./args.js";
@@ -124,6 +131,14 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
 
   if (resource === "doctor") {
     return runDoctorCommand(parsed, context);
+  }
+
+  if (resource === "storage") {
+    return runStorageCommand(action, parsed);
+  }
+
+  if (resource === "release") {
+    return runReleaseCommand(action, parsed);
   }
 
   if (resource === "space") {
@@ -172,6 +187,9 @@ export function usageText(): string {
     "  (global) --db <path> --write-mode single_writer|serialized_local --json [--json-envelope]",
     "  glialnode status",
     "  glialnode doctor [--preset-directory <path>] [--db <path>] [--json]",
+    "  glialnode storage contract [--json]",
+    "  glialnode storage migration-plan [--target postgres|server-backed] [--target-schema-version 1] [--target-full-text-search true|false] [--json]",
+    "  glialnode release readiness [--root <path>] [--tests-green true|false] [--pack-green true|false] [--docs-reviewed true|false] [--tree-clean true|false] [--user-approved true|false] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -230,6 +248,7 @@ export function usageText(): string {
     "  glialnode memory compact --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory decay --space-id <id> [--apply] [--db <path>]",
     "  glialnode memory reinforce --record-id <id> [--strength 1] [--reason <text>] [--db <path>]",
+    "  glialnode memory learn-plan --space-id <id> [--min-successful-uses 2] [--max-suggestions 10] [--reinforcement-strength 1] [--contradiction-confidence-gap 0.2] [--db <path>] [--json]",
     "  glialnode memory retain --space-id <id> [--apply] [--db <path>]",
     "  glialnode event add --space-id <id> --scope-id <id> --scope-type <type> --actor-type <type> --actor-id <id> --event-type <type> --summary <text> [--payload <json>] [--db <path>]",
     "  glialnode event list --space-id <id> [--limit 10] [--db <path>]",
@@ -282,6 +301,10 @@ async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Pr
     lines: [
       `spaces=${payload.spaces}`,
       `status=${payload.status}`,
+      `storageAdapter=${payload.storageContract.name}`,
+      `storageDialect=${payload.storageContract.dialect}`,
+      `storageSchemaVersion=${payload.storageContract.schemaVersion}`,
+      `storageCrossProcessWrites=${payload.storageContract.capabilities.crossProcessWrites}`,
       `database=${payload.database.path ?? ""}`,
       `databaseExistedAtStartup=${formatOptionalBoolean(payload.database.existedAtStartup)}`,
       `databaseParentExistedAtStartup=${formatOptionalBoolean(payload.database.parentExistedAtStartup)}`,
@@ -309,6 +332,7 @@ async function runStatusCommand(parsed: ParsedArgs, context: CommandContext): Pr
 async function buildStatusPayload(context: CommandContext) {
   const spaces = await context.repository.listSpaces();
   const runtime = context.repository.getRuntimeSettings();
+  const storageContract = describeStorageAdapter(sqliteAdapter);
   const maintenanceReports = await Promise.all(
     spaces.map((space) => context.repository.getSpaceReport(space.id, 1)),
   );
@@ -317,6 +341,7 @@ async function buildStatusPayload(context: CommandContext) {
   return {
     status: "ready" as const,
     storage: sqliteAdapter.name,
+    storageContract,
     spaces: spaces.length,
     database: {
       path: context.databasePath ?? runtime.filename,
@@ -455,6 +480,96 @@ function buildDoctorReport(parsed: ParsedArgs, context: CommandContext) {
     signerStore,
     trustStore,
     warnings,
+  };
+}
+
+function runStorageCommand(action: string, parsed: ParsedArgs): CommandResult {
+  if (action === "contract") {
+    const contract = describeStorageAdapter(sqliteAdapter);
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, contract);
+    }
+
+    return {
+      lines: [
+        `name=${contract.name}`,
+        `dialect=${contract.dialect}`,
+        `schemaVersion=${contract.schemaVersion}`,
+        `localFirst=${contract.capabilities.localFirst ? "yes" : "no"}`,
+        `serverBacked=${contract.capabilities.serverBacked ? "yes" : "no"}`,
+        `fullTextSearch=${contract.capabilities.fullTextSearch ? "yes" : "no"}`,
+        `crossProcessWrites=${contract.capabilities.crossProcessWrites}`,
+        ...contract.guarantees.map((guarantee) => `guarantee=${guarantee}`),
+        ...contract.nonGoals.map((nonGoal) => `nonGoal=${nonGoal}`),
+      ],
+    };
+  }
+
+  if (action === "migration-plan") {
+    const target = createServerBackedStorageContract({
+      name: parsed.flags.target ?? "server-backed",
+      dialect: parsed.flags.target === "postgres" || parsed.flags.target === undefined
+        ? "postgres"
+        : parsed.flags.target,
+      schemaVersion: parsed.flags["target-schema-version"]
+        ? parseRequiredPositiveNumber(parsed.flags["target-schema-version"], "target-schema-version")
+        : 1,
+      fullTextSearch: parsed.flags["target-full-text-search"] !== undefined
+        ? parseOptionalBoolean(parsed.flags["target-full-text-search"])
+        : true,
+    });
+    const plan = planStorageBackendMigration(sqliteAdapter, target);
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, plan);
+    }
+
+    return {
+      lines: [
+        `source=${plan.source.name}/${plan.source.dialect}`,
+        `target=${plan.target.name}/${plan.target.dialect}`,
+        `compatible=${plan.compatible ? "yes" : "no"}`,
+        `requiresSnapshotExport=${plan.requiresSnapshotExport ? "yes" : "no"}`,
+        `requiresSchemaMigration=${plan.requiresSchemaMigration ? "yes" : "no"}`,
+        ...plan.warnings.map((warning) => `warning=${warning}`),
+        ...plan.steps.map((step, index) => `step${index + 1}=${step}`),
+      ],
+    };
+  }
+
+  return {
+    lines: ["Unknown storage command.", usageText()],
+  };
+}
+
+function runReleaseCommand(action: string, parsed: ParsedArgs): CommandResult {
+  if (action !== "readiness") {
+    return {
+      lines: ["Unknown release command.", usageText()],
+    };
+  }
+
+  const report = buildReleaseReadinessReport({
+    rootDirectory: parsed.flags.root,
+    testsGreen: parseFlagBooleanDefaultFalse(parsed.flags["tests-green"]),
+    packGreen: parseFlagBooleanDefaultFalse(parsed.flags["pack-green"]),
+    docsReviewed: parseFlagBooleanDefaultFalse(parsed.flags["docs-reviewed"]),
+    treeClean: parseFlagBooleanDefaultFalse(parsed.flags["tree-clean"]),
+    userApproved: parseFlagBooleanDefaultFalse(parsed.flags["user-approved"]),
+  });
+
+  if (wantsJson(parsed)) {
+    return jsonResult(parsed, report);
+  }
+
+  return {
+    lines: [
+      `status=${report.status}`,
+      `rootDirectory=${report.rootDirectory}`,
+      `blockers=${report.blockers.length}`,
+      ...report.checks.map((check) => `check=${check.id}:${check.status}:${check.summary}`),
+    ],
   };
 }
 
@@ -2679,6 +2794,37 @@ async function runMemoryCommand(
     };
   }
 
+  if (action === "learn-plan") {
+    const spaceId = requireFlag(parsed.flags, "space-id");
+    await requireSpace(context.repository, spaceId);
+    const records = await context.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+    const events = await context.repository.listEvents(spaceId, Number.MAX_SAFE_INTEGER);
+    const links = await context.repository.listLinks(spaceId, Number.MAX_SAFE_INTEGER);
+    const plan = planLearningLoop(records, events, links, {
+      policy: parseLearningLoopPolicyFlags(parsed.flags),
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        spaceId,
+        plan,
+      });
+    }
+
+    return {
+      lines: [
+        "Learning loop plan.",
+        `recordsReviewed=${plan.summary.recordsReviewed}`,
+        `suggestions=${plan.summary.suggestions}`,
+        `reinforcementCandidates=${plan.summary.reinforcementCandidates}`,
+        `contradictionCandidates=${plan.summary.contradictionCandidates}`,
+        ...plan.suggestions.map((suggestion) =>
+          `suggestion=${suggestion.type} priority=${suggestion.priority} record=${suggestion.recordId}${suggestion.relatedRecordId ? ` related=${suggestion.relatedRecordId}` : ""} action=${suggestion.recommendedAction} reason=${suggestion.reason}`,
+        ),
+      ],
+    };
+  }
+
   return {
     lines: ["Unknown memory command.", usageText()],
   };
@@ -3278,6 +3424,15 @@ function parsePositiveOptionalNumber(value: string | undefined, flagName: string
   return parsed;
 }
 
+function parseLearningLoopPolicyFlags(flags: Record<string, string>): Partial<LearningLoopPolicy> {
+  return {
+    minSuccessfulUses: parsePositiveOptionalNumber(flags["min-successful-uses"], "min-successful-uses"),
+    maxSuggestions: parsePositiveOptionalNumber(flags["max-suggestions"], "max-suggestions"),
+    reinforcementStrength: parsePositiveOptionalNumber(flags["reinforcement-strength"], "reinforcement-strength"),
+    contradictionConfidenceGap: parsePositiveOptionalNumber(flags["contradiction-confidence-gap"], "contradiction-confidence-gap"),
+  };
+}
+
 function parseRequiredPositiveNumber(value: string | undefined, flagName: string): number {
   if (value === undefined) {
     throw new Error(`Missing required flag: --${flagName}`);
@@ -3777,6 +3932,10 @@ function parseOptionalBoolean(value: string | undefined): boolean {
   }
 
   throw new Error(`Invalid boolean value: ${value ?? "undefined"}`);
+}
+
+function parseFlagBooleanDefaultFalse(value: string | undefined): boolean {
+  return value === undefined ? false : parseOptionalBoolean(value);
 }
 
 function parseGraphExportFormat(value: string | undefined): SpaceGraphExportFormat {

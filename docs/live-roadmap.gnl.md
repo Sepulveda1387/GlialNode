@@ -6,7 +6,7 @@ Goal: low-token review, easy append-only updates, fast diffing, compact roadmap 
 ## Snapshot
 
 ```text
-STAT: date=2026-04-17; v1=1.00; vision=0.93; core=0.97; stor=0.94; recall=0.97; trust=1.00; dx=1.00; ops=1.00; docs=1.00
+STAT: date=2026-04-20; v1=1.00; vision=0.95; core=0.99; stor=0.94; recall=0.98; trust=1.00; dx=1.00; ops=1.00; docs=1.00
 CTX: mode=local_first; db=sqlite; retr=lexical_first; pri=pub_v1>hardening>dx>scale
 STATE: repo=strong_v1; publish=hold_user_approval; tests=green; pack=green; ci=ready
 ```
@@ -102,6 +102,7 @@ CK:V1.P2.02 | S:D | PH:V1 | PR:P2 | EF:M | AR:UX | IN: better operator ergonomic
 CK:V1.P2.03 | S:D | PH:V1 | PR:P2 | EF:S | AR:REL | IN: add release checklist link chain: README -> live roadmap -> launch checklist -> publish guide | DOD:[doc links aligned] | DEP:[this file] | RSK:[doc drift] | NXT:[completed: explicit chain section + checklist links]
 CK:V1.P2.04 | S:D | PH:V1 | PR:P2 | EF:S | AR:SEC | IN: explicit data classification note for spaces/records/events/preset secrets | DOD:[security doc section] | DEP:[ops guide] | RSK:[wrong storage assumptions] | NXT:[completed: README + operator-guide data classification section]
 CK:V1.P2.05 | S:D | PH:V1 | PR:P2 | EF:M | AR:OBS | IN: maintenance summaries should expose last_run and delta counts in report/status without search | DOD:[report fields, docs, tests] | DEP:[report ext] | RSK:[ops blind spots] | NXT:[completed: maintenance timestamps + phase deltas in report/status]
+CK:V1.P2.06 | S:D | PH:V1 | PR:P2 | EF:S | AR:REL | IN: expose release readiness gate as read-only CLI/client report instead of manual-only checklist | DOD:[cli, client, docs, tests] | DEP:[GT:V1.PUB] | RSK:[false_publish_claim] | NXT:[completed: release readiness report keeps publish blocked until tests/pack/docs/tree/user approval are explicitly confirmed]
 ```
 
 ## V1 Soon After
@@ -123,6 +124,7 @@ CK:V1p.10 | S:D | PH:V1p | PR:P2 | EF:S | AR:SEC | IN: expand trust lifecycle re
 
 ```text
 CK:V2.01 | S:H | PH:V2 | PR:P2 | EF:XL | AR:STOR | IN: Postgres backend or server-backed source-of-truth for heavier concurrency/team deployments | DOD:[adapter contract, migration path, docs] | DEP:[V1 storage hardening] | RSK:[premature scale work] | NXT:[defer until proven need]
+CK:V2.01a | S:D | PH:V2 | PR:P2 | EF:S | AR:STOR | IN: define storage backend adapter contract metadata before any server-backed implementation | DOD:[capability model, validation helper, sqlite declaration, docs, tests] | DEP:[V1 storage hardening] | RSK:[false backend claims] | NXT:[completed: describeStorageAdapter + assertStorageAdapterContract + storage contract/migration-plan cli+client + docs/storage-backends.md + status visibility]
 CK:V2.02 | S:D | PH:V2 | PR:P2 | EF:L | AR:RETR | IN: optional semantic retrieval module with eval-gated enablement and hybrid ranking | DOD:[plugin design, eval set, docs] | DEP:[retrieval eval corpus] | RSK:[semantic noise] | NXT:[completed: semantic prototype rerank + client/cli flags + semantic-eval report command + optional gate-pass enforcement]
 CK:V2.03 | S:D | PH:V2 | PR:P2 | EF:L | AR:UX | IN: local dashboard / TUI / web inspector for spaces, policies, trust stores, reports, recall traces | DOD:[inspect flows, screenshots, docs] | DEP:[json outputs] | RSK:[ux drag] | NXT:[completed: html+json inspector snapshots, index exports, pack exports, screenshot automation, and optional live-served pack mode]
 CK:V2.03a | S:D | PH:V2 | PR:P2 | EF:M | AR:UX | IN: implement first read-only local space inspector export that combines space report, effective policy, trust registry, and graph topology into one standalone artifact | DOD:[client api, cli cmd, docs, tests] | DEP:[V2.03,V2.05a] | RSK:[format drift, ui bloat] | NXT:[completed: buildSpaceInspectorSnapshot + exportSpaceInspectorHtml + CLI space inspect-export + docs/space-inspector.md]
@@ -136,7 +138,7 @@ CK:V2.04a | S:D | PH:V2 | PR:P2 | EF:M | AR:TRUST | IN: implement named trust po
 CK:V2.05 | S:D | PH:V2 | PR:P3 | EF:L | AR:DATA | IN: graph export / visualization path for record-event-link topology | DOD:[exporter, docs] | DEP:[stable schema] | RSK:[extra maintenance] | NXT:[completed: native graph export + cytoscape/dot adapters + docs]
 CK:V2.05a | S:D | PH:V2 | PR:P3 | EF:M | AR:DATA | IN: implement first graph export artifact for spaces (`space/scope/record/event` nodes + link/source/containment edges) with machine-friendly JSON output | DOD:[client api, cli cmd, tests, docs] | DEP:[V2.05] | RSK:[schema drift] | NXT:[completed: GlialNodeClient exportSpaceGraph + CLI space graph-export + json/file paths]
 CK:V2.05b | S:D | PH:V2 | PR:P3 | EF:S | AR:DATA | IN: add practical visualization adapters so exported graph can feed common tooling with minimal transforms | DOD:[cytoscape adapter, graphviz dot adapter, cli format flag, docs/tests] | DEP:[V2.05a] | RSK:[format drift] | NXT:[completed: native|cytoscape|dot formats via client+cli]
-CK:V2.06 | S:H | PH:V2 | PR:P3 | EF:XL | AR:CORE | IN: richer learning loops: controlled auto-reinforcement, confidence calibration from repeated successful use, contradiction resolution suggestions | DOD:[policy, explainability, tests] | DEP:[eval corpus] | RSK:[untrusted self-rewrite] | NXT:[design only]
+CK:V2.06 | S:D | PH:V2 | PR:P3 | EF:XL | AR:CORE | IN: richer learning loops: controlled auto-reinforcement, confidence calibration from repeated successful use, contradiction resolution suggestions | DOD:[policy, explainability, tests] | DEP:[eval corpus] | RSK:[untrusted self-rewrite] | NXT:[completed: read-only learning loop planner with repeated-use reinforcement suggestions, calibration review, contradiction review, client+cli+tests]
 ```
 
 ## Research / Open Questions
