@@ -74,6 +74,14 @@ import {
 import { buildMemoryBundle, buildRecallPack, buildRecallTrace, rerankRecordsWithSemanticPrototype } from "../memory/retrieval.js";
 import { evaluateSemanticPrototypeCorpus, type SemanticEvalCorpus, type SemanticEvalReport } from "../memory/semantic-eval.js";
 import {
+  SqliteMetricsRepository,
+  resolveDefaultMetricsDatabasePath,
+  type RecordTokenUsageInput,
+  type TokenCostModel,
+  type TokenUsageGranularity,
+  type TokenUsageReportOptions,
+} from "../metrics/index.js";
+import {
   applyRetentionPlan,
   createRetentionEvents,
   createRetentionSummaryLinks,
@@ -141,6 +149,14 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
     return runReleaseCommand(action, parsed);
   }
 
+  if (resource === "metrics") {
+    return runMetricsCommand(action, parsed, context);
+  }
+
+  if (resource === "dashboard") {
+    return runDashboardCommand(action, parsed, context);
+  }
+
   if (resource === "space") {
     return runSpaceCommand(action, parsed, context);
   }
@@ -190,6 +206,11 @@ export function usageText(): string {
     "  glialnode storage contract [--json]",
     "  glialnode storage migration-plan [--target postgres|server-backed] [--target-schema-version 1] [--target-full-text-search true|false] [--json]",
     "  glialnode release readiness [--root <path>] [--tests-green true|false] [--pack-green true|false] [--docs-reviewed true|false] [--tree-clean true|false] [--user-approved true|false] [--json]",
+    "  glialnode metrics token-record --operation <name> --model <model> --input-tokens <n> --output-tokens <n> [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--provider <name>] [--baseline-tokens <n>] [--actual-context-tokens <n>] [--glialnode-overhead-tokens <n>] [--estimated-saved-tokens <n>] [--estimated-saved-ratio <0..1>] [--latency-ms <n>] [--cost-currency <code>] [--input-cost <n>] [--output-cost <n>] [--total-cost <n>] [--dimensions <json>] [--created-at <iso>] [--metrics-db <path>] [--json]",
+    "  glialnode metrics token-report [--granularity day|week|month|all] [--metrics-db <path>] [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--operation <name>] [--provider <name>] [--model <model>] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode dashboard overview [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode dashboard agent --agent-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -571,6 +592,142 @@ function runReleaseCommand(action: string, parsed: ParsedArgs): CommandResult {
       ...report.checks.map((check) => `check=${check.id}:${check.status}:${check.summary}`),
     ],
   };
+}
+
+async function runMetricsCommand(
+  action: string,
+  parsed: ParsedArgs,
+  context: CommandContext,
+): Promise<CommandResult> {
+  if (parseFlagBooleanDefaultFalse(parsed.flags["metrics-disabled"])) {
+    throw new Error("Metrics repository is disabled by --metrics-disabled.");
+  }
+
+  const metricsDatabasePath = resolve(parsed.flags["metrics-db"] ?? resolveDefaultMetricsDatabasePath(context.databasePath));
+  const metricsRepository = new SqliteMetricsRepository({ filename: metricsDatabasePath });
+
+  try {
+    if (action === "token-record") {
+      assertNoRawTextMetricFlags(parsed.flags);
+      const input = parseTokenUsageInput(parsed.flags);
+      const record = await metricsRepository.recordTokenUsage(input);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          record,
+        });
+      }
+
+      return {
+        lines: [
+          `id=${record.id}`,
+          `metricsDatabase=${metricsDatabasePath}`,
+          `operation=${record.operation}`,
+          `model=${record.model}`,
+          `inputTokens=${record.inputTokens}`,
+          `outputTokens=${record.outputTokens}`,
+          `estimatedSavedTokens=${record.estimatedSavedTokens ?? ""}`,
+        ],
+      };
+    }
+
+    if (action === "token-report") {
+      const report = await metricsRepository.getTokenUsageReport(parseTokenUsageReportOptions(parsed.flags));
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          report,
+        });
+      }
+
+      return {
+        lines: [
+          `metricsDatabase=${metricsDatabasePath}`,
+          `granularity=${report.granularity}`,
+          `records=${report.totals.recordCount}`,
+          `inputTokens=${report.totals.inputTokens}`,
+          `outputTokens=${report.totals.outputTokens}`,
+          `baselineTokens=${report.totals.baselineTokens}`,
+          `estimatedSavedTokens=${report.totals.estimatedSavedTokens}`,
+          `estimatedSavedRatio=${report.totals.estimatedSavedRatio ?? ""}`,
+          `costBefore=${report.totals.costBefore ?? ""}`,
+          `costAfter=${report.totals.costAfter ?? ""}`,
+          `costSaved=${report.totals.costSaved ?? ""}`,
+          ...report.buckets.map((bucket) => `bucket=${bucket.key}:${bucket.totals.recordCount}:${bucket.totals.estimatedSavedTokens}`),
+        ],
+      };
+    }
+  } finally {
+    metricsRepository.close();
+  }
+
+  return {
+    lines: ["Unknown metrics command.", usageText()],
+  };
+}
+
+async function runDashboardCommand(
+  action: string,
+  parsed: ParsedArgs,
+  context: CommandContext,
+): Promise<CommandResult> {
+  const metricsDatabasePath = resolve(parsed.flags["metrics-db"] ?? resolveDefaultMetricsDatabasePath(context.databasePath));
+  const client = new GlialNodeClient({
+    repository: context.repository,
+    filename: context.databasePath,
+    metrics: {
+      filename: metricsDatabasePath,
+      disabled: parseFlagBooleanDefaultFalse(parsed.flags["metrics-disabled"]),
+    },
+  });
+
+  try {
+    const options = {
+      staleFreshnessThreshold: parseOptionalNonNegativeNumber(parsed.flags["stale-freshness-threshold"], "stale-freshness-threshold"),
+      latestBackupAt: parsed.flags["latest-backup-at"],
+      tokenUsage: parseTokenUsageReportOptions(parsed.flags),
+    };
+
+    const snapshot = action === "overview"
+      ? await client.buildDashboardOverviewSnapshot(options)
+      : action === "space"
+      ? await client.buildSpaceDashboardSnapshot(parseRequiredString(parsed.flags["space-id"], "space-id"), options)
+      : action === "agent"
+      ? await client.buildAgentDashboardSnapshot(parseRequiredString(parsed.flags["agent-id"], "agent-id"), options)
+      : undefined;
+
+    if (!snapshot) {
+      return {
+        lines: ["Unknown dashboard command.", usageText()],
+      };
+    }
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        metricsDatabasePath,
+        snapshot,
+      });
+    }
+
+    return {
+      lines: [
+        `schemaVersion=${snapshot.schemaVersion}`,
+        `kind=${snapshot.kind}`,
+        `metricsDatabase=${metricsDatabasePath}`,
+        `activeSpaces=${snapshot.memory.activeSpaces.value ?? ""}`,
+        `activeRecords=${snapshot.memory.activeRecords.value ?? ""}`,
+        `staleRecords=${snapshot.memory.staleRecords.value ?? ""}`,
+        `savedTokens=${snapshot.value.savedTokens.value ?? ""}`,
+        `savedTokensConfidence=${snapshot.value.savedTokens.confidence}`,
+        `savedCost=${snapshot.value.savedCost.value ?? ""}`,
+        `maintenanceDue=${snapshot.operations.maintenanceDue.value ?? ""}`,
+      ],
+    };
+  } finally {
+    client.close();
+  }
 }
 
 async function runSpaceCommand(
@@ -3413,6 +3570,117 @@ function parseInspectorRecallOptions(flags: Record<string, string>) {
   };
 }
 
+function parseTokenUsageInput(flags: Record<string, string>): RecordTokenUsageInput {
+  return {
+    spaceId: flags["space-id"],
+    scopeId: flags["scope-id"],
+    agentId: flags["agent-id"],
+    projectId: flags["project-id"],
+    workflowId: flags["workflow-id"],
+    operation: parseRequiredString(flags.operation, "operation"),
+    provider: flags.provider,
+    model: parseRequiredString(flags.model, "model"),
+    baselineTokens: parseOptionalNonNegativeInteger(flags["baseline-tokens"], "baseline-tokens"),
+    actualContextTokens: parseOptionalNonNegativeInteger(flags["actual-context-tokens"], "actual-context-tokens"),
+    glialnodeOverheadTokens: parseOptionalNonNegativeInteger(flags["glialnode-overhead-tokens"], "glialnode-overhead-tokens"),
+    inputTokens: parseRequiredNonNegativeInteger(flags["input-tokens"], "input-tokens"),
+    outputTokens: parseRequiredNonNegativeInteger(flags["output-tokens"], "output-tokens"),
+    estimatedSavedTokens: parseOptionalNonNegativeInteger(flags["estimated-saved-tokens"], "estimated-saved-tokens"),
+    estimatedSavedRatio: parseOptionalRatio(flags["estimated-saved-ratio"], "estimated-saved-ratio"),
+    latencyMs: parseOptionalNonNegativeNumber(flags["latency-ms"], "latency-ms"),
+    costCurrency: flags["cost-currency"],
+    inputCost: parseOptionalNonNegativeNumber(flags["input-cost"], "input-cost"),
+    outputCost: parseOptionalNonNegativeNumber(flags["output-cost"], "output-cost"),
+    totalCost: parseOptionalNonNegativeNumber(flags["total-cost"], "total-cost"),
+    dimensions: flags.dimensions ? parseTokenUsageDimensions(flags.dimensions) : undefined,
+    createdAt: flags["created-at"],
+  };
+}
+
+function parseTokenUsageReportOptions(flags: Record<string, string>): TokenUsageReportOptions {
+  return {
+    granularity: parseTokenUsageGranularity(flags.granularity),
+    spaceId: flags["space-id"],
+    scopeId: flags["scope-id"],
+    agentId: flags["agent-id"],
+    projectId: flags["project-id"],
+    workflowId: flags["workflow-id"],
+    operation: flags.operation,
+    provider: flags.provider,
+    model: flags.model,
+    from: flags.from,
+    to: flags.to,
+    costModel: parseTokenCostModel(flags),
+  };
+}
+
+function parseTokenCostModel(flags: Record<string, string>): TokenCostModel | undefined {
+  if (flags["input-cost-per-million"] === undefined && flags["output-cost-per-million"] === undefined) {
+    return undefined;
+  }
+
+  return {
+    currency: flags["cost-currency"] ?? "USD",
+    provider: flags["cost-provider"] ?? flags.provider,
+    model: flags["cost-model"] ?? flags.model,
+    inputCostPerMillionTokens: parseRequiredNonNegativeNumber(flags["input-cost-per-million"], "input-cost-per-million"),
+    outputCostPerMillionTokens: parseRequiredNonNegativeNumber(flags["output-cost-per-million"], "output-cost-per-million"),
+  };
+}
+
+function parseTokenUsageGranularity(value: string | undefined): TokenUsageGranularity {
+  if (value === undefined) {
+    return "day";
+  }
+  if (value === "day" || value === "week" || value === "month" || value === "all") {
+    return value;
+  }
+  throw new Error(`Invalid --granularity value: ${value}`);
+}
+
+function parseTokenUsageDimensions(value: string): Record<string, string | number | boolean | null> {
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--dimensions must be a JSON object.");
+  }
+
+  const dimensions = parsed as Record<string, unknown>;
+  for (const [key, entry] of Object.entries(dimensions)) {
+    if (key.trim().length === 0) {
+      throw new Error("--dimensions cannot include empty keys.");
+    }
+    if (!["string", "number", "boolean"].includes(typeof entry) && entry !== null) {
+      throw new Error(`--dimensions value for ${key} must be a string, number, boolean, or null.`);
+    }
+  }
+
+  return dimensions as Record<string, string | number | boolean | null>;
+}
+
+function assertNoRawTextMetricFlags(flags: Record<string, string>): void {
+  const forbiddenFlags = [
+    "api-key",
+    "completion",
+    "completion-text",
+    "content",
+    "memory-content",
+    "memory-text",
+    "messages",
+    "prompt",
+    "prompt-text",
+    "raw",
+    "raw-text",
+    "request-body",
+    "response-body",
+    "secret",
+    "secret-value",
+  ];
+  const found = forbiddenFlags.find((flag) => flags[flag] !== undefined);
+  if (found) {
+    throw new Error(`Metrics commands do not accept raw text or secret payloads: --${found}`);
+  }
+}
+
 function parsePositiveOptionalNumber(value: string | undefined, flagName: string): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -3438,6 +3706,57 @@ function parseRequiredPositiveNumber(value: string | undefined, flagName: string
     throw new Error(`Missing required flag: --${flagName}`);
   }
   return parsePositiveOptionalNumber(value, flagName) as number;
+}
+
+function parseRequiredString(value: string | undefined, flagName: string): string {
+  if (value === undefined || value.trim().length === 0) {
+    throw new Error(`Missing required flag: --${flagName}`);
+  }
+  return value;
+}
+
+function parseOptionalNonNegativeInteger(value: string | undefined, flagName: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid --${flagName} value: ${value}`);
+  }
+  return parsed;
+}
+
+function parseRequiredNonNegativeInteger(value: string | undefined, flagName: string): number {
+  if (value === undefined) {
+    throw new Error(`Missing required flag: --${flagName}`);
+  }
+  return parseOptionalNonNegativeInteger(value, flagName) as number;
+}
+
+function parseOptionalNonNegativeNumber(value: string | undefined, flagName: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid --${flagName} value: ${value}`);
+  }
+  return parsed;
+}
+
+function parseRequiredNonNegativeNumber(value: string | undefined, flagName: string): number {
+  if (value === undefined) {
+    throw new Error(`Missing required flag: --${flagName}`);
+  }
+  return parseOptionalNonNegativeNumber(value, flagName) as number;
+}
+
+function parseOptionalRatio(value: string | undefined, flagName: string): number | undefined {
+  const parsed = parseOptionalNonNegativeNumber(value, flagName);
+  if (parsed !== undefined && parsed > 1) {
+    throw new Error(`Invalid --${flagName} value: ${value}`);
+  }
+  return parsed;
 }
 
 function parsePortNumber(value: string): number {

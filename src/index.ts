@@ -6,5 +6,6 @@ export * from "./core/types.js";
 export * from "./dashboard/index.js";
 export * from "./events/index.js";
 export * from "./memory/index.js";
+export * from "./metrics/index.js";
 export * from "./release/index.js";
 export * from "./storage/index.js";

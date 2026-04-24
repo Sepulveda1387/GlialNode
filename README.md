@@ -820,6 +820,7 @@ glialnode status
 glialnode storage contract --json
 glialnode storage migration-plan --target postgres --json
 glialnode release readiness --json
+glialnode metrics token-report --granularity day --json
 glialnode preset list
 glialnode preset show --name planning-heavy
 glialnode preset export --name execution-first --output ./execution-first.json
@@ -1001,6 +1002,7 @@ Recommended handling:
 - review `docs/decision-notes.md`
 - review `docs/graph-export.md`
 - review `docs/executive-dashboard.md`
+- review `docs/metrics.md`
 - review `docs/storage-backends.md`
 - review `docs/release-readiness.md`
 - review `docs/trust-packs.md`
@@ -1035,6 +1037,7 @@ Use this handoff order for release preparation:
 - `docs/decision-notes.md`: compact architecture decisions for previously open roadmap research items
 - `docs/graph-export.md`: space graph export schema and usage for topology/provenance tooling
 - `docs/executive-dashboard.md`: CEO/CPO/COO dashboard persona, decision, and metric-confidence planning
+- `docs/metrics.md`: separate metrics SQLite storage, token usage recording, cost reporting, and privacy rules
 - `docs/trust-packs.md`: named trust policy pack management and `--trust-pack` application
 - `docs/release-readiness.md`: `release readiness` gate report and manual confirmation policy
 - `docs/space-inspector.md`: standalone and pack inspector exports (`space inspect-export`, `space inspect-pack-export`)

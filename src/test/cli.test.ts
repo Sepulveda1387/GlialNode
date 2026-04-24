@@ -286,6 +286,222 @@ test("CLI can report release readiness gates without mutating state", async () =
   }
 });
 
+test("CLI metrics commands record and report token usage without memory payloads", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-metrics-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const recordResult = await runCommand(
+      parseArgs([
+        "metrics",
+        "token-record",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        "space_cli",
+        "--operation",
+        "memory.recall",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-test",
+        "--baseline-tokens",
+        "1000",
+        "--actual-context-tokens",
+        "340",
+        "--glialnode-overhead-tokens",
+        "40",
+        "--input-tokens",
+        "380",
+        "--output-tokens",
+        "80",
+        "--created-at",
+        "2026-04-24T00:00:00.000Z",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+
+    const recordPayload = JSON.parse(recordResult.lines.join("\n")) as {
+      metricsDatabasePath: string;
+      record: { estimatedSavedTokens: number };
+    };
+    assert.equal(recordPayload.metricsDatabasePath, metricsPath);
+    assert.equal(recordPayload.record.estimatedSavedTokens, 620);
+
+    const reportResult = await runCommand(
+      parseArgs([
+        "metrics",
+        "token-report",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        "space_cli",
+        "--granularity",
+        "day",
+        "--input-cost-per-million",
+        "2",
+        "--output-cost-per-million",
+        "8",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+
+    const reportPayload = JSON.parse(reportResult.lines.join("\n")) as {
+      report: {
+        totals: { recordCount: number; estimatedSavedTokens: number; costSaved?: number };
+        buckets: Array<{ key: string }>;
+      };
+    };
+    assert.equal(reportPayload.report.totals.recordCount, 1);
+    assert.equal(reportPayload.report.totals.estimatedSavedTokens, 620);
+    assert.equal(reportPayload.report.buckets[0]?.key, "2026-04-24");
+    assert.ok((reportPayload.report.totals.costSaved ?? 0) > 0);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI metrics token-record rejects raw text flags", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-metrics-privacy-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    await assert.rejects(
+      () =>
+        runCommand(
+          parseArgs([
+            "metrics",
+            "token-record",
+            "--operation",
+            "memory.recall",
+            "--model",
+            "gpt-test",
+            "--input-tokens",
+            "1",
+            "--output-tokens",
+            "1",
+            "--prompt-text",
+            "private prompt",
+          ]),
+          { repository, databasePath },
+        ),
+      /raw text or secret payloads/,
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI dashboard overview emits schema-versioned JSON snapshots", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-dashboard-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const spaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Dashboard CLI Space"]),
+      { repository, databasePath },
+    );
+    const spaceId = spaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const scopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository, databasePath },
+    );
+    const scopeId = scopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id",
+        spaceId,
+        "--scope-id",
+        scopeId,
+        "--scope-type",
+        "agent",
+        "--tier",
+        "mid",
+        "--kind",
+        "fact",
+        "--content",
+        "Dashboard CLI snapshot test memory.",
+        "--summary",
+        "Dashboard CLI fact",
+      ]),
+      { repository, databasePath },
+    );
+
+    await runCommand(
+      parseArgs([
+        "metrics",
+        "token-record",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--agent-id",
+        scopeId,
+        "--operation",
+        "memory.recall",
+        "--model",
+        "gpt-test",
+        "--baseline-tokens",
+        "1000",
+        "--actual-context-tokens",
+        "400",
+        "--input-tokens",
+        "400",
+        "--output-tokens",
+        "100",
+      ]),
+      { repository, databasePath },
+    );
+
+    const dashboardResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "overview",
+        "--metrics-db",
+        metricsPath,
+        "--granularity",
+        "all",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+
+    const payload = JSON.parse(dashboardResult.lines.join("\n")) as {
+      snapshot: {
+        schemaVersion: string;
+        kind: string;
+        memory: { activeSpaces: { value: number }; activeRecords: { value: number } };
+        value: { savedTokens: { value: number; confidence: string } };
+      };
+    };
+
+    assert.equal(payload.snapshot.schemaVersion, "1.0.0");
+    assert.equal(payload.snapshot.kind, "overview");
+    assert.equal(payload.snapshot.memory.activeSpaces.value, 1);
+    assert.equal(payload.snapshot.memory.activeRecords.value, 1);
+    assert.equal(payload.snapshot.value.savedTokens.value, 600);
+    assert.equal(payload.snapshot.value.savedTokens.confidence, "estimated");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI doctor reports runtime and registry health in JSON", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-doctor-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

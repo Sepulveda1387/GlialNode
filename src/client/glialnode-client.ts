@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
@@ -46,6 +46,12 @@ import type {
   ScopeRecord,
 } from "../core/types.js";
 import {
+  buildAgentDashboardSnapshot as buildAgentDashboardSnapshotContract,
+  buildDashboardOverviewSnapshot as buildDashboardOverviewSnapshotContract,
+  buildSpaceDashboardSnapshot as buildSpaceDashboardSnapshotContract,
+  type DashboardOverviewSnapshot,
+} from "../dashboard/index.js";
+import {
   applyCompactionPlan,
   createCompactionDistillationLinks,
   createCompactionDistilledRecords,
@@ -67,6 +73,17 @@ import {
   type LearningLoopOptions,
   type LearningLoopPlan,
 } from "../memory/learning.js";
+import {
+  SqliteMetricsRepository,
+  createDisabledMetricsRepository,
+  resolveDefaultMetricsDatabasePath,
+  type MetricsRepository,
+  type RecordTokenUsageInput,
+  type TokenUsageFilters,
+  type TokenUsageRecord,
+  type TokenUsageReport,
+  type TokenUsageReportOptions,
+} from "../metrics/index.js";
 import {
   buildReleaseReadinessReport,
   type ReleaseReadinessInputs,
@@ -123,6 +140,20 @@ export interface GlialNodeClientOptions {
   presetDirectory?: string;
   sqlite?: Partial<SqliteConnectionPolicy>;
   writeMode?: SqliteWriteMode;
+  metrics?: GlialNodeMetricsOptions;
+}
+
+export interface GlialNodeMetricsOptions {
+  filename?: string;
+  repository?: MetricsRepository;
+  disabled?: boolean;
+  sqlite?: Partial<SqliteConnectionPolicy>;
+}
+
+export interface DashboardSnapshotBuildOptions {
+  staleFreshnessThreshold?: number;
+  latestBackupAt?: string;
+  tokenUsage?: TokenUsageReportOptions;
 }
 
 export interface CreateSpaceInput {
@@ -767,15 +798,25 @@ export class GlialNodeClient {
   private readonly repository: MemoryRepository;
   private readonly closeRepository: (() => void) | null;
   private readonly presetDirectory: string;
+  private readonly metricsOptions: GlialNodeMetricsOptions;
+  private readonly memoryDatabasePath?: string;
+  private metricsRepository: MetricsRepository | null;
+  private closeMetricsRepository: (() => void) | null;
 
   constructor(options: GlialNodeClientOptions = {}) {
     const writeMode = options.writeMode ?? options.sqlite?.writeMode ?? "single_writer";
+    this.metricsOptions = options.metrics ?? {};
+    this.metricsRepository = this.metricsOptions.disabled
+      ? createDisabledMetricsRepository()
+      : this.metricsOptions.repository ?? null;
+    this.closeMetricsRepository = null;
 
     if (options.repository) {
       this.repository = writeMode === "serialized_local"
         ? createSerializedLocalRepository(options.repository)
         : options.repository;
       this.closeRepository = null;
+      this.memoryDatabasePath = options.filename ? resolve(options.filename) : undefined;
       this.presetDirectory = resolve(options.presetDirectory ?? ".glialnode/presets");
       return;
     }
@@ -793,6 +834,7 @@ export class GlialNodeClient {
       ? createSerializedLocalRepository(repository)
       : repository;
     this.closeRepository = () => repository.close();
+    this.memoryDatabasePath = filename;
     this.presetDirectory = resolve(options.presetDirectory ?? join(dirname(filename), "presets"));
   }
 
@@ -849,6 +891,79 @@ export class GlialNodeClient {
 
   buildReleaseReadinessReport(options: ReleaseReadinessOptions = {}): ReleaseReadinessReport {
     return buildReleaseReadinessReport(options);
+  }
+
+  async recordTokenUsage(input: RecordTokenUsageInput): Promise<TokenUsageRecord> {
+    return this.getMetricsRepository().recordTokenUsage(input);
+  }
+
+  async listTokenUsage(filters: TokenUsageFilters = {}): Promise<TokenUsageRecord[]> {
+    return this.getMetricsRepository().listTokenUsage(filters);
+  }
+
+  async getTokenUsageReport(options: TokenUsageReportOptions = {}): Promise<TokenUsageReport> {
+    return this.getMetricsRepository().getTokenUsageReport(options);
+  }
+
+  async buildDashboardOverviewSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardOverviewSnapshot> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
+    const tokenUsageReport = await this.getDashboardTokenUsageReport(options.tokenUsage);
+
+    return buildDashboardOverviewSnapshotContract({
+      activeSpaces: spaces.length,
+      activeRecords: memory.activeRecords,
+      staleRecords: memory.staleRecords,
+      tokenUsageReport,
+      storageBytes: this.getMemoryDatabaseBytes(),
+      latestBackupAt: options.latestBackupAt,
+      maintenanceDue: memory.maintenanceDue,
+    });
+  }
+
+  async buildSpaceDashboardSnapshot(
+    spaceId: string,
+    options: DashboardSnapshotBuildOptions = {},
+  ): Promise<DashboardOverviewSnapshot> {
+    const memory = await this.summarizeDashboardMemory([spaceId], options);
+    const tokenUsageReport = await this.getDashboardTokenUsageReport({
+      ...options.tokenUsage,
+      spaceId,
+    });
+
+    return buildSpaceDashboardSnapshotContract({
+      scope: { spaceId },
+      activeSpaces: 1,
+      activeRecords: memory.activeRecords,
+      staleRecords: memory.staleRecords,
+      tokenUsageReport,
+      storageBytes: this.getMemoryDatabaseBytes(),
+      latestBackupAt: options.latestBackupAt,
+      maintenanceDue: memory.maintenanceDue,
+    });
+  }
+
+  async buildAgentDashboardSnapshot(
+    agentId: string,
+    options: DashboardSnapshotBuildOptions = {},
+  ): Promise<DashboardOverviewSnapshot> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemoryForAgent(agentId, spaces.map((space) => space.id), options);
+    const tokenUsageReport = await this.getDashboardTokenUsageReport({
+      ...options.tokenUsage,
+      agentId,
+    });
+
+    return buildAgentDashboardSnapshotContract({
+      scope: { agentId },
+      activeSpaces: memory.activeSpaces,
+      activeRecords: memory.activeRecords,
+      staleRecords: memory.staleRecords,
+      tokenUsageReport,
+      storageBytes: this.getMemoryDatabaseBytes(),
+      latestBackupAt: options.latestBackupAt,
+      maintenanceDue: memory.maintenanceDue,
+    });
   }
 
   listPresets(): SpacePresetDefinition[] {
@@ -2476,7 +2591,90 @@ export class GlialNodeClient {
   }
 
   close(): void {
+    this.closeMetricsRepository?.();
     this.closeRepository?.();
+  }
+
+  private getMetricsRepository(): MetricsRepository {
+    if (this.metricsRepository) {
+      return this.metricsRepository;
+    }
+
+    const filename = resolve(this.metricsOptions.filename ?? resolveDefaultMetricsDatabasePath(this.memoryDatabasePath));
+    const repository = new SqliteMetricsRepository({
+      filename,
+      connection: this.metricsOptions.sqlite,
+    });
+    this.metricsRepository = repository;
+    this.closeMetricsRepository = () => repository.close();
+    return repository;
+  }
+
+  private async getDashboardTokenUsageReport(options: TokenUsageReportOptions = {}): Promise<TokenUsageReport | undefined> {
+    if (this.metricsOptions.disabled) {
+      return undefined;
+    }
+    return this.getTokenUsageReport(options);
+  }
+
+  private async summarizeDashboardMemory(
+    spaceIds: string[],
+    options: DashboardSnapshotBuildOptions,
+  ): Promise<{ activeRecords: number; staleRecords: number; maintenanceDue: boolean }> {
+    const staleFreshnessThreshold = options.staleFreshnessThreshold ?? 0.35;
+    let activeRecords = 0;
+    let staleRecords = 0;
+    let maintenanceDue = false;
+
+    for (const spaceId of spaceIds) {
+      const [records, report] = await Promise.all([
+        this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER),
+        this.repository.getSpaceReport(spaceId, 1),
+      ]);
+
+      activeRecords += records.filter((record) => record.status === "active").length;
+      staleRecords += records.filter((record) => record.status === "active" && record.freshness <= staleFreshnessThreshold).length;
+      maintenanceDue = maintenanceDue || !report.maintenance.latestRunAt;
+    }
+
+    return { activeRecords, staleRecords, maintenanceDue };
+  }
+
+  private async summarizeDashboardMemoryForAgent(
+    agentId: string,
+    spaceIds: string[],
+    options: DashboardSnapshotBuildOptions,
+  ): Promise<{ activeSpaces: number; activeRecords: number; staleRecords: number; maintenanceDue: boolean }> {
+    const staleFreshnessThreshold = options.staleFreshnessThreshold ?? 0.35;
+    let activeRecords = 0;
+    let staleRecords = 0;
+    let activeSpaces = 0;
+    let maintenanceDue = false;
+
+    for (const spaceId of spaceIds) {
+      const [records, report] = await Promise.all([
+        this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER),
+        this.repository.getSpaceReport(spaceId, 1),
+      ]);
+      const agentRecords = records.filter((record) => record.scope.id === agentId);
+
+      if (agentRecords.length > 0) {
+        activeSpaces += 1;
+      }
+      activeRecords += agentRecords.filter((record) => record.status === "active").length;
+      staleRecords += agentRecords.filter((record) => record.status === "active" && record.freshness <= staleFreshnessThreshold).length;
+      maintenanceDue = maintenanceDue || !report.maintenance.latestRunAt;
+    }
+
+    return { activeSpaces, activeRecords, staleRecords, maintenanceDue };
+  }
+
+  private getMemoryDatabaseBytes(): number | undefined {
+    if (!this.memoryDatabasePath || !existsSync(this.memoryDatabasePath)) {
+      return undefined;
+    }
+
+    return statSync(this.memoryDatabasePath).size;
   }
 }
 

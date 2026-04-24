@@ -50,6 +50,7 @@ const REQUIRED_RELEASE_DOCS = [
   "docs/json-contract.md",
   "docs/decision-notes.md",
   "docs/graph-export.md",
+  "docs/metrics.md",
   "docs/trust-packs.md",
   "docs/troubleshooting.md",
   "docs/storage-backends.md",

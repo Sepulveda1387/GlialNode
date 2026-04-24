@@ -268,12 +268,29 @@ Validation helpers:
 - `assertDashboardSnapshot`
 - `createUnavailableDashboardMetric`
 
+Builder APIs:
+
+- `client.buildDashboardOverviewSnapshot()`
+- `client.buildSpaceDashboardSnapshot(spaceId)`
+- `client.buildAgentDashboardSnapshot(agentId)`
+- `buildDashboardOverviewSnapshot(input)`
+- `buildSpaceDashboardSnapshot(input)`
+- `buildAgentDashboardSnapshot(input)`
+
+CLI JSON:
+
+```bash
+glialnode dashboard overview --json
+glialnode dashboard space --space-id <space-id> --json
+glialnode dashboard agent --agent-id <agent-id> --json
+```
+
 Compatibility notes:
 
 - `schemaVersion` starts at `"1.0.0"` and must be present on every snapshot.
 - Missing values must use `value: null` and `confidence: "unavailable"` instead of pretending the value is zero.
 - Estimated values must include `provenance.estimateBasis.assumptions`.
-- Snapshot builders are intentionally deferred until after the extra-high reasoning checkpoint for metrics storage and aggregate reporting.
+- Snapshot builders validate the schema and privacy contract before returning JSON.
 
 ## Privacy And Access Contract
 
@@ -313,11 +330,11 @@ Snapshot privacy validation:
 1. Finalize persona and decision map. This document satisfies the first planning slice.
 2. Define metric confidence and privacy contracts.
 3. Define dashboard snapshot schema contracts. This is complete for the exported TypeScript contract.
-4. Pause and ask the owner to switch `reasoning_level=extra_high`.
-5. Implement optional `metrics.sqlite`.
-6. Add token/cost/latency recording APIs.
-7. Add aggregate reporting APIs.
-8. Add dashboard snapshot builders.
+4. Pause and ask the owner to switch `reasoning_level=extra_high`. This checkpoint was completed before metrics implementation.
+5. Implement optional `metrics.sqlite`. Complete for local token usage metrics.
+6. Add token/cost/latency recording APIs. Complete for client and CLI append paths.
+7. Add aggregate reporting APIs. Complete for day/week/month/all token ROI reports.
+8. Add dashboard snapshot builders. Complete for overview, space, and agent connector snapshots.
 9. Add optional read-only local HTTP routes.
 10. Build the UI from snapshot contracts, not directly from storage tables.
 
