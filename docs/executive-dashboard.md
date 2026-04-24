@@ -275,6 +275,39 @@ Compatibility notes:
 - Estimated values must include `provenance.estimateBasis.assumptions`.
 - Snapshot builders are intentionally deferred until after the extra-high reasoning checkpoint for metrics storage and aggregate reporting.
 
+## Privacy And Access Contract
+
+The OSS dashboard contract is local-first and metrics-only. It must not expose raw prompt text, completion text, memory content, request bodies, response bodies, API keys, or secret values.
+
+The package exports privacy helpers from `glialnode/dashboard`:
+
+```ts
+import {
+  assertDashboardPrivacyPolicy,
+  assertDashboardSnapshotPrivacy,
+  createDefaultDashboardPrivacyPolicy,
+} from "glialnode/dashboard";
+```
+
+Default policy:
+
+- `accessMode: "local_process"`
+- `allowRawText: false`
+- `allowedOrigins: []`
+- `redactionRules: ["no_prompt_text", "no_completion_text", "no_memory_content", "no_request_response_body", "no_secret_values"]`
+
+Local HTTP notes:
+
+- Optional local HTTP dashboard routes must be read-only.
+- Local HTTP mode must declare explicit `allowedOrigins`.
+- Hosted team dashboards are intentionally rejected in the OSS privacy contract and reserved for the future paid/Supabase path.
+
+Snapshot privacy validation:
+
+- Rejects raw-text object fields such as `promptText`, `completionText`, `memoryContent`, `rawText`, `requestBody`, and `responseBody`.
+- Allows metric labels, provenance source IDs, compatibility notes, and warning messages.
+- Should be called by future dashboard builders before returning JSON to CLI, local HTTP, or UI consumers.
+
 ## Implementation Order
 
 1. Finalize persona and decision map. This document satisfies the first planning slice.
