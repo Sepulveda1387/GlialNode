@@ -62,6 +62,16 @@ import {
   createDecaySummaryRecord,
   planDecay,
 } from "../memory/decay.js";
+import {
+  planLearningLoop,
+  type LearningLoopOptions,
+  type LearningLoopPlan,
+} from "../memory/learning.js";
+import {
+  buildReleaseReadinessReport,
+  type ReleaseReadinessInputs,
+  type ReleaseReadinessReport,
+} from "../release/readiness.js";
 import { promoteRecord } from "../memory/promotion.js";
 import {
   applyReinforcementPlan,
@@ -97,7 +107,15 @@ import { createMemoryRecord, updateRecordStatus } from "../memory/service.js";
 import type { MemoryRepository, SpaceReport } from "../storage/repository.js";
 import type { SqliteConnectionPolicy, SqliteWriteMode } from "../storage/sqlite/connection.js";
 import { createSerializedLocalRepository } from "../storage/serialized-local-repository.js";
+import {
+  createServerBackedStorageContract,
+  describeStorageAdapter,
+  planStorageBackendMigration,
+  type StorageAdapterContract,
+  type StorageBackendMigrationPlan,
+} from "../storage/adapter.js";
 import { SqliteMemoryRepository } from "../storage/sqlite/sqlite-repository.js";
+import { sqliteAdapter } from "../storage/sqlite/sqlite-adapter.js";
 
 export interface GlialNodeClientOptions {
   filename?: string;
@@ -614,6 +632,14 @@ export interface PreparedReplyContext {
   text: string;
 }
 
+export interface StorageMigrationPlanOptions {
+  target?: "postgres" | "server-backed" | string;
+  targetSchemaVersion?: number;
+  targetFullTextSearch?: boolean;
+}
+
+export type ReleaseReadinessOptions = ReleaseReadinessInputs;
+
 export interface PresetChannelState {
   name: string;
   channels: Record<string, string>;
@@ -802,6 +828,27 @@ export class GlialNodeClient {
 
   async listSpaces(): Promise<MemorySpace[]> {
     return this.repository.listSpaces();
+  }
+
+  getStorageContract(): StorageAdapterContract {
+    return describeStorageAdapter(sqliteAdapter);
+  }
+
+  planStorageMigration(options: StorageMigrationPlanOptions = {}): StorageBackendMigrationPlan {
+    const target = createServerBackedStorageContract({
+      name: options.target ?? "server-backed",
+      dialect: options.target === "postgres" || options.target === undefined
+        ? "postgres"
+        : options.target,
+      schemaVersion: options.targetSchemaVersion ?? 1,
+      fullTextSearch: options.targetFullTextSearch ?? true,
+    });
+
+    return planStorageBackendMigration(sqliteAdapter, target);
+  }
+
+  buildReleaseReadinessReport(options: ReleaseReadinessOptions = {}): ReleaseReadinessReport {
+    return buildReleaseReadinessReport(options);
   }
 
   listPresets(): SpacePresetDefinition[] {
@@ -1790,6 +1837,18 @@ export class GlialNodeClient {
 
     await persistReinforcementPlan(this.repository, plan);
     return plan;
+  }
+
+  async planLearningLoop(
+    spaceId: string,
+    options: LearningLoopOptions = {},
+  ): Promise<LearningLoopPlan> {
+    await requireSpace(this.repository, spaceId);
+    const records = await this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER);
+    const events = await this.repository.listEvents(spaceId, Number.MAX_SAFE_INTEGER);
+    const links = await this.repository.listLinks(spaceId, Number.MAX_SAFE_INTEGER);
+
+    return planLearningLoop(records, events, links, options);
   }
 
   async maintainSpace(spaceId: string, options: { apply?: boolean } = {}): Promise<MaintenanceResult> {

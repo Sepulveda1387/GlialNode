@@ -72,6 +72,10 @@
 - Added explicit stale-memory decay with configurable confidence and freshness reduction during maintenance.
 - Added explicit memory reinforcement with configurable confidence and freshness boosts for revalidated records.
 - Added opt-in reinforcement for successful search results in the client and CLI without changing default search behavior.
+- Added read-only learning loop planning for repeated-use reinforcement suggestions, confidence calibration review, and contradiction resolution guidance.
+- Added storage backend contract metadata/helpers so current SQLite guarantees and future server-backed adapter boundaries are machine-readable.
+- Added storage contract and migration-plan CLI inspection for future SQLite-to-server backend planning.
+- Added read-only release readiness reporting through `glialnode release readiness`, `GlialNodeClient.buildReleaseReadinessReport(...)`, and `docs/release-readiness.md`.
 - Added recall-pack retrieval so client and CLI can return primary matches with linked supporting memory.
 - Added structured recall traces with citation-style reasons for primary and supporting memory.
 - Added reusable memory bundles for downstream agent and orchestrator handoff.

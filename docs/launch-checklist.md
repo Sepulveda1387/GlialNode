@@ -7,15 +7,19 @@
 - run `npm run check`
 - run `npm run test`
 - run `npm run demo`
+- run `npm run pack:check`
 - review `CHANGELOG.md`
 - review `docs/operator-guide.md`
 - review `docs/compatibility.md`
 - review `docs/json-contract.md`
 - review `docs/decision-notes.md`
 - review `docs/graph-export.md`
+- review `docs/storage-backends.md`
+- review `docs/release-readiness.md`
 - review `docs/trust-packs.md`
 - review `docs/troubleshooting.md`
 - run `glialnode status --json --json-envelope` and verify `schemaVersion` is present
+- run `glialnode release readiness --tests-green true --pack-green true --docs-reviewed true --tree-clean true --user-approved true --json` only after those confirmations are actually true
 - follow `docs/publish-guide.md`
 - review `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`
 - confirm `.gitignore` excludes local demo artifacts

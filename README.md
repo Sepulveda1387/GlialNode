@@ -195,6 +195,9 @@ What GlialNode does not guarantee:
 
 These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
 
+Storage adapters also expose a small backend contract through `describeStorageAdapter(...)`, including capability flags for local-first operation, full-text search, schema migrations, and cross-process write coordination. See `docs/storage-backends.md` for the current SQLite contract and future server-backed adapter boundary.
+Host apps can inspect the same path with `client.getStorageContract()` and `client.planStorageMigration({ target: "postgres" })`.
+
 ## Portable Snapshots
 
 GlialNode full-space snapshots are now versioned portable artifacts, not just raw JSON dumps.
@@ -769,6 +772,35 @@ Reinforcement creates a `memory_reinforced` event and a reinforcement summary re
 
 Host applications can also opt into reinforcement during search when a result was actually used successfully. Normal search does not mutate memory unless you ask for that behavior explicitly.
 
+## Learning Loop Planning
+
+GlialNode can now build a read-only learning loop plan from existing memory records, reinforcement events, and contradiction links.
+
+The planner suggests:
+
+- reinforcement candidates when the same memory has repeated successful-use evidence
+- calibration review when a repeatedly used memory is already near confidence/freshness ceilings
+- contradiction review when active memories are connected by `contradicts` links
+
+Learning loop planning does not mutate memory. It returns explainable suggestions with evidence IDs so a host app or operator can decide whether to run explicit reinforcement, supersede lower-confidence memory, or keep both records for review.
+
+CLI:
+
+- `glialnode memory learn-plan --space-id <space-id> --json`
+
+Client:
+
+- `client.planLearningLoop(spaceId, { policy: { minSuccessfulUses: 2 } })`
+
+## Release Readiness
+
+The V1 publish gate is inspectable through a read-only release report:
+
+- CLI: `glialnode release readiness --json`
+- Client: `client.buildReleaseReadinessReport()`
+
+The default report stays blocked until manual confirmations are provided for the checks GlialNode should not infer on its own: current test status, package dry-run status, docs review, clean git tree, and explicit user approval. See `docs/release-readiness.md`.
+
 ## Packaging Notes
 
 GlialNode is packaged as both a library and a CLI:
@@ -785,6 +817,9 @@ GlialNode is packaged as both a library and a CLI:
 glialnode space create --name "Team Memory"
 glialnode space create --name "Review Memory" --preset conservative-review
 glialnode status
+glialnode storage contract --json
+glialnode storage migration-plan --target postgres --json
+glialnode release readiness --json
 glialnode preset list
 glialnode preset show --name planning-heavy
 glialnode preset export --name execution-first --output ./execution-first.json
@@ -872,6 +907,7 @@ glialnode memory compact --space-id <space-id> --apply
 glialnode memory decay --space-id <space-id>
 glialnode memory decay --space-id <space-id> --apply
 glialnode memory reinforce --record-id <record-id> --strength 2 --reason manual-confirmation
+glialnode memory learn-plan --space-id <space-id> --min-successful-uses 2 --json
 glialnode space configure --id <space-id> --settings "{\"compaction\":{\"shortPromoteImportanceMin\":0.95}}"
 glialnode space configure --id <space-id> --preset execution-first
 glialnode space configure --id <space-id> --provenance-trust-profile anchored --provenance-trust-signer team-anchor
@@ -954,6 +990,7 @@ Recommended handling:
 - `npm run demo`
 - `npm run demo:client`
 - `npm run pack:check`
+- `glialnode release readiness --tests-green true --pack-green true --docs-reviewed true --tree-clean true --user-approved true --json`
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
 - review `docs/live-roadmap.gnl.md`
 - review `docs/launch-checklist.md`
@@ -963,6 +1000,8 @@ Recommended handling:
 - review `docs/json-contract.md`
 - review `docs/decision-notes.md`
 - review `docs/graph-export.md`
+- review `docs/storage-backends.md`
+- review `docs/release-readiness.md`
 - review `docs/trust-packs.md`
 - review `docs/space-inspector.md`
 - review `docs/semantic-retrieval-prototype.md`
@@ -995,6 +1034,7 @@ Use this handoff order for release preparation:
 - `docs/decision-notes.md`: compact architecture decisions for previously open roadmap research items
 - `docs/graph-export.md`: space graph export schema and usage for topology/provenance tooling
 - `docs/trust-packs.md`: named trust policy pack management and `--trust-pack` application
+- `docs/release-readiness.md`: `release readiness` gate report and manual confirmation policy
 - `docs/space-inspector.md`: standalone and pack inspector exports (`space inspect-export`, `space inspect-pack-export`)
 - `docs/semantic-retrieval-prototype.md`: opt-in semantic reranker notes and CLI/client usage
 - `docs/benchmarks.md`: benchmark harness usage and baseline performance numbers

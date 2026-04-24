@@ -49,10 +49,18 @@
     "sqlite",
     "fts5"
   ],
-  "author": "",
+  "author": "Sepulveda1387",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.8.1",
     "typescript": "^5.9.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sepulveda1387/GlialNode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sepulveda1387/GlialNode/issues"
+  },
+  "homepage": "https://github.com/Sepulveda1387/GlialNode#readme"
 }

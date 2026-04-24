@@ -84,6 +84,48 @@ test("GlialNodeClient supports the core programmatic memory workflow", async () 
   }
 });
 
+test("GlialNodeClient exposes storage contract and migration planning helpers", () => {
+  const client = new GlialNodeClient();
+
+  try {
+    const contract = client.getStorageContract();
+    assert.equal(contract.name, "sqlite");
+    assert.equal(contract.capabilities.crossProcessWrites, "single_writer");
+    assert.equal(contract.capabilities.fullTextSearch, true);
+
+    const plan = client.planStorageMigration({ target: "postgres" });
+    assert.equal(plan.source.name, "sqlite");
+    assert.equal(plan.target.name, "postgres");
+    assert.equal(plan.requiresSnapshotExport, true);
+    assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));
+  } finally {
+    client.close();
+  }
+});
+
+test("GlialNodeClient builds release readiness reports", () => {
+  const client = new GlialNodeClient();
+
+  try {
+    const blocked = client.buildReleaseReadinessReport();
+    assert.equal(blocked.status, "blocked");
+    assert.ok(blocked.checks.some((check) => check.id === "release_docs" && check.status === "pass"));
+    assert.ok(blocked.blockers.some((blocker) => /tests_green/.test(blocker)));
+
+    const ready = client.buildReleaseReadinessReport({
+      testsGreen: true,
+      packGreen: true,
+      docsReviewed: true,
+      treeClean: true,
+      userApproved: true,
+    });
+    assert.equal(ready.status, "ready");
+    assert.deepEqual(ready.blockers, []);
+  } finally {
+    client.close();
+  }
+});
+
 test("GlialNodeClient keeps lifecycle state stable across a deterministic 48-step long-run loop", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-lifecycle-longrun-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
@@ -2066,6 +2108,81 @@ test("GlialNodeClient can reinforce successful search results when explicitly re
 
     const report = await client.getSpaceReport(space.id, 10);
     assert.match(report.recentLifecycleEvents.map((event) => event.type).join(","), /memory_reinforced/);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient can build a read-only learning loop plan", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-client-learning-loop-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const client = new GlialNodeClient({ filename: databasePath });
+
+  try {
+    const space = await client.createSpace({ name: "Learning Loop Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    const reinforced = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Lexical retrieval remains the default search mode.",
+      summary: "Lexical retrieval default",
+      confidence: 0.7,
+      freshness: 0.62,
+    });
+    const current = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Use serialized local writes for concurrent host calls.",
+      summary: "Serialized local writes",
+      confidence: 0.9,
+      freshness: 0.8,
+    });
+    const older = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "decision",
+      content: "Use direct SQLite writes for concurrent host calls.",
+      summary: "Direct SQLite writes",
+      confidence: 0.55,
+      freshness: 0.7,
+    });
+
+    await client.reinforceRecord(reinforced.id, { reason: "successful-retrieval" });
+    await client.reinforceRecord(reinforced.id, { reason: "successful-retrieval" });
+    await client.addLink({
+      spaceId: space.id,
+      fromRecordId: current.id,
+      toRecordId: older.id,
+      type: "contradicts",
+    });
+
+    const plan = await client.planLearningLoop(space.id, {
+      policy: {
+        minSuccessfulUses: 2,
+      },
+    });
+
+    assert.equal(plan.summary.recordsReviewed >= 3, true);
+    assert.ok(plan.suggestions.some((suggestion) =>
+      suggestion.type === "reinforce_repeated_success" &&
+      suggestion.recordId === reinforced.id,
+    ));
+    assert.ok(plan.suggestions.some((suggestion) =>
+      suggestion.type === "review_contradiction" &&
+      suggestion.recordId === current.id &&
+      suggestion.relatedRecordId === older.id,
+    ));
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });
