@@ -48,8 +48,14 @@ import type {
 import {
   buildAgentDashboardSnapshot as buildAgentDashboardSnapshotContract,
   buildDashboardOverviewSnapshot as buildDashboardOverviewSnapshotContract,
+  buildDashboardMemoryHealthReport,
+  buildExecutiveDashboardSnapshot as buildExecutiveDashboardSnapshotContract,
+  buildOperationsDashboardSnapshot as buildOperationsDashboardSnapshotContract,
   buildSpaceDashboardSnapshot as buildSpaceDashboardSnapshotContract,
+  type DashboardMemoryHealthReport,
   type DashboardOverviewSnapshot,
+  type ExecutiveDashboardSnapshot,
+  type OperationsDashboardSnapshot,
 } from "../dashboard/index.js";
 import {
   applyCompactionPlan,
@@ -918,6 +924,59 @@ export class GlialNodeClient {
       storageBytes: this.getMemoryDatabaseBytes(),
       latestBackupAt: options.latestBackupAt,
       maintenanceDue: memory.maintenanceDue,
+    });
+  }
+
+  async buildExecutiveDashboardSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<ExecutiveDashboardSnapshot> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
+    const tokenUsageReport = await this.getDashboardTokenUsageReport(options.tokenUsage);
+
+    return buildExecutiveDashboardSnapshotContract({
+      activeSpaces: spaces.length,
+      activeRecords: memory.activeRecords,
+      staleRecords: memory.staleRecords,
+      memoryHealth: memory.health,
+      tokenUsageReport,
+      storageBytes: this.getMemoryDatabaseBytes(),
+      latestBackupAt: options.latestBackupAt,
+      maintenanceDue: memory.maintenanceDue,
+    });
+  }
+
+  async buildMemoryHealthReport(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardMemoryHealthReport> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
+    return buildDashboardMemoryHealthReport(memory.health);
+  }
+
+  async buildOperationsDashboardSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<OperationsDashboardSnapshot> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
+    const latestSchemaVersion = this.repository instanceof SqliteMemoryRepository
+      ? String(this.repository.getSchemaVersion())
+      : "unknown";
+    const criticalWarnings = memory.maintenanceDue ? 1 : 0;
+
+    return buildOperationsDashboardSnapshotContract({
+      backend: this.getStorageContract().name,
+      schemaVersion: latestSchemaVersion,
+      databaseBytes: this.getMemoryDatabaseBytes(),
+      lastMaintenanceAt: memory.health.latestMaintenanceAt,
+      pendingCompactions: memory.health.staleRecords,
+      pendingRetentionActions: memory.health.expiredRecords,
+      doctorStatus: criticalWarnings > 0 ? "attention" : "ready",
+      latestBackupAt: options.latestBackupAt,
+      criticalWarnings,
+      warnings: criticalWarnings > 0
+        ? [
+            {
+              code: "maintenance_due",
+              message: "At least one space has no recorded maintenance run.",
+              severity: "warning",
+            },
+          ]
+        : [],
     });
   }
 
@@ -2620,10 +2679,30 @@ export class GlialNodeClient {
   private async summarizeDashboardMemory(
     spaceIds: string[],
     options: DashboardSnapshotBuildOptions,
-  ): Promise<{ activeRecords: number; staleRecords: number; maintenanceDue: boolean }> {
+  ): Promise<{
+    activeRecords: number;
+    staleRecords: number;
+    maintenanceDue: boolean;
+    health: {
+      activeRecords: number;
+      staleRecords: number;
+      lowConfidenceRecords: number;
+      archivedRecords: number;
+      supersededRecords: number;
+      expiredRecords: number;
+      provenanceSummaryCount: number;
+      latestMaintenanceAt?: string;
+    };
+  }> {
     const staleFreshnessThreshold = options.staleFreshnessThreshold ?? 0.35;
     let activeRecords = 0;
     let staleRecords = 0;
+    let lowConfidenceRecords = 0;
+    let archivedRecords = 0;
+    let supersededRecords = 0;
+    let expiredRecords = 0;
+    let provenanceSummaryCount = 0;
+    let latestMaintenanceAt: string | undefined;
     let maintenanceDue = false;
 
     for (const spaceId of spaceIds) {
@@ -2634,10 +2713,30 @@ export class GlialNodeClient {
 
       activeRecords += records.filter((record) => record.status === "active").length;
       staleRecords += records.filter((record) => record.status === "active" && record.freshness <= staleFreshnessThreshold).length;
+      lowConfidenceRecords += records.filter((record) => record.status === "active" && record.confidence <= 0.4).length;
+      archivedRecords += report.recordsByStatus.archived ?? 0;
+      supersededRecords += report.recordsByStatus.superseded ?? 0;
+      expiredRecords += report.recordsByStatus.expired ?? 0;
+      provenanceSummaryCount += report.provenanceSummaryCount;
+      latestMaintenanceAt = maxIsoTimestamp(latestMaintenanceAt, report.maintenance.latestRunAt);
       maintenanceDue = maintenanceDue || !report.maintenance.latestRunAt;
     }
 
-    return { activeRecords, staleRecords, maintenanceDue };
+    return {
+      activeRecords,
+      staleRecords,
+      maintenanceDue,
+      health: {
+        activeRecords,
+        staleRecords,
+        lowConfidenceRecords,
+        archivedRecords,
+        supersededRecords,
+        expiredRecords,
+        provenanceSummaryCount,
+        latestMaintenanceAt,
+      },
+    };
   }
 
   private async summarizeDashboardMemoryForAgent(
@@ -4700,6 +4799,16 @@ function mergeSpaceSettings(
       ),
     },
   };
+}
+
+function maxIsoTimestamp(left: string | undefined, right: string | undefined): string | undefined {
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  return Date.parse(right) > Date.parse(left) ? right : left;
 }
 
 async function requireSpace(repository: MemoryRepository, spaceId: string): Promise<MemorySpace> {

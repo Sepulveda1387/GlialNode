@@ -4,7 +4,9 @@ import {
   createUnavailableDashboardMetric,
   DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
   type DashboardMetric,
+  type ExecutiveDashboardSnapshot,
   type DashboardOverviewSnapshot,
+  type OperationsDashboardSnapshot,
   type DashboardSnapshotScope,
   type DashboardSnapshotWarning,
 } from "./schema.js";
@@ -26,6 +28,50 @@ export interface BuildDashboardOverviewSnapshotInput {
 
 export interface BuildScopedDashboardSnapshotInput extends BuildDashboardOverviewSnapshotInput {
   readonly scope: DashboardSnapshotScope;
+}
+
+export interface DashboardMemoryHealthInput {
+  readonly activeRecords: number;
+  readonly staleRecords: number;
+  readonly lowConfidenceRecords: number;
+  readonly archivedRecords: number;
+  readonly supersededRecords: number;
+  readonly expiredRecords: number;
+  readonly provenanceSummaryCount: number;
+  readonly latestMaintenanceAt?: string;
+}
+
+export interface DashboardMemoryHealthReport {
+  readonly activeRecords: DashboardMetric<number>;
+  readonly staleRecords: DashboardMetric<number>;
+  readonly lowConfidenceRecords: DashboardMetric<number>;
+  readonly archivedRecords: DashboardMetric<number>;
+  readonly supersededRecords: DashboardMetric<number>;
+  readonly expiredRecords: DashboardMetric<number>;
+  readonly provenanceSummaryCount: DashboardMetric<number>;
+  readonly healthScore: DashboardMetric<number>;
+  readonly latestMaintenanceAt: DashboardMetric<string>;
+}
+
+export interface BuildExecutiveDashboardSnapshotInput extends BuildDashboardOverviewSnapshotInput {
+  readonly memoryHealth: DashboardMemoryHealthInput;
+  readonly trustPostureScore?: number;
+}
+
+export interface BuildOperationsDashboardSnapshotInput {
+  readonly generatedAt?: string;
+  readonly scope?: DashboardSnapshotScope;
+  readonly backend: string;
+  readonly schemaVersion: string;
+  readonly databaseBytes?: number;
+  readonly lastMaintenanceAt?: string;
+  readonly pendingCompactions: number;
+  readonly pendingRetentionActions: number;
+  readonly doctorStatus: "ready" | "attention" | "unknown";
+  readonly latestBackupAt?: string;
+  readonly criticalWarnings: number;
+  readonly warnings?: readonly DashboardSnapshotWarning[];
+  readonly compatibilityNotes?: readonly string[];
 }
 
 export function buildDashboardOverviewSnapshot(
@@ -89,6 +135,121 @@ export function buildAgentDashboardSnapshot(input: BuildScopedDashboardSnapshotI
       "Agent dashboard snapshot uses the overview schema with an agent scope.",
     ],
   });
+}
+
+export function buildExecutiveDashboardSnapshot(
+  input: BuildExecutiveDashboardSnapshotInput,
+): ExecutiveDashboardSnapshot {
+  const savedTokens = savedTokensMetric(input.tokenUsageReport);
+  const savedCost = savedCostMetric(input.tokenUsageReport, "Saved cost");
+  const netSavings = savedCostMetric(input.tokenUsageReport, "Net savings");
+  const memoryHealth = buildDashboardMemoryHealthReport(input.memoryHealth);
+  const criticalWarnings = input.warnings?.filter((warning) => warning.severity === "critical").length ?? 0;
+  const snapshot: ExecutiveDashboardSnapshot = {
+    schemaVersion: DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
+    kind: "executive",
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    scope: input.scope,
+    warnings: input.warnings ?? [],
+    compatibilityNotes: input.compatibilityNotes ?? [
+      "Executive snapshot focuses on value, memory health, and visible operating risk.",
+    ],
+    value: {
+      savedTokens,
+      savedCost,
+      netSavings,
+      activeSpaces: computedCountMetric("Active spaces", input.activeSpaces),
+    },
+    risk: {
+      memoryHealthScore: memoryHealth.healthScore,
+      trustPostureScore: input.trustPostureScore === undefined
+        ? createUnavailableDashboardMetric("Trust posture score", {
+            unit: "percent",
+            source: "trust_registry",
+            notes: ["Trust posture reporting is not configured for this dashboard snapshot."],
+          })
+        : computedMetric("Trust posture score", input.trustPostureScore, "percent", "trust_registry"),
+      openCriticalWarnings: computedMetric("Open critical warnings", criticalWarnings, "count", "doctor_status"),
+    },
+    trends: [
+      savedTokens,
+      savedCost,
+      memoryHealth.healthScore,
+    ],
+  };
+
+  assertDashboardSnapshot(snapshot);
+  assertDashboardSnapshotPrivacy(snapshot);
+  return snapshot;
+}
+
+export function buildDashboardMemoryHealthReport(input: DashboardMemoryHealthInput): DashboardMemoryHealthReport {
+  const healthScore = calculateMemoryHealthScore(input);
+  return {
+    activeRecords: computedCountMetric("Active records", input.activeRecords),
+    staleRecords: computedCountMetric("Stale records", input.staleRecords),
+    lowConfidenceRecords: computedCountMetric("Low confidence records", input.lowConfidenceRecords),
+    archivedRecords: computedCountMetric("Archived records", input.archivedRecords),
+    supersededRecords: computedCountMetric("Superseded records", input.supersededRecords),
+    expiredRecords: computedCountMetric("Expired records", input.expiredRecords),
+    provenanceSummaryCount: computedCountMetric("Provenance summaries", input.provenanceSummaryCount),
+    healthScore: computedMetric("Memory health score", healthScore, "percent", "memory_report"),
+    latestMaintenanceAt: input.latestMaintenanceAt === undefined
+      ? createUnavailableDashboardMetric("Latest maintenance", {
+          unit: "timestamp",
+          source: "memory_events",
+        })
+      : computedMetric("Latest maintenance", input.latestMaintenanceAt, "timestamp", "memory_events"),
+  };
+}
+
+export function buildOperationsDashboardSnapshot(
+  input: BuildOperationsDashboardSnapshotInput,
+): OperationsDashboardSnapshot {
+  const snapshot: OperationsDashboardSnapshot = {
+    schemaVersion: DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
+    kind: "operations",
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    scope: input.scope,
+    warnings: input.warnings ?? [],
+    compatibilityNotes: input.compatibilityNotes ?? [
+      "Operations snapshot is read-only and derived from storage/runtime health signals.",
+    ],
+    storage: {
+      backend: computedMetric("Storage backend", input.backend, "count", "storage_contract"),
+      schemaVersion: computedMetric("Storage schema version", input.schemaVersion, "count", "storage_contract"),
+      databaseBytes: input.databaseBytes === undefined
+        ? createUnavailableDashboardMetric("Database bytes", {
+            unit: "bytes",
+            source: "doctor_status",
+          })
+        : computedMetric("Database bytes", input.databaseBytes, "bytes", "doctor_status"),
+    },
+    maintenance: {
+      lastMaintenanceAt: input.lastMaintenanceAt === undefined
+        ? createUnavailableDashboardMetric("Last maintenance", {
+            unit: "timestamp",
+            source: "memory_events",
+          })
+        : computedMetric("Last maintenance", input.lastMaintenanceAt, "timestamp", "memory_events"),
+      pendingCompactions: computedCountMetric("Pending compactions", input.pendingCompactions),
+      pendingRetentionActions: computedCountMetric("Pending retention actions", input.pendingRetentionActions),
+    },
+    reliability: {
+      doctorStatus: computedMetric("Doctor status", input.doctorStatus, "count", "doctor_status"),
+      latestBackupAt: input.latestBackupAt === undefined
+        ? createUnavailableDashboardMetric("Latest backup", {
+            unit: "timestamp",
+            source: "doctor_status",
+          })
+        : computedMetric("Latest backup", input.latestBackupAt, "timestamp", "doctor_status"),
+      criticalWarnings: computedMetric("Critical warnings", input.criticalWarnings, "count", "doctor_status"),
+    },
+  };
+
+  assertDashboardSnapshot(snapshot);
+  assertDashboardSnapshotPrivacy(snapshot);
+  return snapshot;
 }
 
 function computedCountMetric(label: string, value: number): DashboardMetric<number> {
@@ -184,4 +345,17 @@ function savedCostMetric(report: TokenUsageReport | undefined, label: string): D
         : undefined,
     },
   };
+}
+
+function calculateMemoryHealthScore(input: DashboardMemoryHealthInput): number {
+  if (input.activeRecords === 0) {
+    return 100;
+  }
+
+  const stalePenalty = (input.staleRecords / input.activeRecords) * 35;
+  const confidencePenalty = (input.lowConfidenceRecords / input.activeRecords) * 35;
+  const lifecyclePenalty = ((input.supersededRecords + input.expiredRecords) / Math.max(1, input.activeRecords + input.supersededRecords + input.expiredRecords)) * 20;
+  const maintenancePenalty = input.latestMaintenanceAt ? 0 : 10;
+
+  return Math.max(0, Math.round(100 - stalePenalty - confidencePenalty - lifecyclePenalty - maintenancePenalty));
 }

@@ -281,8 +281,10 @@ CLI JSON:
 
 ```bash
 glialnode dashboard overview --json
+glialnode dashboard executive --json
 glialnode dashboard space --space-id <space-id> --json
 glialnode dashboard agent --agent-id <agent-id> --json
+glialnode dashboard operations --json
 ```
 
 Compatibility notes:
@@ -335,8 +337,9 @@ Snapshot privacy validation:
 6. Add token/cost/latency recording APIs. Complete for client and CLI append paths.
 7. Add aggregate reporting APIs. Complete for day/week/month/all token ROI reports.
 8. Add dashboard snapshot builders. Complete for overview, space, and agent connector snapshots.
-9. Add optional read-only local HTTP routes.
-10. Build the UI from snapshot contracts, not directly from storage tables.
+9. Expand dashboard snapshot builders. Complete for executive and operations snapshots, plus memory health report API.
+10. Add optional read-only local HTTP routes.
+11. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

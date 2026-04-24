@@ -502,6 +502,102 @@ test("CLI dashboard overview emits schema-versioned JSON snapshots", async () =>
   }
 });
 
+test("CLI dashboard executive and operations emit schema-versioned JSON snapshots", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-dashboard-kinds-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const spaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Dashboard Kinds Space"]),
+      { repository, databasePath },
+    );
+    const spaceId = spaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const scopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "planner"]),
+      { repository, databasePath },
+    );
+    const scopeId = scopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id",
+        spaceId,
+        "--scope-id",
+        scopeId,
+        "--scope-type",
+        "agent",
+        "--tier",
+        "mid",
+        "--kind",
+        "fact",
+        "--content",
+        "Executive dashboard CLI memory.",
+        "--summary",
+        "Executive dashboard fact",
+      ]),
+      { repository, databasePath },
+    );
+    await runCommand(
+      parseArgs([
+        "metrics",
+        "token-record",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--agent-id",
+        scopeId,
+        "--operation",
+        "memory.recall",
+        "--model",
+        "gpt-test",
+        "--baseline-tokens",
+        "900",
+        "--actual-context-tokens",
+        "300",
+        "--input-tokens",
+        "300",
+        "--output-tokens",
+        "80",
+      ]),
+      { repository, databasePath },
+    );
+
+    const executiveResult = await runCommand(
+      parseArgs(["dashboard", "executive", "--metrics-db", metricsPath, "--granularity", "all", "--json"]),
+      { repository, databasePath },
+    );
+    const operationsResult = await runCommand(
+      parseArgs(["dashboard", "operations", "--metrics-db", metricsPath, "--json"]),
+      { repository, databasePath },
+    );
+
+    const executive = JSON.parse(executiveResult.lines.join("\n")) as {
+      snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
+    };
+    const operations = JSON.parse(operationsResult.lines.join("\n")) as {
+      snapshot: { kind: string; storage: { backend: { value: string } }; reliability: { doctorStatus: { value: string } } };
+    };
+
+    assert.equal(executive.snapshot.kind, "executive");
+    assert.equal(executive.snapshot.value.savedTokens.value, 600);
+    assert.ok(executive.snapshot.risk.memoryHealthScore.value > 0);
+    assert.equal(operations.snapshot.kind, "operations");
+    assert.equal(operations.snapshot.storage.backend.value, "sqlite");
+    assert.equal(operations.snapshot.reliability.doctorStatus.value, "attention");
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI doctor reports runtime and registry health in JSON", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-doctor-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

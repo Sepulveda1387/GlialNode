@@ -209,8 +209,10 @@ export function usageText(): string {
     "  glialnode metrics token-record --operation <name> --model <model> --input-tokens <n> --output-tokens <n> [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--provider <name>] [--baseline-tokens <n>] [--actual-context-tokens <n>] [--glialnode-overhead-tokens <n>] [--estimated-saved-tokens <n>] [--estimated-saved-ratio <0..1>] [--latency-ms <n>] [--cost-currency <code>] [--input-cost <n>] [--output-cost <n>] [--total-cost <n>] [--dimensions <json>] [--created-at <iso>] [--metrics-db <path>] [--json]",
     "  glialnode metrics token-report [--granularity day|week|month|all] [--metrics-db <path>] [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--operation <name>] [--provider <name>] [--model <model>] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard overview [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode dashboard executive [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard agent --agent-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -692,10 +694,14 @@ async function runDashboardCommand(
 
     const snapshot = action === "overview"
       ? await client.buildDashboardOverviewSnapshot(options)
+      : action === "executive"
+      ? await client.buildExecutiveDashboardSnapshot(options)
       : action === "space"
       ? await client.buildSpaceDashboardSnapshot(parseRequiredString(parsed.flags["space-id"], "space-id"), options)
       : action === "agent"
       ? await client.buildAgentDashboardSnapshot(parseRequiredString(parsed.flags["agent-id"], "agent-id"), options)
+      : action === "operations"
+      ? await client.buildOperationsDashboardSnapshot(options)
       : undefined;
 
     if (!snapshot) {
@@ -716,18 +722,47 @@ async function runDashboardCommand(
         `schemaVersion=${snapshot.schemaVersion}`,
         `kind=${snapshot.kind}`,
         `metricsDatabase=${metricsDatabasePath}`,
-        `activeSpaces=${snapshot.memory.activeSpaces.value ?? ""}`,
-        `activeRecords=${snapshot.memory.activeRecords.value ?? ""}`,
-        `staleRecords=${snapshot.memory.staleRecords.value ?? ""}`,
-        `savedTokens=${snapshot.value.savedTokens.value ?? ""}`,
-        `savedTokensConfidence=${snapshot.value.savedTokens.confidence}`,
-        `savedCost=${snapshot.value.savedCost.value ?? ""}`,
-        `maintenanceDue=${snapshot.operations.maintenanceDue.value ?? ""}`,
+        ...formatDashboardSnapshotCliLines(snapshot),
       ],
     };
   } finally {
     client.close();
   }
+}
+
+function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeClient["buildDashboardOverviewSnapshot"]>>
+  | Awaited<ReturnType<GlialNodeClient["buildExecutiveDashboardSnapshot"]>>
+  | Awaited<ReturnType<GlialNodeClient["buildOperationsDashboardSnapshot"]>>): string[] {
+  if (snapshot.kind === "operations") {
+    return [
+      `backend=${snapshot.storage.backend.value ?? ""}`,
+      `schemaVersionValue=${snapshot.storage.schemaVersion.value ?? ""}`,
+      `databaseBytes=${snapshot.storage.databaseBytes.value ?? ""}`,
+      `doctorStatus=${snapshot.reliability.doctorStatus.value ?? ""}`,
+      `criticalWarnings=${snapshot.reliability.criticalWarnings.value ?? ""}`,
+    ];
+  }
+
+  if (snapshot.kind === "executive") {
+    return [
+      `activeSpaces=${snapshot.value.activeSpaces.value ?? ""}`,
+      `savedTokens=${snapshot.value.savedTokens.value ?? ""}`,
+      `savedTokensConfidence=${snapshot.value.savedTokens.confidence}`,
+      `savedCost=${snapshot.value.savedCost.value ?? ""}`,
+      `memoryHealthScore=${snapshot.risk.memoryHealthScore.value ?? ""}`,
+      `openCriticalWarnings=${snapshot.risk.openCriticalWarnings.value ?? ""}`,
+    ];
+  }
+
+  return [
+    `activeSpaces=${snapshot.memory.activeSpaces.value ?? ""}`,
+    `activeRecords=${snapshot.memory.activeRecords.value ?? ""}`,
+    `staleRecords=${snapshot.memory.staleRecords.value ?? ""}`,
+    `savedTokens=${snapshot.value.savedTokens.value ?? ""}`,
+    `savedTokensConfidence=${snapshot.value.savedTokens.confidence}`,
+    `savedCost=${snapshot.value.savedCost.value ?? ""}`,
+    `maintenanceDue=${snapshot.operations.maintenanceDue.value ?? ""}`,
+  ];
 }
 
 async function runSpaceCommand(

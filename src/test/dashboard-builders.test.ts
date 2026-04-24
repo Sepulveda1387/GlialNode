@@ -145,3 +145,110 @@ test("GlialNodeClient builds scoped space and agent dashboard snapshots", async 
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient builds executive and memory health dashboard reports", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-executive-"));
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    metrics: {
+      filename: join(tempDirectory, "glialnode.metrics.sqlite"),
+    },
+  });
+
+  try {
+    const space = await client.createSpace({ name: "Executive Dashboard Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "planner",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Healthy dashboard memory.",
+      summary: "Healthy dashboard memory",
+      confidence: 0.9,
+      freshness: 0.9,
+    });
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Low confidence dashboard memory.",
+      summary: "Low confidence dashboard memory",
+      confidence: 0.2,
+      freshness: 0.2,
+    });
+
+    await client.recordTokenUsage({
+      spaceId: space.id,
+      agentId: scope.id,
+      operation: "memory.recall",
+      model: "gpt-test",
+      baselineTokens: 1000,
+      actualContextTokens: 350,
+      inputTokens: 350,
+      outputTokens: 120,
+      createdAt: "2026-04-24T00:00:00.000Z",
+    });
+
+    const executive = await client.buildExecutiveDashboardSnapshot({
+      tokenUsage: {
+        granularity: "all",
+        costModel: {
+          currency: "USD",
+          model: "gpt-test",
+          inputCostPerMillionTokens: 2,
+          outputCostPerMillionTokens: 8,
+        },
+      },
+    });
+    const health = await client.buildMemoryHealthReport();
+
+    assert.equal(executive.kind, "executive");
+    assert.equal(executive.value.activeSpaces.value, 1);
+    assert.equal(executive.value.savedTokens.value, 650);
+    assert.equal(executive.risk.openCriticalWarnings.value, 0);
+    assert.ok((executive.risk.memoryHealthScore.value ?? 0) < 100);
+    assert.equal(health.lowConfidenceRecords.value, 1);
+    assert.equal(health.staleRecords.value, 1);
+    assert.doesNotThrow(() => assertDashboardSnapshot(executive));
+    assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(executive));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("GlialNodeClient builds operations dashboard snapshots", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-operations-"));
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    metrics: {
+      filename: join(tempDirectory, "glialnode.metrics.sqlite"),
+    },
+  });
+
+  try {
+    await client.createSpace({ name: "Operations Dashboard Space" });
+
+    const operations = await client.buildOperationsDashboardSnapshot({
+      latestBackupAt: "2026-04-24T00:00:00.000Z",
+    });
+
+    assert.equal(operations.kind, "operations");
+    assert.equal(operations.storage.backend.value, "sqlite");
+    assert.equal(operations.reliability.doctorStatus.value, "attention");
+    assert.equal(operations.reliability.criticalWarnings.value, 1);
+    assert.equal(operations.reliability.latestBackupAt.value, "2026-04-24T00:00:00.000Z");
+    assert.doesNotThrow(() => assertDashboardSnapshot(operations));
+    assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(operations));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
