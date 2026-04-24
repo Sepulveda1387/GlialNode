@@ -1000,6 +1000,7 @@ Recommended handling:
 - review `docs/json-contract.md`
 - review `docs/decision-notes.md`
 - review `docs/graph-export.md`
+- review `docs/executive-dashboard.md`
 - review `docs/storage-backends.md`
 - review `docs/release-readiness.md`
 - review `docs/trust-packs.md`
@@ -1033,6 +1034,7 @@ Use this handoff order for release preparation:
 - `docs/json-contract.md`: versioned `--json-envelope` contract for automation surfaces
 - `docs/decision-notes.md`: compact architecture decisions for previously open roadmap research items
 - `docs/graph-export.md`: space graph export schema and usage for topology/provenance tooling
+- `docs/executive-dashboard.md`: CEO/CPO/COO dashboard persona, decision, and metric-confidence planning
 - `docs/trust-packs.md`: named trust policy pack management and `--trust-pack` application
 - `docs/release-readiness.md`: `release readiness` gate report and manual confirmation policy
 - `docs/space-inspector.md`: standalone and pack inspector exports (`space inspect-export`, `space inspect-pack-export`)
