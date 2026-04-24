@@ -240,50 +240,46 @@ Prefer:
 ## Initial Dashboard Snapshot Shape
 
 The first dashboard API should be a versioned snapshot, not a UI-specific data dump.
+The package now exports the initial schema contract and validators from `glialnode` and `glialnode/dashboard`.
 
 ```ts
-interface ExecutiveDashboardSnapshot {
-  schemaVersion: "1.0.0";
-  generatedAt: string;
-  scope: {
-    spaceIds?: string[];
-    projectIds?: string[];
-    agentIds?: string[];
-  };
-  value: {
-    usageStatus: "unconfigured" | "partial" | "measured";
-    estimatedSavedTokens?: number;
-    estimatedSavedCost?: number;
-    confidence: "measured" | "estimated" | "configured" | "computed" | "unavailable";
-  };
-  memoryHealth: {
-    activeRecords: number;
-    staleRecords: number;
-    contestedRecords: number;
-    lowConfidenceRecords: number;
-    confidence: "computed";
-  };
-  trust: {
-    recentPolicyFailures: number;
-    revokedTrustedSigners: number;
-    unsignedArtifactReviews: number;
-    confidence: "computed" | "unavailable";
-  };
-  operations: {
-    schemaUpToDate: boolean;
-    writeMode: string;
-    latestMaintenanceAt?: string;
-    warnings: string[];
-    confidence: "computed";
-  };
-}
+import {
+  DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
+  assertDashboardSnapshot,
+  type ExecutiveDashboardSnapshot,
+} from "glialnode/dashboard";
 ```
+
+Contract types:
+
+- `DashboardOverviewSnapshot`
+- `ExecutiveDashboardSnapshot`
+- `ProductDashboardSnapshot`
+- `OperationsDashboardSnapshot`
+- `DashboardMetric<T>`
+- `DashboardMetricProvenance`
+- `DashboardEstimateBasis`
+- `DashboardCostModelMetadata`
+
+Validation helpers:
+
+- `assertDashboardSnapshotVersion`
+- `assertDashboardMetric`
+- `assertDashboardSnapshot`
+- `createUnavailableDashboardMetric`
+
+Compatibility notes:
+
+- `schemaVersion` starts at `"1.0.0"` and must be present on every snapshot.
+- Missing values must use `value: null` and `confidence: "unavailable"` instead of pretending the value is zero.
+- Estimated values must include `provenance.estimateBasis.assumptions`.
+- Snapshot builders are intentionally deferred until after the extra-high reasoning checkpoint for metrics storage and aggregate reporting.
 
 ## Implementation Order
 
 1. Finalize persona and decision map. This document satisfies the first planning slice.
 2. Define metric confidence and privacy contracts.
-3. Define dashboard snapshot schema contracts.
+3. Define dashboard snapshot schema contracts. This is complete for the exported TypeScript contract.
 4. Pause and ask the owner to switch `reasoning_level=extra_high`.
 5. Implement optional `metrics.sqlite`.
 6. Add token/cost/latency recording APIs.

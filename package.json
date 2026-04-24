@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./dashboard": {
+      "types": "./dist/dashboard/index.d.ts",
+      "default": "./dist/dashboard/index.js"
+    },
     "./cli": {
       "default": "./dist/cli/index.js"
     }

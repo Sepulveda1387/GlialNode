@@ -20,8 +20,16 @@ test("package manifest exposes a publishable cross-platform surface", () => {
 
   assert.equal(manifest.bin?.glialnode, "dist/cli/index.js");
   assert.ok(manifest.exports?.["."]);
+  assert.ok(manifest.exports?.["./dashboard"]);
   assert.ok(manifest.exports?.["./cli"]);
   assert.ok(manifest.files?.includes("dist/**/*"));
   assert.ok(manifest.files?.includes("!dist/test/**/*"));
   assert.equal(manifest.engines?.node, ">=24");
+});
+
+test("package dashboard subpath resolves to the public dashboard contract", async () => {
+  const dashboard = await import("glialnode/dashboard");
+
+  assert.equal(dashboard.DASHBOARD_SNAPSHOT_SCHEMA_VERSION, "1.0.0");
+  assert.equal(typeof dashboard.assertDashboardSnapshot, "function");
 });
