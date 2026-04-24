@@ -84,7 +84,7 @@ Acceptance bar:
 
 ## Metric Confidence Labels
 
-Dashboard values must carry one of these labels:
+Dashboard values must carry one of these labels. These labels are part of the data contract, not UI decoration.
 
 | Label | Meaning | Example |
 | --- | --- | --- |
@@ -93,6 +93,149 @@ Dashboard values must carry one of these labels:
 | `configured` | Based on operator-provided settings | cost per 1M tokens for a model |
 | `computed` | Deterministically aggregated from stored records | active memory count, records by tier, lifecycle event counts |
 | `unavailable` | Not enough data has been recorded | cost saved before token usage instrumentation exists |
+
+Every metric exposed to an executive dashboard must carry:
+
+```ts
+type DashboardMetricConfidence =
+  | "measured"
+  | "estimated"
+  | "configured"
+  | "computed"
+  | "unavailable";
+
+interface DashboardMetric<T> {
+  value: T | null;
+  confidence: DashboardMetricConfidence;
+  label: string;
+  description?: string;
+  unit?: "count" | "tokens" | "currency" | "milliseconds" | "percent" | "ratio" | "bytes" | "timestamp";
+  provenance: DashboardMetricProvenance;
+}
+```
+
+The `value` is nullable so dashboards do not invent zeros when data is missing. A missing value should use `confidence="unavailable"` and explain what data source is absent.
+
+## Metric Provenance
+
+Metric provenance explains where a value came from and whether an operator can trust it as measured, computed, configured, or estimated.
+
+```ts
+interface DashboardMetricProvenance {
+  source:
+    | "memory_report"
+    | "memory_events"
+    | "recall_trace"
+    | "bundle_trace"
+    | "trust_registry"
+    | "doctor_status"
+    | "storage_contract"
+    | "metrics_store"
+    | "cost_model"
+    | "release_readiness"
+    | "fixture";
+  sourceIds?: string[];
+  generatedAt: string;
+  window?: {
+    from: string;
+    to: string;
+    granularity: "hour" | "day" | "week" | "month" | "all";
+  };
+  estimateBasis?: EstimateBasis;
+  costModel?: DashboardCostModelMetadata;
+}
+
+interface EstimateBasis {
+  method:
+    | "host_reported_baseline"
+    | "full_context_replay_estimate"
+    | "pre_glialnode_baseline"
+    | "manual_operator_baseline"
+    | "fixture";
+  baselineTokens?: number;
+  actualTokens?: number;
+  glialnodeOverheadTokens?: number;
+  assumptions: string[];
+}
+
+interface DashboardCostModelMetadata {
+  provider: string;
+  model: string;
+  currency: string;
+  inputCostPerMillionTokens?: number;
+  outputCostPerMillionTokens?: number;
+  source: "operator_configured" | "fixture" | "unknown";
+  effectiveAt?: string;
+}
+```
+
+## Confidence Rules
+
+- `measured` values must come from host-provided usage records or provider response metadata.
+- `computed` values must be deterministic aggregations of GlialNode records, events, reports, traces, or diagnostics.
+- `configured` values must come from an explicit operator or fixture configuration.
+- `estimated` values must include `estimateBasis.method` and at least one human-readable assumption.
+- `unavailable` values must explain the missing source through `description` or the surrounding snapshot warning.
+- A total may not combine measured and estimated values unless the output exposes a mixed-confidence breakdown.
+- Cost savings may not be shown as exact spend unless both usage and cost model are measured/configured with visible provenance.
+- Fixture values must be visibly marked as fixture data in provenance.
+
+## Common Metric Contracts
+
+| Metric | Unit | Confidence | Source | Notes |
+| --- | --- | --- | --- | --- |
+| Active spaces | `count` | `computed` | `memory_report` | Count from current local repository |
+| Active records | `count` | `computed` | `memory_report` | Split by status/tier/kind when possible |
+| Stale records | `count` | `computed` | `memory_report` or dashboard health rules | Requires declared stale thresholds |
+| Contested records | `count` | `computed` | `memory_events` and record links | Based on contradiction links or superseded state |
+| Recall bundle size | `tokens` or `bytes` | `computed` | `bundle_trace` | Computed locally from emitted bundle payload |
+| Input/output tokens | `tokens` | `measured` | `metrics_store` | Recorded by host app from provider response |
+| Baseline tokens | `tokens` | `estimated` or `measured` | `metrics_store` | Measured only if host explicitly recorded real baseline |
+| Estimated saved tokens | `tokens` | `estimated` | `metrics_store` | Must disclose baseline method |
+| Cost per model | `currency` | `configured` | `cost_model` | Operator-provided; pricing can become stale |
+| Estimated saved cost | `currency` | `estimated` | `metrics_store` and `cost_model` | Requires token estimate plus cost model metadata |
+| Schema up-to-date | `count` or boolean | `computed` | `doctor_status` | Deterministic from runtime diagnostics |
+| Release readiness | `count` or status | `computed` | `release_readiness` | Based on explicit readiness report |
+
+## Forbidden Metric Shapes
+
+Do not emit these shapes:
+
+```ts
+// Bad: value looks exact but is actually estimated.
+{ savedCost: 12.42 }
+
+// Bad: zero hides missing instrumentation.
+{ savedTokens: 0, confidence: "measured" }
+
+// Bad: no basis for estimate.
+{ value: 100000, confidence: "estimated", provenance: { source: "metrics_store" } }
+```
+
+Prefer:
+
+```ts
+{
+  value: 100000,
+  confidence: "estimated",
+  label: "Estimated saved tokens",
+  unit: "tokens",
+  provenance: {
+    source: "metrics_store",
+    generatedAt: "2026-04-24T00:00:00.000Z",
+    estimateBasis: {
+      method: "host_reported_baseline",
+      baselineTokens: 140000,
+      actualTokens: 40000,
+      glialnodeOverheadTokens: 3000,
+      assumptions: [
+        "Host app supplied baseline token count for the same workflow.",
+        "Savings subtract GlialNode context overhead before reporting net saved tokens."
+      ]
+    }
+  }
+}
+```
 
 ## Initial Dashboard Snapshot Shape
 
