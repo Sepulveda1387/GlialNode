@@ -175,6 +175,75 @@ test("execution context recommendation degrades when records expire or are missi
   assert.equal(recommendation.confidence, "low");
   assert.equal(recommendation.matchedRecords, 0);
   assert.equal(recommendation.ignoredExpiredRecords, 1);
+  assert.equal(recommendation.fallbackToNormalDiscovery, true);
   assert.deepEqual(recommendation.selectedTools, []);
   assert.ok(recommendation.warnings.some((warning) => warning.includes("expired")));
+});
+
+test("execution context recommendation degrades when tools and paths drift", () => {
+  const record = createExecutionContextRecord({
+    taskFingerprint: createExecutionContextTaskFingerprint({
+      taskText: "Fix the dashboard routing panel.",
+      scope: { repoId: "GlialNode" },
+      features: ["dashboard", "routing"],
+    }),
+    selectedSkills: ["typescript"],
+    selectedTools: ["functions.apply_patch", "old.mcp_tool"],
+    skippedTools: ["web.run"],
+    firstReads: ["src/dashboard/old-panel.ts"],
+    outcome: { state: "success", toolCallCount: 3 },
+    confidence: "high",
+    createdAt: "2026-04-24T00:00:00.000Z",
+    retentionDays: 30,
+  });
+
+  const recommendation = recommendExecutionContext({
+    taskText: "Fix the dashboard routing panel.",
+    scope: { repoId: "GlialNode" },
+    features: ["routing", "dashboard"],
+    availableSkills: ["typescript"],
+    availableTools: ["functions.apply_patch"],
+    availableFirstReads: ["src/dashboard/builders.ts"],
+    records: [record],
+    now: "2026-04-25T00:00:00.000Z",
+  });
+
+  assert.equal(recommendation.confidence, "medium");
+  assert.equal(recommendation.fallbackToNormalDiscovery, false);
+  assert.deepEqual(recommendation.selectedTools, ["functions.apply_patch"]);
+  assert.deepEqual(recommendation.firstReads, []);
+  assert.deepEqual(recommendation.availabilityDiff.unavailableTools, ["old.mcp_tool"]);
+  assert.deepEqual(recommendation.availabilityDiff.unavailableFirstReads, ["src/dashboard/old-panel.ts"]);
+  assert.equal(recommendation.availabilityDiff.driftedRecommendationCount, 2);
+  assert.ok(recommendation.warnings.some((warning) => warning.includes("degraded")));
+});
+
+test("execution context recommendation falls back when all useful routes are unavailable", () => {
+  const record = createExecutionContextRecord({
+    taskFingerprint: createExecutionContextTaskFingerprint({
+      taskText: "Investigate package publish failure.",
+      features: ["release"],
+    }),
+    selectedTools: ["old.publisher"],
+    firstReads: ["scripts/old-publish.mjs"],
+    outcome: { state: "success" },
+    confidence: "high",
+    createdAt: "2026-04-24T00:00:00.000Z",
+    retentionDays: 30,
+  });
+
+  const recommendation = recommendExecutionContext({
+    taskText: "Investigate package publish failure.",
+    features: ["release"],
+    availableTools: ["functions.shell_command"],
+    availableFirstReads: ["scripts/check-pack.mjs"],
+    records: [record],
+    now: "2026-04-25T00:00:00.000Z",
+  });
+
+  assert.equal(recommendation.confidence, "low");
+  assert.equal(recommendation.fallbackToNormalDiscovery, true);
+  assert.deepEqual(recommendation.selectedTools, []);
+  assert.deepEqual(recommendation.firstReads, []);
+  assert.ok(recommendation.warnings.some((warning) => warning.includes("fall back to normal discovery")));
 });

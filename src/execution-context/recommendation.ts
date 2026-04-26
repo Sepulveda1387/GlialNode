@@ -11,9 +11,17 @@ import {
 export interface RecommendExecutionContextInput extends CreateExecutionContextTaskFingerprintInput {
   readonly availableSkills?: readonly string[];
   readonly availableTools?: readonly string[];
+  readonly availableFirstReads?: readonly string[];
   readonly records?: readonly ExecutionContextRecord[];
   readonly now?: string;
   readonly maxRecommendations?: number;
+}
+
+export interface ExecutionContextAvailabilityDiff {
+  readonly unavailableSkills: readonly string[];
+  readonly unavailableTools: readonly string[];
+  readonly unavailableFirstReads: readonly string[];
+  readonly driftedRecommendationCount: number;
 }
 
 export interface ExecutionContextRecommendation {
@@ -27,6 +35,8 @@ export interface ExecutionContextRecommendation {
   readonly firstReads: readonly string[];
   readonly matchedRecords: number;
   readonly ignoredExpiredRecords: number;
+  readonly availabilityDiff: ExecutionContextAvailabilityDiff;
+  readonly fallbackToNormalDiscovery: boolean;
   readonly explanations: readonly string[];
   readonly warnings: readonly string[];
 }
@@ -41,6 +51,7 @@ export function recommendExecutionContext(input: RecommendExecutionContextInput)
   const taskFingerprint = createExecutionContextTaskFingerprint(input);
   const availableSkills = input.availableSkills ? new Set(input.availableSkills) : undefined;
   const availableTools = input.availableTools ? new Set(input.availableTools) : undefined;
+  const availableFirstReads = input.availableFirstReads ? new Set(input.availableFirstReads) : undefined;
   const maxRecommendations = input.maxRecommendations ?? 5;
   const selectedSkills = new Map<string, WeightedValue>();
   const selectedTools = new Map<string, WeightedValue>();
@@ -91,6 +102,19 @@ export function recommendExecutionContext(input: RecommendExecutionContextInput)
     .filter((tool) => availableTools ? !availableTools.has(tool) : false);
   const filteredAvoidTools = rankValues(avoidTools, maxRecommendations)
     .filter((tool) => availableTools ? availableTools.has(tool) : true);
+  const rankedFirstReads = rankValues(firstReads, maxRecommendations);
+  const filteredFirstReads = rankedFirstReads
+    .filter((read) => availableFirstReads ? availableFirstReads.has(read) : true);
+  const unavailableFirstReads = rankedFirstReads
+    .filter((read) => availableFirstReads ? !availableFirstReads.has(read) : false);
+  const availabilityDiff: ExecutionContextAvailabilityDiff = {
+    unavailableSkills,
+    unavailableTools,
+    unavailableFirstReads,
+    driftedRecommendationCount: unavailableSkills.length + unavailableTools.length + unavailableFirstReads.length,
+  };
+  const hasUsefulRecommendation = filteredSkills.length > 0 || filteredTools.length > 0 || filteredFirstReads.length > 0;
+  const fallbackToNormalDiscovery = matchedRecords === 0 || (matchedRecords > 0 && !hasUsefulRecommendation);
 
   if (unavailableSkills.length > 0) {
     warnings.push(`Ignored unavailable skill recommendation(s): ${unavailableSkills.join(", ")}`);
@@ -98,28 +122,40 @@ export function recommendExecutionContext(input: RecommendExecutionContextInput)
   if (unavailableTools.length > 0) {
     warnings.push(`Ignored unavailable tool recommendation(s): ${unavailableTools.join(", ")}`);
   }
+  if (unavailableFirstReads.length > 0) {
+    warnings.push(`Ignored unavailable first-read path recommendation(s): ${unavailableFirstReads.join(", ")}`);
+  }
+  if (availabilityDiff.driftedRecommendationCount > 0) {
+    warnings.push("Execution-context recommendation was degraded because skills, tools, or first-read paths changed.");
+  }
   if (ignoredExpiredRecords > 0) {
     warnings.push(`Ignored ${ignoredExpiredRecords} expired execution-context record(s).`);
   }
   if (matchedRecords === 0) {
     warnings.push("No matching execution-context records found; use normal discovery and record the outcome afterward.");
   }
+  if (fallbackToNormalDiscovery && matchedRecords > 0) {
+    warnings.push("Matching execution-context records were found, but all useful recommendations were unavailable; fall back to normal discovery.");
+  }
 
   return {
     schemaVersion: "1.0.0",
     generatedAt,
     taskFingerprint,
-    confidence: confidenceFromScore(bestScore, matchedRecords),
+    confidence: fallbackToNormalDiscovery ? "low" : confidenceFromScore(bestScore, matchedRecords, availabilityDiff.driftedRecommendationCount),
     selectedSkills: filteredSkills,
     selectedTools: filteredTools,
     avoidTools: filteredAvoidTools,
-    firstReads: rankValues(firstReads, maxRecommendations),
+    firstReads: filteredFirstReads,
     matchedRecords,
     ignoredExpiredRecords,
+    availabilityDiff,
+    fallbackToNormalDiscovery,
     explanations: [
       "Recommendation is based on matching task fingerprints and non-expired execution-context records.",
       "The API accepts task text only to create a fingerprint; raw task text is not returned.",
       "Recommendations are advisory and should be ignored when they conflict with current tool availability or task risk.",
+      "Unavailable skills, tools, and first-read paths degrade confidence and can force normal discovery.",
     ],
     warnings,
   };
@@ -157,7 +193,14 @@ function rankValues(values: Map<string, WeightedValue>, maxRecommendations: numb
     .map((entry) => entry.value);
 }
 
-function confidenceFromScore(bestScore: number, matchedRecords: number): "low" | "medium" | "high" {
+function confidenceFromScore(
+  bestScore: number,
+  matchedRecords: number,
+  driftedRecommendationCount: number,
+): "low" | "medium" | "high" {
+  if (driftedRecommendationCount > 0) {
+    return matchedRecords >= 1 && bestScore >= 6 ? "medium" : "low";
+  }
   if (matchedRecords >= 2 && bestScore >= 6) {
     return "high";
   }

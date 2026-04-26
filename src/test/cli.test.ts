@@ -454,12 +454,18 @@ test("CLI execution-context recommend emits advisory JSON without raw task text"
         matchedRecords: number;
         selectedSkills: string[];
         selectedTools: string[];
+        fallbackToNormalDiscovery: boolean;
+        availabilityDiff: {
+          driftedRecommendationCount: number;
+        };
         warnings: string[];
       };
     };
 
     assert.equal(payload.recommendation.confidence, "medium");
     assert.equal(payload.recommendation.matchedRecords, 1);
+    assert.equal(payload.recommendation.fallbackToNormalDiscovery, false);
+    assert.equal(payload.recommendation.availabilityDiff.driftedRecommendationCount, 1);
     assert.deepEqual(payload.recommendation.selectedSkills, ["typescript"]);
     assert.deepEqual(payload.recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
     assert.ok(payload.recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
