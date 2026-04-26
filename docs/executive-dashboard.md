@@ -299,6 +299,7 @@ glialnode dashboard alerts --json
 glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
 glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 glialnode dashboard export --kind trust --output trust.json --json
+npm run demo:dashboard
 ```
 
 Compatibility notes:
@@ -311,6 +312,7 @@ Compatibility notes:
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
 - Dashboard exports write local artifacts only. `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
+- `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work.
 
 ## Privacy And Access Contract
 
@@ -360,8 +362,9 @@ Snapshot privacy validation:
 11. Add recall quality reporting. Complete for retrieval request counts, latency percentiles, compact-vs-full token ratio, top recalled IDs, and never-recalled candidates.
 12. Add trust/provenance dashboard reporting. Complete for signer posture, trust-pack counts, per-space trust posture, recent provenance events, and policy failure counts.
 13. Add exportable dashboard artifacts. Complete for token ROI CSV/JSON plus memory health, recall quality, trust, and alerts JSON.
-14. Add optional read-only local HTTP routes.
-15. Build the UI from snapshot contracts, not directly from storage tables.
+14. Add seeded dashboard fixture/demo dataset. Complete for deterministic synthetic local artifacts via `npm run demo:dashboard`.
+15. Add optional read-only local HTTP routes.
+16. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

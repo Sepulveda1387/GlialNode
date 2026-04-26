@@ -3738,6 +3738,8 @@ function requireEventType(value: string | undefined): EventType {
     "memory_superseded",
     "memory_decayed",
     "memory_reinforced",
+    "bundle_reviewed",
+    "bundle_imported",
   ];
 
   if (!value || !allowed.includes(value as EventType)) {
