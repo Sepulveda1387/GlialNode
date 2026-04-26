@@ -20,11 +20,22 @@ if (!result) {
 
 const packagedFiles = new Set(result.files.map((file) => file.path));
 
-assert.ok(packagedFiles.has("dist/index.js"), "Packaged tarball must include dist/index.js.");
-assert.ok(packagedFiles.has("dist/cli/index.js"), "Packaged tarball must include dist/cli/index.js.");
-assert.ok(packagedFiles.has("dist/index.d.ts"), "Packaged tarball must include dist/index.d.ts.");
-assert.ok(packagedFiles.has("README.md"), "Packaged tarball must include README.md.");
-assert.ok(packagedFiles.has("LICENSE"), "Packaged tarball must include LICENSE.");
+for (const filePath of [
+  "dist/index.js",
+  "dist/index.d.ts",
+  "dist/cli/index.js",
+  "dist/dashboard/index.js",
+  "dist/dashboard/index.d.ts",
+  "dist/execution-context/index.js",
+  "dist/execution-context/index.d.ts",
+  "dist/metrics/index.js",
+  "dist/metrics/index.d.ts",
+  "README.md",
+  "LICENSE",
+]) {
+  assert.ok(packagedFiles.has(filePath), `Packaged tarball must include ${filePath}.`);
+}
+
 assert.ok(![...packagedFiles].some((path) => path.startsWith("dist/test/")), "Packaged tarball must not include dist/test artifacts.");
 
 console.log(`Packaged files verified (${result.entryCount} entries).`);

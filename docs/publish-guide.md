@@ -8,8 +8,10 @@ Run the standard checks:
 
 ```bash
 npm run check
-npm run test
+npm test
+npm run pack:check
 npm run demo
+npm run demo:dashboard
 ```
 
 ## 2. Review What Will Be Committed
@@ -112,12 +114,16 @@ GlialNode 0.1.0 is the first public release of a SQLite-first memory system for 
 Highlights:
 - tiered memory spaces with scoped records, events, and provenance links
 - lexical retrieval with SQLite FTS5
+- opt-in semantic prototype reranking with eval-gated safeguards
 - lifecycle workflows for promote, archive, compaction, retention, and maintenance
-- reporting, import/export, and a demo flow
+- signed snapshot and preset-bundle portability with trust profiles
+- local-first metrics, execution-context routing, and executive dashboard exports
+- reporting, import/export, dashboard fixture, and demo flows
 
 Current limitations:
 - SQLite is currently best suited for local single-writer usage
-- semantic retrieval is not implemented yet
+- semantic reranking is opt-in prototype functionality, not the default retrieval path
+- hosted/team dashboards, Supabase/Postgres storage, auth, billing, and org tenancy are reserved for a future paid path if open-source usage validates demand
 - Node's built-in sqlite module is still experimental in Node 24
 ```
 
@@ -126,6 +132,6 @@ Current limitations:
 Recommended follow-up work:
 
 - create the first GitHub release page
-- add one screenshot of the report output if desired
-- decide whether to keep using the PowerShell-first demo or add a cross-platform demo path
+- add one screenshot of the dashboard or report output if desired
+- collect dashboard/metrics feedback separately from core memory correctness bugs
 - start collecting feedback through issues instead of local notes

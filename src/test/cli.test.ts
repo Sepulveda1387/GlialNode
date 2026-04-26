@@ -444,31 +444,38 @@ test("CLI execution-context recommend emits advisory JSON without raw task text"
         "--records",
         recordsPath,
         "--json",
+        "--json-envelope",
       ]),
       { repository, databasePath },
     );
 
     const payload = JSON.parse(result.lines.join("\n")) as {
-      recommendation: {
-        confidence: string;
-        matchedRecords: number;
-        selectedSkills: string[];
-        selectedTools: string[];
-        fallbackToNormalDiscovery: boolean;
-        availabilityDiff: {
-          driftedRecommendationCount: number;
+      schemaVersion: string;
+      command: string;
+      data: {
+        recommendation: {
+          confidence: string;
+          matchedRecords: number;
+          selectedSkills: string[];
+          selectedTools: string[];
+          fallbackToNormalDiscovery: boolean;
+          availabilityDiff: {
+            driftedRecommendationCount: number;
+          };
+          warnings: string[];
         };
-        warnings: string[];
       };
     };
 
-    assert.equal(payload.recommendation.confidence, "medium");
-    assert.equal(payload.recommendation.matchedRecords, 1);
-    assert.equal(payload.recommendation.fallbackToNormalDiscovery, false);
-    assert.equal(payload.recommendation.availabilityDiff.driftedRecommendationCount, 1);
-    assert.deepEqual(payload.recommendation.selectedSkills, ["typescript"]);
-    assert.deepEqual(payload.recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
-    assert.ok(payload.recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
+    assert.equal(payload.schemaVersion, "1.0.0");
+    assert.equal(payload.command, "execution-context recommend");
+    assert.equal(payload.data.recommendation.confidence, "medium");
+    assert.equal(payload.data.recommendation.matchedRecords, 1);
+    assert.equal(payload.data.recommendation.fallbackToNormalDiscovery, false);
+    assert.equal(payload.data.recommendation.availabilityDiff.driftedRecommendationCount, 1);
+    assert.deepEqual(payload.data.recommendation.selectedSkills, ["typescript"]);
+    assert.deepEqual(payload.data.recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
+    assert.ok(payload.data.recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
     assert.doesNotMatch(result.lines.join("\n"), /fix failing dashboard cli tests/i);
   } finally {
     repository.close();
@@ -611,26 +618,33 @@ test("CLI dashboard routing-efficiency emits metrics-only JSON", async () => {
         "--include-expired",
         "true",
         "--json",
+        "--json-envelope",
       ]),
       { repository, databasePath },
     );
     const payload = JSON.parse(result.lines.join("\n")) as {
-      report: {
-        totals: {
-          recordedOutcomes: { value: number };
-          successRate: { value: number };
-          skippedToolMentions: { value: number };
+      schemaVersion: string;
+      command: string;
+      data: {
+        report: {
+          totals: {
+            recordedOutcomes: { value: number };
+            successRate: { value: number };
+            skippedToolMentions: { value: number };
+          };
+          topUsefulTools: Array<{ label: string }>;
+          topNoisyTools: Array<{ label: string }>;
         };
-        topUsefulTools: Array<{ label: string }>;
-        topNoisyTools: Array<{ label: string }>;
       };
     };
 
-    assert.equal(payload.report.totals.recordedOutcomes.value, 1);
-    assert.equal(payload.report.totals.successRate.value, 1);
-    assert.equal(payload.report.totals.skippedToolMentions.value, 1);
-    assert.equal(payload.report.topUsefulTools[0]?.label, "functions.shell_command");
-    assert.equal(payload.report.topNoisyTools[0]?.label, "web.run");
+    assert.equal(payload.schemaVersion, "1.0.0");
+    assert.equal(payload.command, "dashboard routing-efficiency");
+    assert.equal(payload.data.report.totals.recordedOutcomes.value, 1);
+    assert.equal(payload.data.report.totals.successRate.value, 1);
+    assert.equal(payload.data.report.totals.skippedToolMentions.value, 1);
+    assert.equal(payload.data.report.topUsefulTools[0]?.label, "functions.shell_command");
+    assert.equal(payload.data.report.topNoisyTools[0]?.label, "web.run");
     assert.doesNotMatch(result.lines.join("\n"), /choose minimal useful local tools/i);
   } finally {
     repository.close();
