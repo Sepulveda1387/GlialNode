@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { GlialNodeClient, convertSpaceGraphToCytoscape, convertSpaceGraphToDot, type SpaceGraphExportFormat } from "../client/glialnode-client.js";
 import { createId } from "../core/ids.js";
@@ -219,7 +220,7 @@ export function usageText(): string {
     "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
     "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
-    "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format html|json|csv] [dashboard filters...] [--json]",
+    "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format html|json|csv] [--screenshot-output <path>] [--screenshot-width <n>] [--screenshot-height <n>] [dashboard filters...] [--json]",
     "  glialnode dashboard serve --duration-ms <n> --allow-origin <origin[,origin]> [--host 127.0.0.1] [--port 8787] [--probe-path <path>] [--probe-origin <origin>] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
@@ -851,9 +852,25 @@ async function runDashboardCommand(
       const exportKind = parseDashboardExportKind(parsed.flags.kind);
       const exportFormat = parseDashboardExportFormat(parsed.flags.format, exportKind);
       const outputPath = resolve(parseRequiredString(parsed.flags.output, "output"));
+      const screenshotOutput = parsed.flags["screenshot-output"] === undefined
+        ? undefined
+        : resolve(parseRequiredString(parsed.flags["screenshot-output"], "screenshot-output"));
+      const screenshotWidth = parsePositiveOptionalNumber(parsed.flags["screenshot-width"], "screenshot-width");
+      const screenshotHeight = parsePositiveOptionalNumber(parsed.flags["screenshot-height"], "screenshot-height");
+
+      if (screenshotOutput && exportKind !== "dashboard-html") {
+        throw new Error("Dashboard screenshot capture is only supported for --kind dashboard-html.");
+      }
+
       const artifact = await buildDashboardExportArtifact(client, exportKind, exportFormat, options);
       mkdirSync(dirname(outputPath), { recursive: true });
       writeFileSync(outputPath, artifact.content, "utf8");
+      const screenshotPath = screenshotOutput
+        ? await captureDashboardHtmlScreenshot(outputPath, screenshotOutput, {
+            width: screenshotWidth ?? 1440,
+            height: screenshotHeight ?? 900,
+          })
+        : undefined;
 
       if (wantsJson(parsed)) {
         return jsonResult(parsed, {
@@ -861,6 +878,8 @@ async function runDashboardCommand(
           kind: exportKind,
           format: exportFormat,
           outputPath,
+          screenshotPath,
+          screenshotsCaptured: Boolean(screenshotPath),
           bytes: Buffer.byteLength(artifact.content, "utf8"),
         });
       }
@@ -871,6 +890,8 @@ async function runDashboardCommand(
           `kind=${exportKind}`,
           `format=${exportFormat}`,
           `output=${outputPath}`,
+          `screenshot=${screenshotPath ?? ""}`,
+          `screenshotsCaptured=${screenshotPath ? "yes" : "no"}`,
           `bytes=${Buffer.byteLength(artifact.content, "utf8")}`,
         ],
       };
@@ -1008,6 +1029,48 @@ async function buildDashboardExportArtifact(
   return {
     content: `${JSON.stringify({ schemaVersion: "1.0.0", kind, payload }, null, 2)}\n`,
   };
+}
+
+async function captureDashboardHtmlScreenshot(
+  htmlPath: string,
+  screenshotPath: string,
+  viewport: { width: number; height: number },
+): Promise<string> {
+  const runtimeImport = Function("specifier", "return import(specifier);") as (
+    specifier: string,
+  ) => Promise<{ chromium?: { launch?: (options?: { headless?: boolean }) => Promise<{
+    newPage: (options: { viewportSize: { width: number; height: number } }) => Promise<{
+      goto: (url: string, options: { waitUntil: string }) => Promise<void>;
+      screenshot: (options: { path: string; fullPage: boolean; type: "png" }) => Promise<void>;
+    }>;
+    close: () => Promise<void>;
+  }> } }>;
+  const playwrightModule = await runtimeImport("playwright").catch(() => null);
+  if (!playwrightModule || typeof playwrightModule.chromium?.launch !== "function") {
+    throw new Error(
+      "Dashboard screenshot capture requires the 'playwright' package. Install it or omit --screenshot-output.",
+    );
+  }
+
+  mkdirSync(dirname(screenshotPath), { recursive: true });
+  const browser = await playwrightModule.chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewportSize: viewport,
+    });
+    await page.goto(pathToFileURL(htmlPath).toString(), {
+      waitUntil: "networkidle",
+    });
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+      type: "png",
+    });
+  } finally {
+    await browser.close();
+  }
+
+  return screenshotPath;
 }
 
 function formatTokenRoiCsv(report: Awaited<ReturnType<GlialNodeClient["getTokenUsageReport"]>>): string {

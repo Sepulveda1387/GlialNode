@@ -309,6 +309,7 @@ glialnode dashboard recall-quality --json
 glialnode dashboard trust --json
 glialnode dashboard alerts --json
 glialnode dashboard export --kind dashboard-html --format html --output dashboard.html --json
+glialnode dashboard export --kind dashboard-html --format html --output dashboard.html --screenshot-output dashboard.png --screenshot-width 1440 --screenshot-height 900 --json
 glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
 glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 glialnode dashboard export --kind trust --output trust.json --json
@@ -330,6 +331,7 @@ Compatibility notes:
 - Memory health reports include `lifecycleDue.spacesMissingMaintenance`, `lifecycleDue.compactionCandidates`, and `lifecycleDue.retentionCandidates`. These are planner-derived counts only; they do not expose memory text.
 - Operations benchmark baselines are opt-in local files. The dashboard does not run benchmarks automatically.
 - Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
+- Dashboard HTML exports can optionally capture a PNG with `--screenshot-output` when Playwright is installed by the operator or CI environment. Screenshot capture is never required for normal package use.
 - `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
 
 ## Privacy And Access Contract
@@ -423,7 +425,8 @@ Snapshot privacy validation:
 16. Add lifecycle-due memory health detail. Complete for planner-derived compaction/retention candidates and spaces missing maintenance.
 17. Add executive historical trend detail. Complete for recent bucket-level token ROI trend metrics in existing snapshot contracts.
 18. Define OSS vs paid dashboard boundary. Complete for exported capability boundary helpers plus documentation that keeps Supabase/Postgres/team dashboards reserved.
-19. Build the UI from snapshot contracts, not directly from storage tables.
+19. Add optional dashboard screenshot capture. Complete for `dashboard export --kind dashboard-html --screenshot-output <png>` with explicit viewport flags and optional Playwright runtime dependency.
+20. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

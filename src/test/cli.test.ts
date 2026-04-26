@@ -766,7 +766,13 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     const tokenRoiExport = JSON.parse(tokenRoiExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const recallQualityExport = JSON.parse(recallQualityExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const trustExport = JSON.parse(trustExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
-    const dashboardHtmlExport = JSON.parse(dashboardHtmlExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
+    const dashboardHtmlExport = JSON.parse(dashboardHtmlExportResult.lines.join("\n")) as {
+      kind: string;
+      format: string;
+      outputPath: string;
+      screenshotsCaptured: boolean;
+      screenshotPath?: string;
+    };
 
     assert.equal(executive.snapshot.kind, "executive");
     assert.equal(executive.snapshot.value.savedTokens.value, 600);
@@ -804,6 +810,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(JSON.parse(readFileSync(trustJsonPath, "utf8")).kind, "trust");
     assert.equal(dashboardHtmlExport.kind, "dashboard-html");
     assert.equal(dashboardHtmlExport.format, "html");
+    assert.equal(dashboardHtmlExport.screenshotsCaptured, false);
+    assert.equal(dashboardHtmlExport.screenshotPath, undefined);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /GlialNode Dashboard/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Compaction candidates/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Executive Value/);
