@@ -310,6 +310,7 @@ glialnode dashboard export --kind dashboard-html --format html --output dashboar
 glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
 glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 glialnode dashboard export --kind trust --output trust.json --json
+glialnode dashboard serve --duration-ms 30000 --allow-origin http://127.0.0.1:5173 --port 8787 --json
 npm run demo:dashboard
 ```
 
@@ -352,7 +353,33 @@ Local HTTP notes:
 
 - Optional local HTTP dashboard routes must be read-only.
 - Local HTTP mode must declare explicit `allowedOrigins`.
+- The OSS local server binds only to loopback hosts: `127.0.0.1`, `localhost`, or `::1`.
+- CORS is deny-by-default for browser origins. Use `--allow-origin <origin[,origin]>`; wildcard origins are intentionally not supported.
+- The local server auto-shuts down after `--duration-ms` and is intended for local dashboard clients, CI probes, and temporary previews.
 - Hosted team dashboards are intentionally rejected in the OSS privacy contract and reserved for the future paid/Supabase path.
+
+Read-only local HTTP routes:
+
+- `GET /overview`
+- `GET /executive`
+- `GET /spaces`
+- `GET /spaces/:id`
+- `GET /agents`
+- `GET /agents/:id`
+- `GET /metrics/token-usage`
+- `GET /trust`
+- `GET /ops`
+
+Each route returns a JSON envelope:
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-04-24T00:00:00.000Z",
+  "route": "/overview",
+  "data": {}
+}
+```
 
 Snapshot privacy validation:
 
@@ -376,7 +403,7 @@ Snapshot privacy validation:
 12. Add trust/provenance dashboard reporting. Complete for signer posture, trust-pack counts, per-space trust posture, recent provenance events, and policy failure counts.
 13. Add exportable dashboard artifacts. Complete for token ROI CSV/JSON plus memory health, recall quality, trust, and alerts JSON.
 14. Add seeded dashboard fixture/demo dataset. Complete for deterministic synthetic local artifacts via `npm run demo:dashboard`.
-15. Add optional read-only local HTTP routes.
+15. Add optional read-only local HTTP routes. Complete for loopback-only, explicit-origin dashboard API routes.
 16. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07

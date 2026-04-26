@@ -82,6 +82,7 @@ import {
   type TokenUsageReportOptions,
 } from "../metrics/index.js";
 import { renderDashboardHtml } from "../dashboard/html.js";
+import { assertDashboardPrivacyPolicy, createDefaultDashboardPrivacyPolicy } from "../dashboard/privacy.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -219,6 +220,7 @@ export function usageText(): string {
     "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
     "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format html|json|csv] [dashboard filters...] [--json]",
+    "  glialnode dashboard serve --duration-ms <n> --allow-origin <origin[,origin]> [--host 127.0.0.1] [--port 8787] [--probe-path <path>] [--probe-origin <origin>] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -703,6 +705,39 @@ async function runDashboardCommand(
       recentTrustEventLimit: parseOptionalNonNegativeInteger(parsed.flags["recent-trust-events"], "recent-trust-events"),
       operationsBenchmarkBaseline: parseOperationsBenchmarkBaselineFlag(parsed.flags["benchmark-baseline"]),
     };
+
+    if (action === "serve") {
+      const host = parsed.flags.host ?? "127.0.0.1";
+      const allowedOrigins = parseDashboardAllowedOrigins(parsed.flags["allow-origin"]);
+      const result = await serveDashboardApi({
+        client,
+        metricsDatabasePath,
+        buildOptions: options,
+        host,
+        port: parsed.flags.port !== undefined ? parsePortNumber(parsed.flags.port) : 8787,
+        durationMs: parseRequiredPositiveNumber(parsed.flags["duration-ms"], "duration-ms"),
+        allowedOrigins,
+        probePath: parsed.flags["probe-path"],
+        probeOrigin: parsed.flags["probe-origin"],
+      });
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, result);
+      }
+
+      return {
+        lines: [
+          "Dashboard API served.",
+          `baseUrl=${result.baseUrl}`,
+          `host=${result.host}`,
+          `port=${result.port}`,
+          `durationMs=${result.durationMs}`,
+          `allowedOrigins=${result.allowedOrigins.join(",")}`,
+          `probePath=${result.probePath ?? ""}`,
+          `probeStatus=${result.probeStatus ?? ""}`,
+        ],
+      };
+    }
 
     if (action === "memory-health") {
       const report = await client.buildMemoryHealthReport(options);
@@ -4211,6 +4246,393 @@ function readSemanticEvalReport(path: string): SemanticEvalReport {
     throw new Error(`Invalid semantic eval report in ${path}: missing reportId.`);
   }
   return parsed as SemanticEvalReport;
+}
+
+async function serveDashboardApi(options: {
+  client: GlialNodeClient;
+  metricsDatabasePath: string;
+  buildOptions: Parameters<GlialNodeClient["buildDashboardOverviewSnapshot"]>[0];
+  host: string;
+  port: number;
+  durationMs: number;
+  allowedOrigins: readonly string[];
+  probePath?: string;
+  probeOrigin?: string;
+}) {
+  assertLoopbackDashboardHost(options.host);
+  assertDashboardPrivacyPolicy(createDefaultDashboardPrivacyPolicy({
+    accessMode: "local_read_only_http",
+    allowedOrigins: options.allowedOrigins,
+  }));
+
+  const server = createServer((request, response) => {
+    void handleDashboardApiRequest(options, request, response).catch((error: unknown) => {
+      writeDashboardJson(response, 500, {
+        error: {
+          code: "internal_error",
+          message: error instanceof Error ? error.message : "Dashboard API request failed.",
+        },
+      });
+    });
+  });
+
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(options.port, options.host, () => {
+      server.off("error", rejectListen);
+      resolveListen();
+    });
+  });
+
+  try {
+    const address = server.address();
+    const activePort = typeof address === "object" && address ? address.port : options.port;
+    const baseUrl = `http://${formatHostForUrl(options.host)}:${activePort}`;
+    let probeStatus: number | undefined;
+    let probeSchemaVersion: string | undefined;
+    let probeRoute: string | undefined;
+    let probeAllowOrigin: string | null | undefined;
+    if (options.probePath) {
+      const normalizedProbePath = options.probePath.startsWith("/")
+        ? options.probePath
+        : `/${options.probePath}`;
+      const probeResponse = await fetch(`${baseUrl}${normalizedProbePath}`, {
+        headers: options.probeOrigin ? { Origin: options.probeOrigin } : undefined,
+      });
+      probeStatus = probeResponse.status;
+      probeAllowOrigin = probeResponse.headers.get("access-control-allow-origin");
+      const probeText = await probeResponse.text();
+      const probePayload = parseOptionalDashboardProbeJson(probeText);
+      probeSchemaVersion = readStringField(probePayload, "schemaVersion");
+      probeRoute = readStringField(probePayload, "route");
+    }
+
+    await delay(options.durationMs);
+    return {
+      host: options.host,
+      port: activePort,
+      baseUrl,
+      durationMs: options.durationMs,
+      allowedOrigins: [...options.allowedOrigins],
+      routes: [
+        "/overview",
+        "/executive",
+        "/spaces",
+        "/spaces/:id",
+        "/agents",
+        "/agents/:id",
+        "/metrics/token-usage",
+        "/trust",
+        "/ops",
+      ],
+      probePath: options.probePath,
+      probeOrigin: options.probeOrigin,
+      probeStatus,
+      probeSchemaVersion,
+      probeRoute,
+      probeAllowOrigin,
+    };
+  } finally {
+    await new Promise<void>((resolveClose, rejectClose) => {
+      server.close((error) => {
+        if (error) {
+          rejectClose(error);
+          return;
+        }
+        resolveClose();
+      });
+    });
+  }
+}
+
+async function handleDashboardApiRequest(
+  options: {
+    client: GlialNodeClient;
+    metricsDatabasePath: string;
+    buildOptions: Parameters<GlialNodeClient["buildDashboardOverviewSnapshot"]>[0];
+    allowedOrigins: readonly string[];
+  },
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!applyDashboardCors(request, response, options.allowedOrigins)) {
+    writeDashboardJson(response, 403, {
+      error: {
+        code: "origin_not_allowed",
+        message: "Dashboard API origin is not allowed.",
+      },
+    });
+    return;
+  }
+
+  const method = request.method ?? "GET";
+  if (method === "OPTIONS") {
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+  if (method !== "GET" && method !== "HEAD") {
+    writeDashboardJson(response, 405, {
+      error: {
+        code: "method_not_allowed",
+        message: "Dashboard API is read-only and supports GET, HEAD, and OPTIONS only.",
+      },
+    });
+    return;
+  }
+
+  const url = parseDashboardRequestUrl(request.url);
+  if (!url) {
+    writeDashboardJson(response, 400, {
+      error: {
+        code: "invalid_url",
+        message: "Dashboard API request URL could not be parsed.",
+      },
+    }, method);
+    return;
+  }
+
+  const route = normalizeDashboardRoute(url.pathname);
+  const data = await resolveDashboardApiRoute(options.client, options.metricsDatabasePath, options.buildOptions, route);
+  if (!data) {
+    writeDashboardJson(response, 404, {
+      route,
+      error: {
+        code: "not_found",
+        message: "Dashboard API route was not found.",
+      },
+    }, method);
+    return;
+  }
+
+  writeDashboardJson(response, 200, {
+    route,
+    data,
+  }, method);
+}
+
+async function resolveDashboardApiRoute(
+  client: GlialNodeClient,
+  metricsDatabasePath: string,
+  options: Parameters<GlialNodeClient["buildDashboardOverviewSnapshot"]>[0],
+  route: string,
+): Promise<unknown | undefined> {
+  const buildOptions = options ?? {};
+  if (route === "/health") {
+    return {
+      status: "ready",
+      metricsDatabasePath,
+    };
+  }
+  if (route === "/overview") {
+    return {
+      metricsDatabasePath,
+      snapshot: await client.buildDashboardOverviewSnapshot(buildOptions),
+    };
+  }
+  if (route === "/executive") {
+    return {
+      metricsDatabasePath,
+      snapshot: await client.buildExecutiveDashboardSnapshot(buildOptions),
+    };
+  }
+  if (route === "/ops" || route === "/operations") {
+    return {
+      metricsDatabasePath,
+      snapshot: await client.buildOperationsDashboardSnapshot(buildOptions),
+    };
+  }
+  if (route === "/spaces") {
+    const spaces = await client.listSpaces();
+    return {
+      spaces: spaces.map(formatDashboardSpaceSummary),
+    };
+  }
+  if (route.startsWith("/spaces/")) {
+    const spaceId = decodeDashboardRouteId(route.slice("/spaces/".length));
+    if (!spaceId) return undefined;
+    const space = (await client.listSpaces()).find((entry) => entry.id === spaceId);
+    if (!space) return undefined;
+    return {
+      space: formatDashboardSpaceSummary(space),
+      snapshot: await client.buildSpaceDashboardSnapshot(spaceId, buildOptions),
+    };
+  }
+  if (route === "/agents") {
+    const agents = await listDashboardAgents(client);
+    return { agents };
+  }
+  if (route.startsWith("/agents/")) {
+    const agentId = decodeDashboardRouteId(route.slice("/agents/".length));
+    if (!agentId) return undefined;
+    return {
+      agentId,
+      snapshot: await client.buildAgentDashboardSnapshot(agentId, buildOptions),
+    };
+  }
+  if (route === "/metrics/token-usage") {
+    return {
+      metricsDatabasePath,
+      report: await client.getTokenUsageReport(buildOptions.tokenUsage),
+    };
+  }
+  if (route === "/trust") {
+    return {
+      report: await client.buildTrustDashboardReport(buildOptions),
+    };
+  }
+  return undefined;
+}
+
+async function listDashboardAgents(client: GlialNodeClient): Promise<Array<{
+  id: string;
+  spaceId: string;
+  type: string;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}>> {
+  const spaces = await client.listSpaces();
+  const scoped = await Promise.all(spaces.map(async (space) => client.listScopes(space.id)));
+  return scoped
+    .flat()
+    .filter((scope) => scope.type === "agent")
+    .map((scope) => ({
+      id: scope.id,
+      spaceId: scope.spaceId,
+      type: scope.type,
+      label: scope.label ?? "",
+      createdAt: scope.createdAt,
+      updatedAt: scope.updatedAt,
+    }));
+}
+
+function formatDashboardSpaceSummary(space: MemorySpace): {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  return {
+    id: space.id,
+    name: space.name,
+    createdAt: space.createdAt,
+    updatedAt: space.updatedAt,
+  };
+}
+
+function writeDashboardJson(
+  response: ServerResponse,
+  statusCode: number,
+  payload: unknown,
+  method = "GET",
+): void {
+  const body = `${JSON.stringify({
+    schemaVersion: CLI_JSON_CONTRACT_VERSION,
+    generatedAt: new Date().toISOString(),
+    ...payload as Record<string, unknown>,
+  }, null, 2)}\n`;
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store");
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
+function applyDashboardCors(
+  request: IncomingMessage,
+  response: ServerResponse,
+  allowedOrigins: readonly string[],
+): boolean {
+  response.setHeader("Vary", "Origin");
+  response.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Access-Control-Max-Age", "300");
+
+  const origin = request.headers.origin;
+  if (!origin) {
+    return true;
+  }
+  if (!allowedOrigins.includes(origin)) {
+    return false;
+  }
+  response.setHeader("Access-Control-Allow-Origin", origin);
+  return true;
+}
+
+function parseDashboardRequestUrl(value: string | undefined): URL | null {
+  try {
+    return new URL(value ?? "/", "http://127.0.0.1");
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDashboardRoute(pathname: string): string {
+  const normalized = pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+  return normalized || "/";
+}
+
+function decodeDashboardRouteId(value: string): string | undefined {
+  const decoded = safelyDecodeUriComponent(value);
+  return decoded && decoded.trim().length > 0 ? decoded : undefined;
+}
+
+function parseDashboardAllowedOrigins(value: string | undefined): readonly string[] {
+  const origins = parseCsvFlag(value) ?? [];
+  if (origins.length === 0) {
+    throw new Error("Missing required flag --allow-origin for local dashboard HTTP mode.");
+  }
+  for (const origin of origins) {
+    assertHttpOrigin(origin);
+  }
+  return origins;
+}
+
+function assertHttpOrigin(origin: string): void {
+  if (origin === "null") {
+    return;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error(`Invalid --allow-origin value: ${origin}`);
+  }
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error(`Invalid --allow-origin value: ${origin}`);
+  }
+}
+
+function assertLoopbackDashboardHost(host: string): void {
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    throw new Error("Dashboard API host must be a loopback address: 127.0.0.1, localhost, or ::1.");
+  }
+}
+
+function formatHostForUrl(host: string): string {
+  return host.includes(":") ? `[${host}]` : host;
+}
+
+function parseOptionalDashboardProbeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function readStringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
 }
 
 async function serveInspectorPackDirectory(options: {

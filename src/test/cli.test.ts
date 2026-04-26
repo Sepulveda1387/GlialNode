@@ -799,6 +799,174 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
   }
 });
 
+test("CLI dashboard serve exposes a read-only local JSON API with explicit CORS", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-dashboard-serve-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const spaceResult = await runCommand(
+      parseArgs(["space", "create", "--name", "Dashboard API Space"]),
+      { repository, databasePath },
+    );
+    const spaceId = spaceResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(spaceId);
+
+    const scopeResult = await runCommand(
+      parseArgs(["scope", "add", "--space-id", spaceId, "--type", "agent", "--label", "api-agent"]),
+      { repository, databasePath },
+    );
+    const scopeId = scopeResult.lines.find((line) => line.startsWith("id="))?.slice(3);
+    assert.ok(scopeId);
+
+    await runCommand(
+      parseArgs([
+        "memory",
+        "add",
+        "--space-id",
+        spaceId,
+        "--scope-id",
+        scopeId,
+        "--scope-type",
+        "agent",
+        "--tier",
+        "mid",
+        "--kind",
+        "fact",
+        "--content",
+        "Dashboard API private fixture memory.",
+        "--summary",
+        "Dashboard API fixture",
+      ]),
+      { repository, databasePath },
+    );
+
+    await runCommand(
+      parseArgs([
+        "metrics",
+        "token-record",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--agent-id",
+        scopeId,
+        "--operation",
+        "memory.recall",
+        "--model",
+        "gpt-test",
+        "--baseline-tokens",
+        "700",
+        "--actual-context-tokens",
+        "300",
+        "--input-tokens",
+        "300",
+        "--output-tokens",
+        "80",
+      ]),
+      { repository, databasePath },
+    );
+
+    const allowedOrigin = "http://127.0.0.1:4173";
+    const servedResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "serve",
+        "--duration-ms",
+        "25",
+        "--port",
+        "0",
+        "--allow-origin",
+        allowedOrigin,
+        "--probe-origin",
+        allowedOrigin,
+        "--probe-path",
+        "/overview",
+        "--metrics-db",
+        metricsPath,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const served = JSON.parse(servedResult.lines.join("\n")) as {
+      baseUrl: string;
+      allowedOrigins: string[];
+      routes: string[];
+      probeStatus: number;
+      probeSchemaVersion: string;
+      probeRoute: string;
+      probeAllowOrigin: string;
+    };
+
+    assert.match(served.baseUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.deepEqual(served.allowedOrigins, [allowedOrigin]);
+    assert.ok(served.routes.includes("/overview"));
+    assert.ok(served.routes.includes("/metrics/token-usage"));
+    assert.equal(served.probeStatus, 200);
+    assert.equal(served.probeSchemaVersion, "1.0.0");
+    assert.equal(served.probeRoute, "/overview");
+    assert.equal(served.probeAllowOrigin, allowedOrigin);
+
+    const blockedOriginResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "serve",
+        "--duration-ms",
+        "25",
+        "--port",
+        "0",
+        "--allow-origin",
+        allowedOrigin,
+        "--probe-origin",
+        "http://example.test",
+        "--probe-path",
+        "/overview",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const blockedOrigin = JSON.parse(blockedOriginResult.lines.join("\n")) as {
+      probeStatus: number;
+      probeSchemaVersion: string;
+      probeAllowOrigin: string | null;
+    };
+    assert.equal(blockedOrigin.probeStatus, 403);
+    assert.equal(blockedOrigin.probeSchemaVersion, "1.0.0");
+    assert.equal(blockedOrigin.probeAllowOrigin, null);
+
+    await assert.rejects(
+      () => runCommand(
+        parseArgs(["dashboard", "serve", "--duration-ms", "1", "--port", "0", "--json"]),
+        { repository, databasePath },
+      ),
+      /allow-origin/,
+    );
+    await assert.rejects(
+      () => runCommand(
+        parseArgs([
+          "dashboard",
+          "serve",
+          "--duration-ms",
+          "1",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "0",
+          "--allow-origin",
+          allowedOrigin,
+          "--json",
+        ]),
+        { repository, databasePath },
+      ),
+      /loopback/,
+    );
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI doctor reports runtime and registry health in JSON", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-doctor-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");
