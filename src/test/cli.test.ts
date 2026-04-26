@@ -555,6 +555,83 @@ test("CLI execution-context records outcomes and recommends from metrics databas
   }
 });
 
+test("CLI dashboard routing-efficiency emits metrics-only JSON", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-routing-dashboard-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    await runCommand(
+      parseArgs([
+        "execution-context",
+        "record-outcome",
+        "--task",
+        "choose minimal useful local tools",
+        "--repo-id",
+        "GlialNode",
+        "--project-id",
+        "routing",
+        "--selected-skills",
+        "typescript",
+        "--selected-tools",
+        "functions.shell_command",
+        "--skipped-tools",
+        "web.run",
+        "--outcome",
+        "success",
+        "--latency-ms",
+        "40",
+        "--tool-call-count",
+        "2",
+        "--input-tokens",
+        "300",
+        "--output-tokens",
+        "90",
+        "--metrics-db",
+        metricsPath,
+      ]),
+      { repository, databasePath },
+    );
+
+    const result = await runCommand(
+      parseArgs([
+        "dashboard",
+        "routing-efficiency",
+        "--metrics-db",
+        metricsPath,
+        "--project-id",
+        "routing",
+        "--include-expired",
+        "true",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const payload = JSON.parse(result.lines.join("\n")) as {
+      report: {
+        totals: {
+          recordedOutcomes: { value: number };
+          successRate: { value: number };
+          skippedToolMentions: { value: number };
+        };
+        topUsefulTools: Array<{ label: string }>;
+        topNoisyTools: Array<{ label: string }>;
+      };
+    };
+
+    assert.equal(payload.report.totals.recordedOutcomes.value, 1);
+    assert.equal(payload.report.totals.successRate.value, 1);
+    assert.equal(payload.report.totals.skippedToolMentions.value, 1);
+    assert.equal(payload.report.topUsefulTools[0]?.label, "functions.shell_command");
+    assert.equal(payload.report.topNoisyTools[0]?.label, "web.run");
+    assert.doesNotMatch(result.lines.join("\n"), /choose minimal useful local tools/i);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("CLI dashboard overview emits schema-versioned JSON snapshots", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-dashboard-"));
   const databasePath = join(tempDirectory, "glialnode.sqlite");

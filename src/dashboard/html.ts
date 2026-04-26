@@ -344,6 +344,10 @@ export function renderDashboardHtml(input: DashboardHtmlInput): string {
         ${formatRankedItems(input.executive.insights?.topRoi ?? [], "No token ROI telemetry has been recorded for this scope yet.")}
       </ol></section>
 
+      <section class="panel"><h2>Routing Efficiency</h2><div class="rows">
+        ${formatRoutingEfficiencyRows(input.executive)}
+      </div></section>
+
       <section class="panel"><h2>Top Risk</h2><ol class="ranked-list">
         ${formatRankedItems(input.executive.insights?.topRisk ?? [], "No memory risk signals crossed the dashboard threshold.")}
       </ol></section>
@@ -432,6 +436,25 @@ function formatBenchmarkBaselineRows(operations: OperationsDashboardSnapshot): s
     row("Bundle median", formatMillisecondsMetric(baseline.bundleBuildMs)),
     row("Compaction dry-run", formatMillisecondsMetric(baseline.compactionDryRunMs)),
     row("Report median", formatMillisecondsMetric(baseline.reportMs)),
+  ].join("\n");
+}
+
+function formatRoutingEfficiencyRows(executive: ExecutiveDashboardSnapshot): string {
+  const routing = executive.routing;
+  if (!routing) {
+    return row("Status", "No execution-context routing telemetry attached");
+  }
+
+  return [
+    row("Recorded outcomes", formatMetric(routing.totals.recordedOutcomes)),
+    row("Success rate", formatRatio(routing.totals.successRate.value ?? undefined)),
+    row("Skipped tool mentions", formatMetric(routing.totals.skippedToolMentions)),
+    row("Average latency", formatMillisecondsMetric(routing.totals.averageLatencyMs)),
+    row("Average tool calls", formatMetric(routing.totals.averageToolCalls)),
+    row("Observed input tokens", formatMetric(routing.totals.observedInputTokens)),
+    row("Failed-path input tokens", formatMetric(routing.totals.failedPathInputTokens)),
+    row("Top useful tools", routing.topUsefulTools.map((entry) => entry.label).join(", ") || "None"),
+    row("Top noisy tools", routing.topNoisyTools.map((entry) => entry.label).join(", ") || "None"),
   ].join("\n");
 }
 

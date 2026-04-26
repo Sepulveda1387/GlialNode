@@ -231,6 +231,94 @@ test("GlialNodeClient builds executive and memory health dashboard reports", asy
   }
 });
 
+test("GlialNodeClient builds execution-context routing efficiency reports", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-routing-"));
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    metrics: {
+      filename: join(tempDirectory, "glialnode.metrics.sqlite"),
+    },
+  });
+
+  try {
+    await client.recordExecutionOutcome({
+      taskText: "Fix macOS SQLite verification failure.",
+      scope: {
+        repoId: "glialnode",
+        projectId: "dashboard",
+        agentId: "codex",
+      },
+      features: ["ci", "sqlite"],
+      selectedSkills: ["typescript"],
+      selectedTools: ["functions.shell_command", "functions.apply_patch"],
+      skippedTools: ["web.run"],
+      outcome: {
+        state: "success",
+        latencyMs: 80,
+        toolCallCount: 3,
+        inputTokens: 1000,
+        outputTokens: 200,
+      },
+      confidence: "high",
+      createdAt: "2026-04-24T00:00:00.000Z",
+      retentionDays: 30,
+    });
+    await client.recordExecutionOutcome({
+      taskText: "Fix macOS SQLite verification failure.",
+      scope: {
+        repoId: "glialnode",
+        projectId: "dashboard",
+        agentId: "codex",
+      },
+      features: ["ci", "sqlite"],
+      selectedTools: ["web.run"],
+      outcome: {
+        state: "failed",
+        latencyMs: 140,
+        toolCallCount: 5,
+        inputTokens: 700,
+        outputTokens: 50,
+      },
+      confidence: "low",
+      createdAt: "2026-04-24T01:00:00.000Z",
+      retentionDays: 30,
+    });
+
+    const report = await client.buildExecutionContextRoutingReport({
+      executionContext: {
+        projectId: "dashboard",
+        agentId: "codex",
+        includeExpired: false,
+        now: "2026-04-25T00:00:00.000Z",
+      },
+    });
+    const executive = await client.buildExecutiveDashboardSnapshot({
+      executionContext: {
+        projectId: "dashboard",
+        agentId: "codex",
+        now: "2026-04-25T00:00:00.000Z",
+      },
+    });
+
+    assert.equal(report.schemaVersion, DASHBOARD_SNAPSHOT_SCHEMA_VERSION);
+    assert.equal(report.totals.recordedOutcomes.value, 2);
+    assert.equal(report.totals.successRate.value, 0.5);
+    assert.equal(report.totals.skippedToolMentions.value, 1);
+    assert.equal(report.totals.averageLatencyMs.value, 110);
+    assert.equal(report.totals.failedPathInputTokens.value, 700);
+    assert.equal(report.topUsefulTools[0]?.label, "functions.apply_patch");
+    assert.equal(report.topNoisyTools[0]?.label, "web.run");
+    assert.equal(report.topUsefulSkills[0]?.label, "typescript");
+    assert.equal(executive.routing?.totals.recordedOutcomes.value, 2);
+    assert.doesNotMatch(JSON.stringify(report), /Fix macOS SQLite verification failure/i);
+    assert.doesNotThrow(() => assertDashboardSnapshot(executive));
+    assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(executive));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("GlialNodeClient builds operations dashboard snapshots", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-operations-"));
   const client = new GlialNodeClient({

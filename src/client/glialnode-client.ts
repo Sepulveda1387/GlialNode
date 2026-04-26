@@ -48,6 +48,7 @@ import type {
 import {
   buildAgentDashboardSnapshot as buildAgentDashboardSnapshotContract,
   buildDashboardOverviewSnapshot as buildDashboardOverviewSnapshotContract,
+  buildDashboardExecutionContextRoutingReport,
   buildDashboardMemoryHealthReport,
   buildExecutiveDashboardSnapshot as buildExecutiveDashboardSnapshotContract,
   buildOperationsDashboardSnapshot as buildOperationsDashboardSnapshotContract,
@@ -57,6 +58,7 @@ import {
   evaluateDashboardAlerts as evaluateDashboardAlertsContract,
   type DashboardAlertEvaluation,
   type DashboardAlertThresholdOverrides,
+  type DashboardExecutionContextRoutingReport,
   type DashboardMemoryHealthReport,
   type DashboardOverviewSnapshot,
   type DashboardRecallQualityReport,
@@ -172,12 +174,14 @@ export interface DashboardSnapshotBuildOptions {
   staleFreshnessThreshold?: number;
   latestBackupAt?: string;
   tokenUsage?: TokenUsageReportOptions;
+  executionContext?: ExecutionContextRecordFilters;
   alertThresholds?: DashboardAlertThresholdOverrides;
   maxTopRecalled?: number;
   maxNeverRecalled?: number;
   presetDirectory?: string;
   recentTrustEventLimit?: number;
   operationsBenchmarkBaseline?: OperationsDashboardBenchmarkBaselineInput;
+  maxRoutingInsights?: number;
 }
 
 export interface CreateSpaceInput {
@@ -956,9 +960,10 @@ export class GlialNodeClient {
   async buildExecutiveDashboardSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<ExecutiveDashboardSnapshot> {
     const spaces = await this.repository.listSpaces();
     const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
-    const [tokenUsageReport, tokenUsageRecords, topRisk] = await Promise.all([
+    const [tokenUsageReport, tokenUsageRecords, executionContextRecords, topRisk] = await Promise.all([
       this.getDashboardTokenUsageReport(options.tokenUsage),
       this.getDashboardTokenUsageRecords(options.tokenUsage),
+      this.getDashboardExecutionContextRecords(options),
       this.buildExecutiveSpaceRiskInsights(spaces, options),
     ]);
 
@@ -969,6 +974,7 @@ export class GlialNodeClient {
       memoryHealth: memory.health,
       tokenUsageReport,
       tokenUsageRecords,
+      executionContextRecords,
       topRisk,
       storageBytes: this.getMemoryDatabaseBytes(),
       latestBackupAt: options.latestBackupAt,
@@ -1061,6 +1067,22 @@ export class GlialNodeClient {
       trustedSigners: this.listTrustedSigners(options.presetDirectory),
       trustPolicyPacks: this.listTrustPolicyPacks(options.presetDirectory),
       recentEventLimit,
+    });
+  }
+
+  async buildExecutionContextRoutingReport(
+    options: DashboardSnapshotBuildOptions = {},
+  ): Promise<DashboardExecutionContextRoutingReport> {
+    const records = await this.getDashboardExecutionContextRecords(options);
+    return buildDashboardExecutionContextRoutingReport(records, {
+      scope: options.executionContext
+        ? {
+            projectId: options.executionContext.projectId,
+            workflowId: options.executionContext.workflowId,
+            agentId: options.executionContext.agentId,
+          }
+        : undefined,
+      maxInsights: options.maxRoutingInsights,
     });
   }
 
@@ -2765,6 +2787,28 @@ export class GlialNodeClient {
       return [];
     }
     return this.listTokenUsage(options);
+  }
+
+  private async getDashboardExecutionContextRecords(
+    options: DashboardSnapshotBuildOptions = {},
+  ): Promise<ExecutionContextRecord[]> {
+    if (this.metricsOptions.disabled) {
+      return [];
+    }
+
+    const filters: ExecutionContextRecordFilters = {
+      projectId: options.executionContext?.projectId ?? options.tokenUsage?.projectId,
+      workflowId: options.executionContext?.workflowId ?? options.tokenUsage?.workflowId,
+      agentId: options.executionContext?.agentId ?? options.tokenUsage?.agentId,
+      outcomeState: options.executionContext?.outcomeState,
+      fingerprintHash: options.executionContext?.fingerprintHash,
+      from: options.executionContext?.from ?? options.tokenUsage?.from,
+      to: options.executionContext?.to ?? options.tokenUsage?.to,
+      includeExpired: options.executionContext?.includeExpired,
+      now: options.executionContext?.now,
+      limit: options.executionContext?.limit,
+    };
+    return this.listExecutionContextRecords(filters);
   }
 
   private async buildExecutiveSpaceRiskInsights(

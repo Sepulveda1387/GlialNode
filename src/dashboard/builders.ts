@@ -1,4 +1,5 @@
 import type { TokenUsageRecord, TokenUsageReport } from "../metrics/repository.js";
+import type { ExecutionContextRecord } from "../execution-context/index.js";
 import {
   assertDashboardSnapshot,
   createUnavailableDashboardMetric,
@@ -10,8 +11,10 @@ import {
   type OperationsDashboardSnapshot,
   type DashboardSnapshotScope,
   type DashboardSnapshotWarning,
+  type DashboardExecutionContextRoutingReport,
 } from "./schema.js";
 import { assertDashboardSnapshotPrivacy } from "./privacy.js";
+import { buildDashboardExecutionContextRoutingReport } from "./routing-efficiency.js";
 
 export interface BuildDashboardOverviewSnapshotInput {
   readonly generatedAt?: string;
@@ -66,6 +69,8 @@ export interface BuildExecutiveDashboardSnapshotInput extends BuildDashboardOver
   readonly memoryHealth: DashboardMemoryHealthInput;
   readonly trustPostureScore?: number;
   readonly tokenUsageRecords?: readonly TokenUsageRecord[];
+  readonly executionContextRecords?: readonly ExecutionContextRecord[];
+  readonly routingReport?: DashboardExecutionContextRoutingReport;
   readonly topRisk?: readonly ExecutiveDashboardRankedItem[];
   readonly maxInsights?: number;
 }
@@ -168,6 +173,14 @@ export function buildExecutiveDashboardSnapshot(
   const netSavings = savedCostMetric(input.tokenUsageReport, "Net savings");
   const memoryHealth = buildDashboardMemoryHealthReport(input.memoryHealth);
   const criticalWarnings = input.warnings?.filter((warning) => warning.severity === "critical").length ?? 0;
+  const routing = input.routingReport ?? buildDashboardExecutionContextRoutingReport(
+    input.executionContextRecords ?? [],
+    {
+      scope: input.scope,
+      generatedAt: input.generatedAt,
+      maxInsights: input.maxInsights,
+    },
+  );
   const snapshot: ExecutiveDashboardSnapshot = {
     schemaVersion: DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
     kind: "executive",
@@ -204,6 +217,7 @@ export function buildExecutiveDashboardSnapshot(
       topRoi: buildTopRoiInsights(input.tokenUsageRecords ?? [], input.maxInsights ?? 5),
       topRisk: (input.topRisk ?? []).slice(0, Math.max(0, input.maxInsights ?? 5)),
     },
+    routing,
   };
 
   assertDashboardSnapshot(snapshot);

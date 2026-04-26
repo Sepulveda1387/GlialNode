@@ -234,7 +234,8 @@ export function usageText(): string {
     "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
     "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
-    "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format html|json|csv] [--screenshot-output <path>] [--screenshot-width <n>] [--screenshot-height <n>] [dashboard filters...] [--json]",
+    "  glialnode dashboard routing-efficiency [--metrics-db <path>] [--metrics-disabled true|false] [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--outcome success|partial|failed|unknown] [--include-expired true|false] [--from <iso>] [--to <iso>] [--limit <n>] [--max-routing-insights <n>] [--json]",
+    "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|routing-efficiency|alerts --output <path> [--format html|json|csv] [--screenshot-output <path>] [--screenshot-width <n>] [--screenshot-height <n>] [dashboard filters...] [--json]",
     "  glialnode dashboard serve --duration-ms <n> --allow-origin <origin[,origin]> [--host 127.0.0.1] [--port 8787] [--probe-path <path>] [--probe-origin <origin>] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
@@ -833,12 +834,14 @@ async function runDashboardCommand(
       staleFreshnessThreshold: parseOptionalNonNegativeNumber(parsed.flags["stale-freshness-threshold"], "stale-freshness-threshold"),
       latestBackupAt: parsed.flags["latest-backup-at"],
       tokenUsage: parseTokenUsageReportOptions(parsed.flags),
+      executionContext: parseExecutionContextRecordFilters(parsed.flags),
       alertThresholds: parseDashboardAlertThresholdFlags(parsed.flags),
       maxTopRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-top-recalled"], "max-top-recalled"),
       maxNeverRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-never-recalled"], "max-never-recalled"),
       presetDirectory: parsed.flags["preset-directory"],
       recentTrustEventLimit: parseOptionalNonNegativeInteger(parsed.flags["recent-trust-events"], "recent-trust-events"),
       operationsBenchmarkBaseline: parseOperationsBenchmarkBaselineFlag(parsed.flags["benchmark-baseline"]),
+      maxRoutingInsights: parsePositiveOptionalNumber(parsed.flags["max-routing-insights"], "max-routing-insights"),
     };
 
     if (action === "serve") {
@@ -982,6 +985,34 @@ async function runDashboardCommand(
       };
     }
 
+    if (action === "routing-efficiency") {
+      const report = await client.buildExecutionContextRoutingReport(options);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          report,
+        });
+      }
+
+      return {
+        lines: [
+          `schemaVersion=${report.schemaVersion}`,
+          `metricsDatabase=${metricsDatabasePath}`,
+          `recordedOutcomes=${report.totals.recordedOutcomes.value ?? ""}`,
+          `successRate=${report.totals.successRate.value ?? ""}`,
+          `skippedToolMentions=${report.totals.skippedToolMentions.value ?? ""}`,
+          `averageLatencyMs=${report.totals.averageLatencyMs.value ?? ""}`,
+          `averageToolCalls=${report.totals.averageToolCalls.value ?? ""}`,
+          `observedInputTokens=${report.totals.observedInputTokens.value ?? ""}`,
+          `failedPathInputTokens=${report.totals.failedPathInputTokens.value ?? ""}`,
+          `topUsefulTools=${report.topUsefulTools.length}`,
+          `topNoisyTools=${report.topNoisyTools.length}`,
+          `topUsefulSkills=${report.topUsefulSkills.length}`,
+        ],
+      };
+    }
+
     if (action === "export") {
       const exportKind = parseDashboardExportKind(parsed.flags.kind);
       const exportFormat = parseDashboardExportFormat(parsed.flags.format, exportKind);
@@ -1093,6 +1124,9 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
       `savedCost=${snapshot.value.savedCost.value ?? ""}`,
       `memoryHealthScore=${snapshot.risk.memoryHealthScore.value ?? ""}`,
       `openCriticalWarnings=${snapshot.risk.openCriticalWarnings.value ?? ""}`,
+      `routingOutcomes=${snapshot.routing?.totals.recordedOutcomes.value ?? ""}`,
+      `routingSuccessRate=${snapshot.routing?.totals.successRate.value ?? ""}`,
+      `routingSkippedTools=${snapshot.routing?.totals.skippedToolMentions.value ?? ""}`,
     ];
   }
 
@@ -1107,7 +1141,7 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
   ];
 }
 
-type DashboardExportKind = "dashboard-html" | "token-roi" | "memory-health" | "recall-quality" | "trust" | "alerts";
+type DashboardExportKind = "dashboard-html" | "token-roi" | "memory-health" | "recall-quality" | "trust" | "routing-efficiency" | "alerts";
 type DashboardExportFormat = "html" | "json" | "csv";
 
 async function buildDashboardExportArtifact(
@@ -1158,6 +1192,8 @@ async function buildDashboardExportArtifact(
     ? await client.buildRecallQualityReport(options)
     : kind === "trust"
     ? await client.buildTrustDashboardReport(options)
+    : kind === "routing-efficiency"
+    ? await client.buildExecutionContextRoutingReport(options)
     : await client.evaluateDashboardAlerts(options);
 
   return {
@@ -1260,6 +1296,7 @@ function parseDashboardExportKind(value: string | undefined): DashboardExportKin
     value === "memory-health" ||
     value === "recall-quality" ||
     value === "trust" ||
+    value === "routing-efficiency" ||
     value === "alerts"
   ) {
     return value;
@@ -4273,7 +4310,9 @@ function parseExecutionContextRecordFilters(flags: Record<string, string>): Exec
     outcomeState: flags.outcome ? parseExecutionOutcomeState(flags.outcome) : undefined,
     from: flags.from,
     to: flags.to,
-    includeExpired: parseOptionalBoolean(flags["include-expired"]) ?? false,
+    includeExpired: flags["include-expired"] !== undefined
+      ? parseOptionalBoolean(flags["include-expired"]) ?? false
+      : undefined,
     limit: parsePositiveOptionalNumber(flags.limit, "limit"),
   };
 }
@@ -4620,6 +4659,7 @@ async function serveDashboardApi(options: {
         "/agents",
         "/agents/:id",
         "/metrics/token-usage",
+        "/metrics/routing-efficiency",
         "/trust",
         "/ops",
       ],
@@ -4772,6 +4812,12 @@ async function resolveDashboardApiRoute(
     return {
       metricsDatabasePath,
       report: await client.getTokenUsageReport(buildOptions.tokenUsage),
+    };
+  }
+  if (route === "/metrics/routing-efficiency" || route === "/routing-efficiency") {
+    return {
+      metricsDatabasePath,
+      report: await client.buildExecutionContextRoutingReport(buildOptions),
     };
   }
   if (route === "/trust") {

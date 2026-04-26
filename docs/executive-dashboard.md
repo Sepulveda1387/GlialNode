@@ -30,6 +30,7 @@ This is a planning and product contract only. It does not introduce metrics stor
 | Recall quality | CPO | Are agents retrieving useful context efficiently? | `memory recall`, `memory trace`, `memory bundle`, semantic eval report | Recall usage telemetry, latency, bundle-size tracking |
 | Trust posture | COO | Are imported artifacts and provenance decisions safe? | Trust packs, snapshot/bundle validation, provenance events | Trust dashboard snapshot with unresolved-review states |
 | Operations | COO, operator | Is the local runtime healthy? | `status`, `doctor`, storage contract, schema version, benchmark docs | Alert thresholds and backup/export freshness model |
+| Routing efficiency | CEO, CPO, operator | Are agents choosing the minimal useful tools and avoiding noisy paths? | Execution-context outcome records in metrics DB | Freshness/degrade scoring for changing tool inventories |
 | Space and agent activity | CEO, CPO | Which spaces/workflows are active and valuable? | Spaces, scopes, records, events, inspector index | Project/agent/workflow IDs in metrics records |
 | Storage growth | COO | Is local storage growing predictably? | SQLite path/size from diagnostics, graph/report counts | Metrics DB size reporting and retention policy |
 | Roadmap/release posture | CEO, operator | Is this ready to publish or announce? | `release readiness`, roadmap gates, CI status | Optional release snapshot export |
@@ -194,6 +195,9 @@ interface DashboardCostModelMetadata {
 | Estimated saved tokens | `tokens` | `estimated` | `metrics_store` | Must disclose baseline method |
 | Cost per model | `currency` | `configured` | `cost_model` | Operator-provided; pricing can become stale |
 | Estimated saved cost | `currency` | `estimated` | `metrics_store` and `cost_model` | Requires token estimate plus cost model metadata |
+| Routing success rate | `ratio` | `measured` | `metrics_store` | From execution-context outcome states only |
+| Skipped tool mentions | `count` | `measured` | `metrics_store` | Counts skipped/noisy tools recorded in execution-context outcomes |
+| Failed-path input tokens | `tokens` | `measured` | `metrics_store` | Token exposure recorded for failed execution-context outcomes |
 | Schema up-to-date | `count` or boolean | `computed` | `doctor_status` | Deterministic from runtime diagnostics |
 | Release readiness | `count` or status | `computed` | `release_readiness` | Based on explicit readiness report |
 
@@ -270,6 +274,13 @@ Executive snapshots may include an additive `insights` section:
 
 The `trends` array includes aggregate KPIs plus recent bucket-level token ROI metrics when the caller requests `day`, `week`, or `month` granularity. Bucket trend metrics carry the same estimate-basis and cost-model provenance as the aggregate ROI metrics.
 
+Executive snapshots may also include an additive `routing` section from execution-context outcomes:
+
+- `routing.totals.recordedOutcomes`, `successfulOutcomes`, `partialOutcomes`, and `failedOutcomes` summarize recorded route results.
+- `routing.totals.successRate`, `averageLatencyMs`, `averageToolCalls`, `observedInputTokens`, `observedOutputTokens`, `failedPathInputTokens`, and `lowConfidenceRatio` are measured from metrics-only outcome counters.
+- `routing.topUsefulTools`, `routing.topNoisyTools`, and `routing.topUsefulSkills` rank metadata-only tool/skill IDs. They do not include task text, command output, prompts, completions, or memory content.
+- Routing metrics should be interpreted as operational signals, not proof of exact savings. They show observed path quality and waste exposure; true saved-time/saved-token claims require explicit baselines.
+
 Operations snapshots may include an additive `performance.benchmarkBaseline` section when a local benchmark JSON file is supplied. This section uses the largest dataset result in the baseline file and reports search, recall, bundle, compaction dry-run, and report median timings.
 
 Validation helpers:
@@ -289,6 +300,7 @@ Builder APIs:
 - `client.buildOperationsDashboardSnapshot()`
 - `client.buildRecallQualityReport()`
 - `client.buildTrustDashboardReport()`
+- `client.buildExecutionContextRoutingReport()`
 - `client.evaluateDashboardAlerts()`
 - `buildDashboardOverviewSnapshot(input)`
 - `buildSpaceDashboardSnapshot(input)`
@@ -307,12 +319,14 @@ glialnode dashboard operations --benchmark-baseline docs/benchmarks/latest.json 
 glialnode dashboard memory-health --json
 glialnode dashboard recall-quality --json
 glialnode dashboard trust --json
+glialnode dashboard routing-efficiency --json
 glialnode dashboard alerts --json
 glialnode dashboard export --kind dashboard-html --format html --output dashboard.html --json
 glialnode dashboard export --kind dashboard-html --format html --output dashboard.html --screenshot-output dashboard.png --screenshot-width 1440 --screenshot-height 900 --json
 glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
 glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 glialnode dashboard export --kind trust --output trust.json --json
+glialnode dashboard export --kind routing-efficiency --output routing-efficiency.json --json
 glialnode dashboard serve --duration-ms 30000 --allow-origin http://127.0.0.1:5173 --port 8787 --json
 npm run demo:dashboard
 ```
@@ -326,11 +340,12 @@ Compatibility notes:
 - Alert evaluations are foreground/read-only; the OSS package does not run a background alert daemon.
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
+- Routing efficiency reports are metadata-only: execution-context fingerprints, outcome states, selected/skipped tool IDs, skill IDs, first-read paths, counters, and confidence labels without raw task text.
 - Executive dashboard insights are additive to schema version `1.0.0` and safe for older consumers to ignore.
 - Executive dashboard trend metrics include recent bucket-level saved token/cost values when token metrics are requested with day/week/month granularity.
 - Memory health reports include `lifecycleDue.spacesMissingMaintenance`, `lifecycleDue.compactionCandidates`, and `lifecycleDue.retentionCandidates`. These are planner-derived counts only; they do not expose memory text.
 - Operations benchmark baselines are opt-in local files. The dashboard does not run benchmarks automatically.
-- Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
+- Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, `routing-efficiency`, and `alerts` support JSON.
 - Dashboard HTML exports can optionally capture a PNG with `--screenshot-output` when Playwright is installed by the operator or CI environment. Screenshot capture is never required for normal package use.
 - `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
 
@@ -385,6 +400,7 @@ Read-only local HTTP routes:
 - `GET /agents`
 - `GET /agents/:id`
 - `GET /metrics/token-usage`
+- `GET /metrics/routing-efficiency`
 - `GET /trust`
 - `GET /ops`
 
@@ -426,7 +442,8 @@ Snapshot privacy validation:
 17. Add executive historical trend detail. Complete for recent bucket-level token ROI trend metrics in existing snapshot contracts.
 18. Define OSS vs paid dashboard boundary. Complete for exported capability boundary helpers plus documentation that keeps Supabase/Postgres/team dashboards reserved.
 19. Add optional dashboard screenshot capture. Complete for `dashboard export --kind dashboard-html --screenshot-output <png>` with explicit viewport flags and optional Playwright runtime dependency.
-20. Build the UI from snapshot contracts, not directly from storage tables.
+20. Add routing efficiency reporting. Complete for execution-context outcome dashboard report, executive snapshot field, CLI JSON/export, local HTML panel, and local HTTP route.
+21. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

@@ -143,9 +143,10 @@ export interface ExecutiveDashboardSnapshot extends DashboardSnapshotBase {
     readonly topRoi: readonly ExecutiveDashboardRankedItem[];
     readonly topRisk: readonly ExecutiveDashboardRankedItem[];
   };
+  readonly routing?: DashboardExecutionContextRoutingReport;
 }
 
-export type ExecutiveDashboardInsightCategory = "space" | "agent" | "project" | "workflow" | "operation" | "risk";
+export type ExecutiveDashboardInsightCategory = "space" | "agent" | "project" | "workflow" | "operation" | "risk" | "tool" | "skill";
 
 export interface ExecutiveDashboardRankedItem {
   readonly key: string;
@@ -154,6 +155,30 @@ export interface ExecutiveDashboardRankedItem {
   readonly metric: DashboardMetric<number>;
   readonly secondaryMetric?: DashboardMetric<number>;
   readonly notes: readonly string[];
+}
+
+export interface DashboardExecutionContextRoutingReport {
+  readonly schemaVersion: DashboardSnapshotSchemaVersion;
+  readonly generatedAt: string;
+  readonly scope?: DashboardSnapshotScope;
+  readonly totals: {
+    readonly recordedOutcomes: DashboardMetric<number>;
+    readonly successfulOutcomes: DashboardMetric<number>;
+    readonly partialOutcomes: DashboardMetric<number>;
+    readonly failedOutcomes: DashboardMetric<number>;
+    readonly successRate: DashboardMetric<number>;
+    readonly skippedToolMentions: DashboardMetric<number>;
+    readonly averageLatencyMs: DashboardMetric<number>;
+    readonly averageToolCalls: DashboardMetric<number>;
+    readonly observedInputTokens: DashboardMetric<number>;
+    readonly observedOutputTokens: DashboardMetric<number>;
+    readonly failedPathInputTokens: DashboardMetric<number>;
+    readonly lowConfidenceRatio: DashboardMetric<number>;
+  };
+  readonly topUsefulTools: readonly ExecutiveDashboardRankedItem[];
+  readonly topNoisyTools: readonly ExecutiveDashboardRankedItem[];
+  readonly topUsefulSkills: readonly ExecutiveDashboardRankedItem[];
+  readonly warnings: readonly DashboardSnapshotWarning[];
 }
 
 export interface ProductDashboardSnapshot extends DashboardSnapshotBase {
@@ -293,6 +318,9 @@ export function assertDashboardSnapshot(snapshot: DashboardSnapshot): void {
     snapshot.trends.forEach(assertDashboardMetric);
     snapshot.insights?.topRoi.forEach(assertDashboardRankedItem);
     snapshot.insights?.topRisk.forEach(assertDashboardRankedItem);
+    if (snapshot.routing) {
+      assertDashboardExecutionContextRoutingReport(snapshot.routing);
+    }
     return;
   }
 
@@ -309,6 +337,19 @@ export function assertDashboardSnapshot(snapshot: DashboardSnapshot): void {
   if (snapshot.performance) {
     assertOperationsDashboardBenchmarkSummary(snapshot.performance.benchmarkBaseline);
   }
+}
+
+export function assertDashboardExecutionContextRoutingReport(
+  report: DashboardExecutionContextRoutingReport,
+): void {
+  assertDashboardSnapshotVersion(report);
+  if (report.generatedAt.trim().length === 0) {
+    throw new ValidationError("Dashboard routing report generatedAt is required.");
+  }
+  assertMetricGroup(report.totals);
+  report.topUsefulTools.forEach(assertDashboardRankedItem);
+  report.topNoisyTools.forEach(assertDashboardRankedItem);
+  report.topUsefulSkills.forEach(assertDashboardRankedItem);
 }
 
 function assertMetricGroup(group: Record<string, DashboardMetric<unknown>>): void {
