@@ -324,6 +324,7 @@ Compatibility notes:
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
 - Executive dashboard insights are additive to schema version `1.0.0` and safe for older consumers to ignore.
+- Memory health reports include `lifecycleDue.spacesMissingMaintenance`, `lifecycleDue.compactionCandidates`, and `lifecycleDue.retentionCandidates`. These are planner-derived counts only; they do not expose memory text.
 - Operations benchmark baselines are opt-in local files. The dashboard does not run benchmarks automatically.
 - Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
 - `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
@@ -404,7 +405,8 @@ Snapshot privacy validation:
 13. Add exportable dashboard artifacts. Complete for token ROI CSV/JSON plus memory health, recall quality, trust, and alerts JSON.
 14. Add seeded dashboard fixture/demo dataset. Complete for deterministic synthetic local artifacts via `npm run demo:dashboard`.
 15. Add optional read-only local HTTP routes. Complete for loopback-only, explicit-origin dashboard API routes.
-16. Build the UI from snapshot contracts, not directly from storage tables.
+16. Add lifecycle-due memory health detail. Complete for planner-derived compaction/retention candidates and spaces missing maintenance.
+17. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

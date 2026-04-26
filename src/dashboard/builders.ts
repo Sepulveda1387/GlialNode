@@ -39,6 +39,9 @@ export interface DashboardMemoryHealthInput {
   readonly supersededRecords: number;
   readonly expiredRecords: number;
   readonly provenanceSummaryCount: number;
+  readonly spacesMissingMaintenance?: number;
+  readonly compactionCandidates?: number;
+  readonly retentionCandidates?: number;
   readonly latestMaintenanceAt?: string;
 }
 
@@ -50,6 +53,11 @@ export interface DashboardMemoryHealthReport {
   readonly supersededRecords: DashboardMetric<number>;
   readonly expiredRecords: DashboardMetric<number>;
   readonly provenanceSummaryCount: DashboardMetric<number>;
+  readonly lifecycleDue: {
+    readonly spacesMissingMaintenance: DashboardMetric<number>;
+    readonly compactionCandidates: DashboardMetric<number>;
+    readonly retentionCandidates: DashboardMetric<number>;
+  };
   readonly healthScore: DashboardMetric<number>;
   readonly latestMaintenanceAt: DashboardMetric<string>;
 }
@@ -267,6 +275,11 @@ export function buildDashboardMemoryHealthReport(input: DashboardMemoryHealthInp
     supersededRecords: computedCountMetric("Superseded records", input.supersededRecords),
     expiredRecords: computedCountMetric("Expired records", input.expiredRecords),
     provenanceSummaryCount: computedCountMetric("Provenance summaries", input.provenanceSummaryCount),
+    lifecycleDue: {
+      spacesMissingMaintenance: computedCountMetric("Spaces missing maintenance", input.spacesMissingMaintenance ?? 0),
+      compactionCandidates: computedCountMetric("Compaction candidates", input.compactionCandidates ?? 0),
+      retentionCandidates: computedCountMetric("Retention candidates", input.retentionCandidates ?? 0),
+    },
     healthScore: computedMetric("Memory health score", healthScore, "percent", "memory_report"),
     latestMaintenanceAt: input.latestMaintenanceAt === undefined
       ? createUnavailableDashboardMetric("Latest maintenance", {

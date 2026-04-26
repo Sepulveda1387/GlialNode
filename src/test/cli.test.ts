@@ -541,6 +541,12 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
         "Executive dashboard CLI memory.",
         "--summary",
         "Executive dashboard fact",
+        "--importance",
+        "0.1",
+        "--confidence",
+        "0.2",
+        "--freshness",
+        "0.2",
       ]),
       { repository, databasePath },
     );
@@ -735,7 +741,15 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       };
     };
     const memoryHealth = JSON.parse(memoryHealthResult.lines.join("\n")) as {
-      report: { activeRecords: { value: number }; healthScore: { value: number } };
+      report: {
+        activeRecords: { value: number };
+        lifecycleDue: {
+          spacesMissingMaintenance: { value: number };
+          compactionCandidates: { value: number };
+          retentionCandidates: { value: number };
+        };
+        healthScore: { value: number };
+      };
     };
     const alerts = JSON.parse(alertsResult.lines.join("\n")) as {
       evaluation: { summary: { total: number; highestSeverity: string }; alerts: Array<{ code: string }> };
@@ -765,6 +779,9 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(operations.snapshot.performance?.benchmarkBaseline.records.value, 1000);
     assert.equal(operations.snapshot.performance?.benchmarkBaseline.searchMs.value, 12);
     assert.equal(memoryHealth.report.activeRecords.value, 1);
+    assert.equal(memoryHealth.report.lifecycleDue.spacesMissingMaintenance.value, 1);
+    assert.equal(memoryHealth.report.lifecycleDue.compactionCandidates.value, 1);
+    assert.equal(memoryHealth.report.lifecycleDue.retentionCandidates.value, 0);
     assert.ok(memoryHealth.report.healthScore.value > 0);
     assert.equal(alerts.evaluation.summary.highestSeverity, "critical");
     assert.ok(alerts.evaluation.alerts.some((alert) => alert.code === "memory_health_critical"));
@@ -788,6 +805,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(dashboardHtmlExport.kind, "dashboard-html");
     assert.equal(dashboardHtmlExport.format, "html");
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /GlialNode Dashboard/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Compaction candidates/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Executive Value/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top ROI/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top Risk/);

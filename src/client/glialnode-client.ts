@@ -984,8 +984,8 @@ export class GlialNodeClient {
       schemaVersion: latestSchemaVersion,
       databaseBytes: this.getMemoryDatabaseBytes(),
       lastMaintenanceAt: memory.health.latestMaintenanceAt,
-      pendingCompactions: memory.health.staleRecords,
-      pendingRetentionActions: memory.health.expiredRecords,
+      pendingCompactions: memory.health.compactionCandidates,
+      pendingRetentionActions: memory.health.retentionCandidates,
       doctorStatus: criticalWarnings > 0 ? "attention" : "ready",
       latestBackupAt: options.latestBackupAt,
       criticalWarnings,
@@ -2808,6 +2808,9 @@ export class GlialNodeClient {
       supersededRecords: number;
       expiredRecords: number;
       provenanceSummaryCount: number;
+      spacesMissingMaintenance: number;
+      compactionCandidates: number;
+      retentionCandidates: number;
       latestMaintenanceAt?: string;
     };
   }> {
@@ -2819,22 +2822,36 @@ export class GlialNodeClient {
     let supersededRecords = 0;
     let expiredRecords = 0;
     let provenanceSummaryCount = 0;
+    let spacesMissingMaintenance = 0;
+    let compactionCandidates = 0;
+    let retentionCandidates = 0;
     let latestMaintenanceAt: string | undefined;
     let maintenanceDue = false;
 
     for (const spaceId of spaceIds) {
-      const [records, report] = await Promise.all([
+      const [records, report, space] = await Promise.all([
         this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER),
         this.repository.getSpaceReport(spaceId, 1),
+        this.repository.getSpace(spaceId),
       ]);
+      const activeSpaceRecords = records.filter((record) => record.status === "active");
+      const compactionPlan = planCompaction(records, space?.settings?.compaction);
+      const retentionPlan = planRetention(records, space?.settings?.retentionDays);
 
-      activeRecords += records.filter((record) => record.status === "active").length;
-      staleRecords += records.filter((record) => record.status === "active" && record.freshness <= staleFreshnessThreshold).length;
-      lowConfidenceRecords += records.filter((record) => record.status === "active" && record.confidence <= 0.4).length;
+      activeRecords += activeSpaceRecords.length;
+      staleRecords += activeSpaceRecords.filter((record) => record.freshness <= staleFreshnessThreshold).length;
+      lowConfidenceRecords += activeSpaceRecords.filter((record) => record.confidence <= 0.4).length;
       archivedRecords += report.recordsByStatus.archived ?? 0;
       supersededRecords += report.recordsByStatus.superseded ?? 0;
       expiredRecords += report.recordsByStatus.expired ?? 0;
       provenanceSummaryCount += report.provenanceSummaryCount;
+      spacesMissingMaintenance += report.maintenance.latestRunAt ? 0 : 1;
+      compactionCandidates += compactionPlan.promoted.length
+        + compactionPlan.archived.length
+        + compactionPlan.refreshed.length
+        + compactionPlan.distilled.length
+        + compactionPlan.superseded.length;
+      retentionCandidates += retentionPlan.expired.length;
       latestMaintenanceAt = maxIsoTimestamp(latestMaintenanceAt, report.maintenance.latestRunAt);
       maintenanceDue = maintenanceDue || !report.maintenance.latestRunAt;
     }
@@ -2851,6 +2868,9 @@ export class GlialNodeClient {
         supersededRecords,
         expiredRecords,
         provenanceSummaryCount,
+        spacesMissingMaintenance,
+        compactionCandidates,
+        retentionCandidates,
         latestMaintenanceAt,
       },
     };

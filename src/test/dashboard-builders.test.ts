@@ -181,6 +181,7 @@ test("GlialNodeClient builds executive and memory health dashboard reports", asy
       kind: "fact",
       content: "Low confidence dashboard memory.",
       summary: "Low confidence dashboard memory",
+      importance: 0.1,
       confidence: 0.2,
       freshness: 0.2,
     });
@@ -217,6 +218,9 @@ test("GlialNodeClient builds executive and memory health dashboard reports", asy
     assert.ok((executive.risk.memoryHealthScore.value ?? 0) < 100);
     assert.equal(health.lowConfidenceRecords.value, 1);
     assert.equal(health.staleRecords.value, 1);
+    assert.equal(health.lifecycleDue.spacesMissingMaintenance.value, 1);
+    assert.ok((health.lifecycleDue.compactionCandidates.value ?? 0) >= 1);
+    assert.equal(health.lifecycleDue.retentionCandidates.value, 0);
     assert.doesNotThrow(() => assertDashboardSnapshot(executive));
     assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(executive));
   } finally {

@@ -355,6 +355,9 @@ export function renderDashboardHtml(input: DashboardHtmlInput): string {
         ${row("Archived records", formatMetric(input.memoryHealth.archivedRecords))}
         ${row("Superseded records", formatMetric(input.memoryHealth.supersededRecords))}
         ${row("Expired records", formatMetric(input.memoryHealth.expiredRecords))}
+        ${row("Spaces missing maintenance", formatMetric(input.memoryHealth.lifecycleDue.spacesMissingMaintenance))}
+        ${row("Compaction candidates", formatMetric(input.memoryHealth.lifecycleDue.compactionCandidates))}
+        ${row("Retention candidates", formatMetric(input.memoryHealth.lifecycleDue.retentionCandidates))}
         ${row("Latest maintenance", formatMetric(input.memoryHealth.latestMaintenanceAt))}
       </div></section>
 
