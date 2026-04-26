@@ -53,12 +53,14 @@ import {
   buildOperationsDashboardSnapshot as buildOperationsDashboardSnapshotContract,
   buildSpaceDashboardSnapshot as buildSpaceDashboardSnapshotContract,
   buildDashboardRecallQualityReport,
+  buildDashboardTrustReport,
   evaluateDashboardAlerts as evaluateDashboardAlertsContract,
   type DashboardAlertEvaluation,
   type DashboardAlertThresholdOverrides,
   type DashboardMemoryHealthReport,
   type DashboardOverviewSnapshot,
   type DashboardRecallQualityReport,
+  type DashboardTrustReport,
   type ExecutiveDashboardSnapshot,
   type OperationsDashboardSnapshot,
 } from "../dashboard/index.js";
@@ -168,6 +170,8 @@ export interface DashboardSnapshotBuildOptions {
   alertThresholds?: DashboardAlertThresholdOverrides;
   maxTopRecalled?: number;
   maxNeverRecalled?: number;
+  presetDirectory?: string;
+  recentTrustEventLimit?: number;
 }
 
 export interface CreateSpaceInput {
@@ -1018,6 +1022,24 @@ export class GlialNodeClient {
       tokenUsage: options.tokenUsage,
       maxTopRecalled: options.maxTopRecalled,
       maxNeverRecalled: options.maxNeverRecalled,
+    });
+  }
+
+  async buildTrustDashboardReport(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardTrustReport> {
+    const spaces = await this.repository.listSpaces();
+    const recentEventLimit = options.recentTrustEventLimit ?? 20;
+    const reports = await Promise.all(
+      spaces.map(async (space) => ({
+        space,
+        report: await this.repository.getSpaceReport(space.id, recentEventLimit),
+      })),
+    );
+
+    return buildDashboardTrustReport({
+      spaces: reports,
+      trustedSigners: this.listTrustedSigners(options.presetDirectory),
+      trustPolicyPacks: this.listTrustPolicyPacks(options.presetDirectory),
+      recentEventLimit,
     });
   }
 

@@ -618,8 +618,19 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const trustResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "trust",
+        "--recent-trust-events",
+        "5",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
     const tokenRoiCsvPath = join(tempDirectory, "token-roi.csv");
     const recallQualityJsonPath = join(tempDirectory, "recall-quality.json");
+    const trustJsonPath = join(tempDirectory, "trust.json");
     const tokenRoiExportResult = await runCommand(
       parseArgs([
         "dashboard",
@@ -654,6 +665,20 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const trustExportResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "export",
+        "--kind",
+        "trust",
+        "--output",
+        trustJsonPath,
+        "--recent-trust-events",
+        "5",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
 
     const executive = JSON.parse(executiveResult.lines.join("\n")) as {
       snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
@@ -673,8 +698,12 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
         topRecalled: Array<{ recordId: string; count: number }>;
       };
     };
+    const trust = JSON.parse(trustResult.lines.join("\n")) as {
+      report: { totals: { spaces: number; trustedSigners: number; provenanceEvents: number } };
+    };
     const tokenRoiExport = JSON.parse(tokenRoiExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const recallQualityExport = JSON.parse(recallQualityExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
+    const trustExport = JSON.parse(trustExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
 
     assert.equal(executive.snapshot.kind, "executive");
     assert.equal(executive.snapshot.value.savedTokens.value, 600);
@@ -690,6 +719,9 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(recallQuality.report.totals.measuredLatencyRequests, 1);
     assert.equal(recallQuality.report.totals.p50LatencyMs, 42);
     assert.equal(recallQuality.report.topRecalled[0]?.recordId, recalledRecordId);
+    assert.equal(trust.report.totals.spaces, 1);
+    assert.equal(trust.report.totals.trustedSigners, 0);
+    assert.equal(trust.report.totals.provenanceEvents, 0);
     assert.equal(tokenRoiExport.kind, "token-roi");
     assert.equal(tokenRoiExport.format, "csv");
     assert.match(readFileSync(tokenRoiCsvPath, "utf8"), /estimated_saved_tokens/);
@@ -697,6 +729,9 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(recallQualityExport.kind, "recall-quality");
     assert.equal(recallQualityExport.format, "json");
     assert.equal(JSON.parse(readFileSync(recallQualityJsonPath, "utf8")).kind, "recall-quality");
+    assert.equal(trustExport.kind, "trust");
+    assert.equal(trustExport.format, "json");
+    assert.equal(JSON.parse(readFileSync(trustJsonPath, "utf8")).kind, "trust");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

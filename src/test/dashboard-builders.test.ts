@@ -420,3 +420,85 @@ test("GlialNodeClient builds recall quality reports from metrics-only telemetry"
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient builds trust dashboard reports from registry and provenance metadata", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-trust-"));
+  const presetDirectory = join(tempDirectory, "presets");
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    presetDirectory,
+  });
+
+  try {
+    const space = await client.createSpace({
+      name: "Trust Dashboard Space",
+      settings: {
+        provenance: {
+          trustProfile: "anchored",
+          trustedSignerNames: ["team-anchor"],
+        },
+      },
+    });
+    const signingKey = client.generateSigningKey("team-key", {
+      signer: "GlialNode Test",
+      directory: presetDirectory,
+    });
+    client.trustSigningKey("team-key", {
+      trustName: "team-anchor",
+      directory: presetDirectory,
+    });
+    client.registerTrustPolicyPack("strict-anchor", {
+      directory: presetDirectory,
+      baseProfile: "anchored",
+      policy: {
+        trustedSignerNames: ["team-anchor"],
+      },
+    });
+    client.revokeTrustedSigner("team-anchor", {
+      directory: presetDirectory,
+      replacedBy: "team-anchor-v2",
+    });
+    const auditScope = await client.addScope({
+      spaceId: space.id,
+      type: "memory_space",
+      label: "Trust Audit",
+    });
+
+    await client.addEvent({
+      spaceId: space.id,
+      scope: { type: auditScope.type, id: auditScope.id },
+      actorType: "system",
+      actorId: "trust-dashboard-test",
+      type: "bundle_reviewed",
+      summary: "Reviewed preset bundle for dashboard trust report.",
+      payload: {
+        trustProfile: "anchored",
+        trusted: false,
+        signer: signingKey.signer,
+        origin: "local-test",
+        matchedTrustedSignerNames: ["team-anchor"],
+        warnings: ["Trusted signer was revoked."],
+      },
+    });
+
+    const report = await client.buildTrustDashboardReport({
+      presetDirectory,
+      recentTrustEventLimit: 5,
+    });
+
+    assert.equal(report.schemaVersion, DASHBOARD_SNAPSHOT_SCHEMA_VERSION);
+    assert.equal(report.totals.spaces, 1);
+    assert.equal(report.totals.spacesWithTrustProfile, 1);
+    assert.equal(report.totals.trustedSigners, 1);
+    assert.equal(report.totals.revokedTrustedSigners, 1);
+    assert.equal(report.totals.rotatedTrustedSigners, 1);
+    assert.equal(report.totals.trustPolicyPacks, 1);
+    assert.equal(report.totals.policyFailureEvents, 1);
+    assert.equal(report.spaces[0]?.trustProfile, "anchored");
+    assert.equal(report.recentTrustEvents[0]?.trusted, false);
+    assert.equal(report.recentTrustEvents[0]?.warningCount, 1);
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});

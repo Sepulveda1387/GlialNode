@@ -215,8 +215,9 @@ export function usageText(): string {
     "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--json]",
     "  glialnode dashboard memory-health [--stale-freshness-threshold <0..1>] [--json]",
     "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
+    "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
-    "  glialnode dashboard export --kind token-roi|memory-health|recall-quality|alerts --output <path> [--format json|csv] [dashboard filters...] [--json]",
+    "  glialnode dashboard export --kind token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format json|csv] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -697,6 +698,8 @@ async function runDashboardCommand(
       alertThresholds: parseDashboardAlertThresholdFlags(parsed.flags),
       maxTopRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-top-recalled"], "max-top-recalled"),
       maxNeverRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-never-recalled"], "max-never-recalled"),
+      presetDirectory: parsed.flags["preset-directory"],
+      recentTrustEventLimit: parseOptionalNonNegativeInteger(parsed.flags["recent-trust-events"], "recent-trust-events"),
     };
 
     if (action === "memory-health") {
@@ -773,6 +776,33 @@ async function runDashboardCommand(
           `compactVsFullUsageRatio=${report.totals.compactVsFullUsageRatio ?? ""}`,
           `topRecalled=${report.topRecalled.length}`,
           `neverRecalledCandidates=${report.neverRecalledCandidates.length}`,
+        ],
+      };
+    }
+
+    if (action === "trust") {
+      const report = await client.buildTrustDashboardReport(options);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          report,
+        });
+      }
+
+      return {
+        lines: [
+          `schemaVersion=${report.schemaVersion}`,
+          `metricsDatabase=${metricsDatabasePath}`,
+          `spaces=${report.totals.spaces}`,
+          `spacesWithTrustProfile=${report.totals.spacesWithTrustProfile}`,
+          `spacesNeedingTrustReview=${report.totals.spacesNeedingTrustReview}`,
+          `provenanceEvents=${report.totals.provenanceEvents}`,
+          `trustedSigners=${report.totals.trustedSigners}`,
+          `activeTrustedSigners=${report.totals.activeTrustedSigners}`,
+          `revokedTrustedSigners=${report.totals.revokedTrustedSigners}`,
+          `trustPolicyPacks=${report.totals.trustPolicyPacks}`,
+          `policyFailureEvents=${report.totals.policyFailureEvents}`,
         ],
       };
     }
@@ -879,7 +909,7 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
   ];
 }
 
-type DashboardExportKind = "token-roi" | "memory-health" | "recall-quality" | "alerts";
+type DashboardExportKind = "token-roi" | "memory-health" | "recall-quality" | "trust" | "alerts";
 type DashboardExportFormat = "json" | "csv";
 
 async function buildDashboardExportArtifact(
@@ -905,6 +935,8 @@ async function buildDashboardExportArtifact(
     ? await client.buildMemoryHealthReport(options)
     : kind === "recall-quality"
     ? await client.buildRecallQualityReport(options)
+    : kind === "trust"
+    ? await client.buildTrustDashboardReport(options)
     : await client.evaluateDashboardAlerts(options);
 
   return {
@@ -959,7 +991,7 @@ function escapeCsvField(value: string): string {
 }
 
 function parseDashboardExportKind(value: string | undefined): DashboardExportKind {
-  if (value === "token-roi" || value === "memory-health" || value === "recall-quality" || value === "alerts") {
+  if (value === "token-roi" || value === "memory-health" || value === "recall-quality" || value === "trust" || value === "alerts") {
     return value;
   }
   throw new Error(`Invalid --kind value: ${value ?? ""}`);
