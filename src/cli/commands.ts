@@ -213,6 +213,8 @@ export function usageText(): string {
     "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard agent --agent-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--json]",
+    "  glialnode dashboard memory-health [--stale-freshness-threshold <0..1>] [--json]",
+    "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -690,7 +692,58 @@ async function runDashboardCommand(
       staleFreshnessThreshold: parseOptionalNonNegativeNumber(parsed.flags["stale-freshness-threshold"], "stale-freshness-threshold"),
       latestBackupAt: parsed.flags["latest-backup-at"],
       tokenUsage: parseTokenUsageReportOptions(parsed.flags),
+      alertThresholds: parseDashboardAlertThresholdFlags(parsed.flags),
     };
+
+    if (action === "memory-health") {
+      const report = await client.buildMemoryHealthReport(options);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          report,
+        });
+      }
+
+      return {
+        lines: [
+          `metricsDatabase=${metricsDatabasePath}`,
+          `activeRecords=${report.activeRecords.value ?? ""}`,
+          `staleRecords=${report.staleRecords.value ?? ""}`,
+          `lowConfidenceRecords=${report.lowConfidenceRecords.value ?? ""}`,
+          `archivedRecords=${report.archivedRecords.value ?? ""}`,
+          `supersededRecords=${report.supersededRecords.value ?? ""}`,
+          `expiredRecords=${report.expiredRecords.value ?? ""}`,
+          `provenanceSummaryCount=${report.provenanceSummaryCount.value ?? ""}`,
+          `healthScore=${report.healthScore.value ?? ""}`,
+          `latestMaintenanceAt=${report.latestMaintenanceAt.value ?? ""}`,
+        ],
+      };
+    }
+
+    if (action === "alerts") {
+      const evaluation = await client.evaluateDashboardAlerts(options);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          evaluation,
+        });
+      }
+
+      return {
+        lines: [
+          `schemaVersion=${evaluation.schemaVersion}`,
+          `metricsDatabase=${metricsDatabasePath}`,
+          `alerts=${evaluation.summary.total}`,
+          `critical=${evaluation.summary.critical}`,
+          `warning=${evaluation.summary.warning}`,
+          `info=${evaluation.summary.info}`,
+          `highestSeverity=${evaluation.summary.highestSeverity}`,
+          ...evaluation.alerts.map((alert) => `alert=${alert.severity}:${alert.code}:${alert.message}`),
+        ],
+      };
+    }
 
     const snapshot = action === "overview"
       ? await client.buildDashboardOverviewSnapshot(options)
@@ -3646,6 +3699,21 @@ function parseTokenUsageReportOptions(flags: Record<string, string>): TokenUsage
     from: flags.from,
     to: flags.to,
     costModel: parseTokenCostModel(flags),
+  };
+}
+
+function parseDashboardAlertThresholdFlags(flags: Record<string, string>) {
+  return {
+    memoryHealthWarningBelow: parseOptionalNonNegativeNumber(flags["memory-health-warning-below"], "memory-health-warning-below"),
+    memoryHealthCriticalBelow: parseOptionalNonNegativeNumber(flags["memory-health-critical-below"], "memory-health-critical-below"),
+    staleRecordWarningRatio: parseOptionalRatio(flags["stale-record-warning-ratio"], "stale-record-warning-ratio"),
+    staleRecordCriticalRatio: parseOptionalRatio(flags["stale-record-critical-ratio"], "stale-record-critical-ratio"),
+    lowConfidenceWarningRatio: parseOptionalRatio(flags["low-confidence-warning-ratio"], "low-confidence-warning-ratio"),
+    lowConfidenceCriticalRatio: parseOptionalRatio(flags["low-confidence-critical-ratio"], "low-confidence-critical-ratio"),
+    backupWarningAgeHours: parseOptionalNonNegativeNumber(flags["backup-warning-age-hours"], "backup-warning-age-hours"),
+    backupCriticalAgeHours: parseOptionalNonNegativeNumber(flags["backup-critical-age-hours"], "backup-critical-age-hours"),
+    databaseWarningBytes: parseOptionalNonNegativeNumber(flags["database-warning-bytes"], "database-warning-bytes"),
+    databaseCriticalBytes: parseOptionalNonNegativeNumber(flags["database-critical-bytes"], "database-critical-bytes"),
   };
 }
 

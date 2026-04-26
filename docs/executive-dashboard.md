@@ -273,9 +273,14 @@ Builder APIs:
 - `client.buildDashboardOverviewSnapshot()`
 - `client.buildSpaceDashboardSnapshot(spaceId)`
 - `client.buildAgentDashboardSnapshot(agentId)`
+- `client.buildExecutiveDashboardSnapshot()`
+- `client.buildMemoryHealthReport()`
+- `client.buildOperationsDashboardSnapshot()`
+- `client.evaluateDashboardAlerts()`
 - `buildDashboardOverviewSnapshot(input)`
 - `buildSpaceDashboardSnapshot(input)`
 - `buildAgentDashboardSnapshot(input)`
+- `evaluateDashboardAlerts(input)`
 
 CLI JSON:
 
@@ -285,6 +290,8 @@ glialnode dashboard executive --json
 glialnode dashboard space --space-id <space-id> --json
 glialnode dashboard agent --agent-id <agent-id> --json
 glialnode dashboard operations --json
+glialnode dashboard memory-health --json
+glialnode dashboard alerts --json
 ```
 
 Compatibility notes:
@@ -293,6 +300,7 @@ Compatibility notes:
 - Missing values must use `value: null` and `confidence: "unavailable"` instead of pretending the value is zero.
 - Estimated values must include `provenance.estimateBasis.assumptions`.
 - Snapshot builders validate the schema and privacy contract before returning JSON.
+- Alert evaluations are foreground/read-only; the OSS package does not run a background alert daemon.
 
 ## Privacy And Access Contract
 
@@ -338,8 +346,9 @@ Snapshot privacy validation:
 7. Add aggregate reporting APIs. Complete for day/week/month/all token ROI reports.
 8. Add dashboard snapshot builders. Complete for overview, space, and agent connector snapshots.
 9. Expand dashboard snapshot builders. Complete for executive and operations snapshots, plus memory health report API.
-10. Add optional read-only local HTTP routes.
-11. Build the UI from snapshot contracts, not directly from storage tables.
+10. Add dashboard alert threshold model. Complete for memory health, maintenance, backup freshness, and database size thresholds.
+11. Add optional read-only local HTTP routes.
+12. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

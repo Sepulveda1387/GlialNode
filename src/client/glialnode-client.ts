@@ -52,6 +52,9 @@ import {
   buildExecutiveDashboardSnapshot as buildExecutiveDashboardSnapshotContract,
   buildOperationsDashboardSnapshot as buildOperationsDashboardSnapshotContract,
   buildSpaceDashboardSnapshot as buildSpaceDashboardSnapshotContract,
+  evaluateDashboardAlerts as evaluateDashboardAlertsContract,
+  type DashboardAlertEvaluation,
+  type DashboardAlertThresholdOverrides,
   type DashboardMemoryHealthReport,
   type DashboardOverviewSnapshot,
   type ExecutiveDashboardSnapshot,
@@ -160,6 +163,7 @@ export interface DashboardSnapshotBuildOptions {
   staleFreshnessThreshold?: number;
   latestBackupAt?: string;
   tokenUsage?: TokenUsageReportOptions;
+  alertThresholds?: DashboardAlertThresholdOverrides;
 }
 
 export interface CreateSpaceInput {
@@ -977,6 +981,22 @@ export class GlialNodeClient {
             },
           ]
         : [],
+    });
+  }
+
+  async evaluateDashboardAlerts(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardAlertEvaluation> {
+    const spaces = await this.repository.listSpaces();
+    const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
+    const memoryHealth = buildDashboardMemoryHealthReport(memory.health);
+    const databaseBytes = this.getMemoryDatabaseBytes();
+
+    return evaluateDashboardAlertsContract({
+      memoryHealth,
+      maintenanceDue: memory.maintenanceDue,
+      criticalWarnings: memory.maintenanceDue ? 1 : 0,
+      latestBackupAt: options.latestBackupAt,
+      databaseBytes,
+      thresholds: options.alertThresholds,
     });
   }
 

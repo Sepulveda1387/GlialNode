@@ -9,6 +9,7 @@ import {
   GlialNodeClient,
   assertDashboardSnapshot,
   assertDashboardSnapshotPrivacy,
+  evaluateDashboardAlerts,
 } from "../index.js";
 
 test("GlialNodeClient builds dashboard overview snapshots from memory and token metrics", async () => {
@@ -247,6 +248,67 @@ test("GlialNodeClient builds operations dashboard snapshots", async () => {
     assert.equal(operations.reliability.latestBackupAt.value, "2026-04-24T00:00:00.000Z");
     assert.doesNotThrow(() => assertDashboardSnapshot(operations));
     assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(operations));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard alerts evaluate memory health and operations thresholds", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-alerts-"));
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    metrics: {
+      filename: join(tempDirectory, "glialnode.metrics.sqlite"),
+    },
+  });
+
+  try {
+    const space = await client.createSpace({ name: "Alert Dashboard Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "operator",
+    });
+
+    await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Low quality dashboard memory.",
+      summary: "Low quality dashboard memory",
+      confidence: 0.1,
+      freshness: 0.1,
+    });
+
+    const evaluation = await client.evaluateDashboardAlerts({
+      alertThresholds: {
+        memoryHealthWarningBelow: 95,
+        memoryHealthCriticalBelow: 80,
+        staleRecordWarningRatio: 0.1,
+        staleRecordCriticalRatio: 0.8,
+        lowConfidenceWarningRatio: 0.1,
+        lowConfidenceCriticalRatio: 0.8,
+      },
+    });
+
+    assert.equal(evaluation.schemaVersion, DASHBOARD_SNAPSHOT_SCHEMA_VERSION);
+    assert.equal(evaluation.summary.highestSeverity, "critical");
+    assert.ok(evaluation.alerts.some((alert) => alert.code === "memory_health_critical"));
+    assert.ok(evaluation.alerts.some((alert) => alert.code === "stale_memory_critical"));
+    assert.ok(evaluation.alerts.some((alert) => alert.code === "low_confidence_memory_critical"));
+    assert.ok(evaluation.alerts.some((alert) => alert.code === "maintenance_due"));
+
+    const standalone = evaluateDashboardAlerts({
+      memoryHealth: await client.buildMemoryHealthReport(),
+      maintenanceDue: false,
+      thresholds: {
+        databaseWarningBytes: 1,
+      },
+      databaseBytes: 2,
+    });
+    assert.ok(standalone.alerts.some((alert) => alert.code === "database_size_warning"));
   } finally {
     client.close();
     rmSync(tempDirectory, { recursive: true, force: true });

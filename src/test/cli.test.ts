@@ -578,12 +578,36 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       parseArgs(["dashboard", "operations", "--metrics-db", metricsPath, "--json"]),
       { repository, databasePath },
     );
+    const memoryHealthResult = await runCommand(
+      parseArgs(["dashboard", "memory-health", "--metrics-db", metricsPath, "--json"]),
+      { repository, databasePath },
+    );
+    const alertsResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "alerts",
+        "--metrics-db",
+        metricsPath,
+        "--memory-health-warning-below",
+        "99",
+        "--memory-health-critical-below",
+        "95",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
 
     const executive = JSON.parse(executiveResult.lines.join("\n")) as {
       snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
     };
     const operations = JSON.parse(operationsResult.lines.join("\n")) as {
       snapshot: { kind: string; storage: { backend: { value: string } }; reliability: { doctorStatus: { value: string } } };
+    };
+    const memoryHealth = JSON.parse(memoryHealthResult.lines.join("\n")) as {
+      report: { activeRecords: { value: number }; healthScore: { value: number } };
+    };
+    const alerts = JSON.parse(alertsResult.lines.join("\n")) as {
+      evaluation: { summary: { total: number; highestSeverity: string }; alerts: Array<{ code: string }> };
     };
 
     assert.equal(executive.snapshot.kind, "executive");
@@ -592,6 +616,10 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(operations.snapshot.kind, "operations");
     assert.equal(operations.snapshot.storage.backend.value, "sqlite");
     assert.equal(operations.snapshot.reliability.doctorStatus.value, "attention");
+    assert.equal(memoryHealth.report.activeRecords.value, 1);
+    assert.ok(memoryHealth.report.healthScore.value > 0);
+    assert.equal(alerts.evaluation.summary.highestSeverity, "critical");
+    assert.ok(alerts.evaluation.alerts.some((alert) => alert.code === "memory_health_critical"));
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });
