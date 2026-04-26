@@ -700,7 +700,15 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     );
 
     const executive = JSON.parse(executiveResult.lines.join("\n")) as {
-      snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
+      snapshot: {
+        kind: string;
+        value: { savedTokens: { value: number } };
+        risk: { memoryHealthScore: { value: number } };
+        insights?: {
+          topRoi: Array<{ key: string; metric: { value: number } }>;
+          topRisk: Array<{ key: string; metric: { value: number } }>;
+        };
+      };
     };
     const operations = JSON.parse(operationsResult.lines.join("\n")) as {
       snapshot: { kind: string; storage: { backend: { value: string } }; reliability: { doctorStatus: { value: string } } };
@@ -728,6 +736,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(executive.snapshot.kind, "executive");
     assert.equal(executive.snapshot.value.savedTokens.value, 600);
     assert.ok(executive.snapshot.risk.memoryHealthScore.value > 0);
+    assert.ok(executive.snapshot.insights?.topRoi.some((item) => item.key === `space:${spaceId}` && item.metric.value === 600));
+    assert.ok(executive.snapshot.insights?.topRisk.some((item) => item.key === `space:${spaceId}` && item.metric.value > 0));
     assert.equal(operations.snapshot.kind, "operations");
     assert.equal(operations.snapshot.storage.backend.value, "sqlite");
     assert.equal(operations.snapshot.reliability.doctorStatus.value, "attention");
@@ -756,6 +766,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(dashboardHtmlExport.format, "html");
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /GlialNode Dashboard/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Executive Value/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top ROI/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top Risk/);
     assert.doesNotMatch(readFileSync(dashboardHtmlPath, "utf8"), /Executive dashboard CLI memory/);
   } finally {
     repository.close();

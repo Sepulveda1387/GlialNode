@@ -260,6 +260,13 @@ Contract types:
 - `DashboardMetricProvenance`
 - `DashboardEstimateBasis`
 - `DashboardCostModelMetadata`
+- `ExecutiveDashboardRankedItem`
+
+Executive snapshots may include an additive `insights` section:
+
+- `insights.topRoi` ranks spaces, agents, projects, workflows, and operations by estimated saved tokens from metrics telemetry.
+- `insights.topRisk` ranks spaces by memory-health-derived risk score.
+- Ranked insights are metadata-only and must not include prompt text, completion text, raw memory content, or request/response payloads.
 
 Validation helpers:
 
@@ -312,6 +319,7 @@ Compatibility notes:
 - Alert evaluations are foreground/read-only; the OSS package does not run a background alert daemon.
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
+- Executive dashboard insights are additive to schema version `1.0.0` and safe for older consumers to ignore.
 - Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
 - `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
 

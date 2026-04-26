@@ -1,10 +1,11 @@
-import type { TokenUsageReport } from "../metrics/repository.js";
+import type { TokenUsageRecord, TokenUsageReport } from "../metrics/repository.js";
 import {
   assertDashboardSnapshot,
   createUnavailableDashboardMetric,
   DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
   type DashboardMetric,
   type ExecutiveDashboardSnapshot,
+  type ExecutiveDashboardRankedItem,
   type DashboardOverviewSnapshot,
   type OperationsDashboardSnapshot,
   type DashboardSnapshotScope,
@@ -56,6 +57,9 @@ export interface DashboardMemoryHealthReport {
 export interface BuildExecutiveDashboardSnapshotInput extends BuildDashboardOverviewSnapshotInput {
   readonly memoryHealth: DashboardMemoryHealthInput;
   readonly trustPostureScore?: number;
+  readonly tokenUsageRecords?: readonly TokenUsageRecord[];
+  readonly topRisk?: readonly ExecutiveDashboardRankedItem[];
+  readonly maxInsights?: number;
 }
 
 export interface BuildOperationsDashboardSnapshotInput {
@@ -176,11 +180,70 @@ export function buildExecutiveDashboardSnapshot(
       savedCost,
       memoryHealth.healthScore,
     ],
+    insights: {
+      topRoi: buildTopRoiInsights(input.tokenUsageRecords ?? [], input.maxInsights ?? 5),
+      topRisk: (input.topRisk ?? []).slice(0, Math.max(0, input.maxInsights ?? 5)),
+    },
   };
 
   assertDashboardSnapshot(snapshot);
   assertDashboardSnapshotPrivacy(snapshot);
   return snapshot;
+}
+
+function buildTopRoiInsights(
+  records: readonly TokenUsageRecord[],
+  maxInsights: number,
+): ExecutiveDashboardRankedItem[] {
+  const groups = new Map<string, {
+    category: ExecutiveDashboardRankedItem["category"];
+    id: string;
+    savedTokens: number;
+    recordCount: number;
+    latencyMs: number;
+  }>();
+
+  for (const record of records) {
+    const dimensions = [
+      ["space", record.spaceId],
+      ["agent", record.agentId],
+      ["project", record.projectId],
+      ["workflow", record.workflowId],
+      ["operation", record.operation],
+    ] as const;
+
+    for (const [category, id] of dimensions) {
+      if (!id) continue;
+      const key = `${category}:${id}`;
+      const current = groups.get(key) ?? {
+        category,
+        id,
+        savedTokens: 0,
+        recordCount: 0,
+        latencyMs: 0,
+      };
+      current.savedTokens += record.estimatedSavedTokens ?? 0;
+      current.recordCount += 1;
+      current.latencyMs += record.latencyMs ?? 0;
+      groups.set(key, current);
+    }
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.savedTokens > 0)
+    .sort((left, right) => right.savedTokens - left.savedTokens || left.id.localeCompare(right.id))
+    .slice(0, Math.max(0, maxInsights))
+    .map((group) => ({
+      key: `${group.category}:${group.id}`,
+      label: `${group.category}:${group.id}`,
+      category: group.category,
+      metric: estimatedMetric("Estimated saved tokens", group.savedTokens, "tokens", group.recordCount),
+      secondaryMetric: computedMetric("Telemetry records", group.recordCount, "count", "metrics_store"),
+      notes: [
+        "Top ROI insight is grouped from token telemetry dimensions only.",
+        "Raw prompt, completion, and memory text are not stored in dashboard metrics.",
+      ],
+    }));
 }
 
 export function buildDashboardMemoryHealthReport(input: DashboardMemoryHealthInput): DashboardMemoryHealthReport {
@@ -270,6 +333,32 @@ function computedMetric<T extends number | string | boolean>(
     provenance: {
       source,
       collectedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function estimatedMetric(
+  label: string,
+  value: number,
+  unit: DashboardMetric<number>["unit"],
+  sampleSize: number,
+): DashboardMetric<number> {
+  return {
+    label,
+    value,
+    unit,
+    confidence: "estimated",
+    provenance: {
+      source: "metrics_store",
+      collectedAt: new Date().toISOString(),
+      estimateBasis: {
+        method: "host_reported_baseline",
+        assumptions: [
+          "Host app supplied baseline and actual context token counts.",
+          "Savings subtract GlialNode overhead before ranking dashboard insights.",
+        ],
+        sampleSize,
+      },
     },
   };
 }

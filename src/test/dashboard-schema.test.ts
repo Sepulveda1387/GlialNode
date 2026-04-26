@@ -134,6 +134,33 @@ test("dashboard snapshot validation accepts an executive snapshot contract", () 
       openCriticalWarnings: measuredMetric("Open critical warnings", 0),
     },
     trends: [measuredMetric("Weekly recall requests", 230)],
+    insights: {
+      topRoi: [
+        {
+          key: "space:demo",
+          label: "Demo",
+          category: "space",
+          metric: measuredMetric("Saved tokens", 1200),
+          notes: ["space:demo"],
+        },
+      ],
+      topRisk: [
+        {
+          key: "space:demo",
+          label: "Demo",
+          category: "risk",
+          metric: {
+            ...measuredMetric("Risk score", 12),
+            unit: "percent",
+          },
+          secondaryMetric: {
+            ...measuredMetric("Memory health score", 88),
+            unit: "percent",
+          },
+          notes: ["space:demo"],
+        },
+      ],
+    },
   };
 
   assert.doesNotThrow(() => assertDashboardSnapshot(snapshot));

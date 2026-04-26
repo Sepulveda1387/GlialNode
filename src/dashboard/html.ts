@@ -1,7 +1,7 @@
-﻿import type { DashboardAlert, DashboardAlertEvaluation } from "./alerts.js";
+import type { DashboardAlert, DashboardAlertEvaluation } from "./alerts.js";
 import type { DashboardMemoryHealthReport } from "./builders.js";
 import type { DashboardRecallQualityReport } from "./recall-quality.js";
-import type { ExecutiveDashboardSnapshot, OperationsDashboardSnapshot, DashboardMetric } from "./schema.js";
+import type { ExecutiveDashboardRankedItem, ExecutiveDashboardSnapshot, OperationsDashboardSnapshot, DashboardMetric } from "./schema.js";
 import type { DashboardTrustReport } from "./trust-report.js";
 
 export interface DashboardHtmlInput {
@@ -220,6 +220,47 @@ export function renderDashboardHtml(input: DashboardHtmlInput): string {
       list-style: none;
     }
 
+    .ranked-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .ranked-list li {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .ranked-title {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    .ranked-note {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .ranked-value {
+      font-size: 1.2rem;
+      font-weight: 850;
+      letter-spacing: -0.04em;
+      text-align: right;
+    }
+
     .alert-list li {
       padding: 13px;
       border: 1px solid var(--line);
@@ -295,6 +336,14 @@ export function renderDashboardHtml(input: DashboardHtmlInput): string {
         ${row("Pending retention actions", formatMetric(input.operations.maintenance.pendingRetentionActions))}
       </div></section>
 
+      <section class="panel"><h2>Top ROI</h2><ol class="ranked-list">
+        ${formatRankedItems(input.executive.insights?.topRoi ?? [], "No token ROI telemetry has been recorded for this scope yet.")}
+      </ol></section>
+
+      <section class="panel"><h2>Top Risk</h2><ol class="ranked-list">
+        ${formatRankedItems(input.executive.insights?.topRisk ?? [], "No memory risk signals crossed the dashboard threshold.")}
+      </ol></section>
+
       <section class="panel"><h2>Memory Health</h2><div class="rows">
         ${row("Active records", formatMetric(input.memoryHealth.activeRecords))}
         ${row("Stale records", formatMetric(input.memoryHealth.staleRecords))}
@@ -349,6 +398,16 @@ function formatAlerts(alerts: readonly DashboardAlert[]): string {
   }
   return alerts
     .map((alert) => `<li><span class="pill ${escapeHtml(alert.severity)}">${escapeHtml(alert.severity)}</span><p>${escapeHtml(alert.message)}</p></li>`)
+    .join("\n");
+}
+
+function formatRankedItems(items: readonly ExecutiveDashboardRankedItem[], emptyMessage: string): string {
+  if (items.length === 0) {
+    return `<li><span><strong class="ranked-title">Nothing to rank yet</strong><span class="ranked-note">${escapeHtml(emptyMessage)}</span></span><span class="ranked-value">-</span></li>`;
+  }
+
+  return items
+    .map((item) => `<li><span><strong class="ranked-title">${escapeHtml(item.label)}</strong><span class="ranked-note">${escapeHtml(item.category)} | ${escapeHtml(item.notes[0] ?? item.key)}</span></span><span class="ranked-value">${escapeHtml(formatMetric(item.metric))}</span></li>`)
     .join("\n");
 }
 

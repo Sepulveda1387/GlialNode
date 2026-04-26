@@ -62,6 +62,7 @@ import {
   type DashboardRecallQualityReport,
   type DashboardTrustReport,
   type ExecutiveDashboardSnapshot,
+  type ExecutiveDashboardRankedItem,
   type OperationsDashboardSnapshot,
 } from "../dashboard/index.js";
 import {
@@ -942,7 +943,11 @@ export class GlialNodeClient {
   async buildExecutiveDashboardSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<ExecutiveDashboardSnapshot> {
     const spaces = await this.repository.listSpaces();
     const memory = await this.summarizeDashboardMemory(spaces.map((space) => space.id), options);
-    const tokenUsageReport = await this.getDashboardTokenUsageReport(options.tokenUsage);
+    const [tokenUsageReport, tokenUsageRecords, topRisk] = await Promise.all([
+      this.getDashboardTokenUsageReport(options.tokenUsage),
+      this.getDashboardTokenUsageRecords(options.tokenUsage),
+      this.buildExecutiveSpaceRiskInsights(spaces, options),
+    ]);
 
     return buildExecutiveDashboardSnapshotContract({
       activeSpaces: spaces.length,
@@ -950,6 +955,8 @@ export class GlialNodeClient {
       staleRecords: memory.staleRecords,
       memoryHealth: memory.health,
       tokenUsageReport,
+      tokenUsageRecords,
+      topRisk,
       storageBytes: this.getMemoryDatabaseBytes(),
       latestBackupAt: options.latestBackupAt,
       maintenanceDue: memory.maintenanceDue,
@@ -2737,6 +2744,50 @@ export class GlialNodeClient {
       return undefined;
     }
     return this.getTokenUsageReport(options);
+  }
+
+  private async getDashboardTokenUsageRecords(options: TokenUsageReportOptions = {}): Promise<TokenUsageRecord[]> {
+    if (this.metricsOptions.disabled) {
+      return [];
+    }
+    return this.listTokenUsage(options);
+  }
+
+  private async buildExecutiveSpaceRiskInsights(
+    spaces: readonly MemorySpace[],
+    options: DashboardSnapshotBuildOptions,
+  ): Promise<ExecutiveDashboardRankedItem[]> {
+    const items = await Promise.all(spaces.map(async (space) => {
+      const memory = await this.summarizeDashboardMemory([space.id], options);
+      const health = buildDashboardMemoryHealthReport(memory.health);
+      const healthScore = health.healthScore.value ?? 100;
+      const riskScore = Math.max(0, 100 - healthScore);
+
+      return {
+        key: `space:${space.id}`,
+        label: space.name,
+        category: "risk" as const,
+        metric: {
+          label: "Risk score",
+          value: riskScore,
+          unit: "percent" as const,
+          confidence: "computed" as const,
+          provenance: {
+            source: "memory_report" as const,
+            collectedAt: new Date().toISOString(),
+          },
+        },
+        secondaryMetric: health.healthScore,
+        notes: [
+          `space:${space.id}`,
+          "Risk score is derived from the inverse of the memory health score.",
+        ],
+      };
+    }));
+
+    return items
+      .filter((item) => item.metric.value > 0)
+      .sort((left, right) => right.metric.value - left.metric.value || left.label.localeCompare(right.label));
   }
 
   private async summarizeDashboardMemory(

@@ -138,6 +138,21 @@ export interface ExecutiveDashboardSnapshot extends DashboardSnapshotBase {
     readonly openCriticalWarnings: DashboardMetric<number>;
   };
   readonly trends: readonly DashboardMetric<number>[];
+  readonly insights?: {
+    readonly topRoi: readonly ExecutiveDashboardRankedItem[];
+    readonly topRisk: readonly ExecutiveDashboardRankedItem[];
+  };
+}
+
+export type ExecutiveDashboardInsightCategory = "space" | "agent" | "project" | "workflow" | "operation" | "risk";
+
+export interface ExecutiveDashboardRankedItem {
+  readonly key: string;
+  readonly label: string;
+  readonly category: ExecutiveDashboardInsightCategory;
+  readonly metric: DashboardMetric<number>;
+  readonly secondaryMetric?: DashboardMetric<number>;
+  readonly notes: readonly string[];
 }
 
 export interface ProductDashboardSnapshot extends DashboardSnapshotBase {
@@ -262,6 +277,8 @@ export function assertDashboardSnapshot(snapshot: DashboardSnapshot): void {
     assertMetricGroup(snapshot.value);
     assertMetricGroup(snapshot.risk);
     snapshot.trends.forEach(assertDashboardMetric);
+    snapshot.insights?.topRoi.forEach(assertDashboardRankedItem);
+    snapshot.insights?.topRisk.forEach(assertDashboardRankedItem);
     return;
   }
 
@@ -279,4 +296,17 @@ export function assertDashboardSnapshot(snapshot: DashboardSnapshot): void {
 
 function assertMetricGroup(group: Record<string, DashboardMetric<unknown>>): void {
   Object.values(group).forEach(assertDashboardMetric);
+}
+
+function assertDashboardRankedItem(item: ExecutiveDashboardRankedItem): void {
+  if (item.key.trim().length === 0) {
+    throw new ValidationError("Dashboard ranked insight key is required.");
+  }
+  if (item.label.trim().length === 0) {
+    throw new ValidationError("Dashboard ranked insight label is required.");
+  }
+  assertDashboardMetric(item.metric);
+  if (item.secondaryMetric) {
+    assertDashboardMetric(item.secondaryMetric);
+  }
 }

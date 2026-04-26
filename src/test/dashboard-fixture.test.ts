@@ -41,7 +41,11 @@ test("dashboard fixture script writes local demo artifacts", () => {
     assert.doesNotMatch(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /Primary dashboard memory/);
 
     const executive = JSON.parse(readFileSync(manifest.artifacts.executive, "utf8")) as {
-      snapshot: { kind: string; value: { savedTokens: { value: number } } };
+      snapshot: {
+        kind: string;
+        value: { savedTokens: { value: number } };
+        insights?: { topRoi: unknown[]; topRisk: unknown[] };
+      };
     };
     const recallQuality = JSON.parse(readFileSync(manifest.artifacts.recallQuality, "utf8")) as {
       report: { totals: { recallRequests: number; bundleRequests: number }; topRecalled: unknown[] };
@@ -52,6 +56,8 @@ test("dashboard fixture script writes local demo artifacts", () => {
 
     assert.equal(executive.snapshot.kind, "executive");
     assert.ok(executive.snapshot.value.savedTokens.value > 0);
+    assert.ok((executive.snapshot.insights?.topRoi.length ?? 0) > 0);
+    assert.ok((executive.snapshot.insights?.topRisk.length ?? 0) > 0);
     assert.equal(recallQuality.report.totals.recallRequests, 1);
     assert.equal(recallQuality.report.totals.bundleRequests, 1);
     assert.ok(recallQuality.report.topRecalled.length > 0);
