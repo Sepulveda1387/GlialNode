@@ -110,11 +110,14 @@ test("GlialNodeClient builds release readiness reports", () => {
     const blocked = client.buildReleaseReadinessReport();
     assert.equal(blocked.status, "blocked");
     assert.ok(blocked.checks.some((check) => check.id === "release_docs" && check.status === "pass"));
+    assert.ok(blocked.checks.some((check) => check.id === "demo_green" && check.status === "fail"));
     assert.ok(blocked.blockers.some((blocker) => /tests_green/.test(blocker)));
+    assert.ok(blocked.blockers.some((blocker) => /demo_green/.test(blocker)));
 
     const ready = client.buildReleaseReadinessReport({
       testsGreen: true,
       packGreen: true,
+      demoGreen: true,
       docsReviewed: true,
       treeClean: true,
       userApproved: true,

@@ -5,8 +5,9 @@
 - confirm `README.md` reflects the current CLI surface
 - review `docs/live-roadmap.gnl.md` and confirm all `V1/P0` items are either `D` or consciously deferred
 - run `npm run check`
-- run `npm run test`
+- run `npm test`
 - run `npm run demo`
+- run `npm run demo:dashboard`
 - run `npm run pack:check`
 - review `CHANGELOG.md`
 - review `docs/operator-guide.md`
@@ -19,7 +20,7 @@
 - review `docs/trust-packs.md`
 - review `docs/troubleshooting.md`
 - run `glialnode status --json --json-envelope` and verify `schemaVersion` is present
-- run `glialnode release readiness --tests-green true --pack-green true --docs-reviewed true --tree-clean true --user-approved true --json` only after those confirmations are actually true
+- run `glialnode release readiness --tests-green true --pack-green true --demo-green true --docs-reviewed true --tree-clean true --user-approved true --json` only after those confirmations are actually true
 - follow `docs/publish-guide.md`
 - review `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`
 - confirm `.gitignore` excludes local demo artifacts

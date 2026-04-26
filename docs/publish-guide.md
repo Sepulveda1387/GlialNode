@@ -93,6 +93,7 @@ After the first push:
 - confirm the issue templates and PR template appear
 - review `docs/operator-guide.md`, `docs/compatibility.md`, `docs/json-contract.md`, `docs/decision-notes.md`, `docs/graph-export.md`, and `docs/trust-packs.md`
 - run `glialnode status --json --json-envelope` and verify `schemaVersion`
+- run `glialnode release readiness --tests-green true --pack-green true --demo-green true --docs-reviewed true --tree-clean true --user-approved true --json` only after those confirmations are true
 - set the repo description and topics from `docs/launch-checklist.md`
 
 ## 8. Optional First Tag

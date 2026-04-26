@@ -10,6 +10,7 @@ export interface ReleaseReadinessInputs {
   rootDirectory?: string;
   testsGreen?: boolean;
   packGreen?: boolean;
+  demoGreen?: boolean;
   docsReviewed?: boolean;
   userApproved?: boolean;
   treeClean?: boolean;
@@ -32,6 +33,7 @@ export interface ReleaseReadinessReport {
   manualInputs: {
     testsGreen: boolean;
     packGreen: boolean;
+    demoGreen: boolean;
     docsReviewed: boolean;
     userApproved: boolean;
     treeClean: boolean;
@@ -62,6 +64,7 @@ export function buildReleaseReadinessReport(inputs: ReleaseReadinessInputs = {})
   const manualInputs = {
     testsGreen: inputs.testsGreen ?? false,
     packGreen: inputs.packGreen ?? false,
+    demoGreen: inputs.demoGreen ?? false,
     docsReviewed: inputs.docsReviewed ?? false,
     userApproved: inputs.userApproved ?? false,
     treeClean: inputs.treeClean ?? false,
@@ -75,6 +78,7 @@ export function buildReleaseReadinessReport(inputs: ReleaseReadinessInputs = {})
     checkStorageContract(),
     manualCheck("tests_green", "Tests confirmed green", manualInputs.testsGreen, "Run `npm test` and confirm it passes."),
     manualCheck("pack_green", "Package check confirmed green", manualInputs.packGreen, "Run `npm run pack:check` and confirm it passes."),
+    manualCheck("demo_green", "Demo flows confirmed green", manualInputs.demoGreen, "Run `npm run demo` and `npm run demo:dashboard` and confirm they pass."),
     manualCheck("docs_reviewed", "Release docs reviewed", manualInputs.docsReviewed, "Review launch, publish, compatibility, operator, and storage docs."),
     manualCheck("tree_clean", "Git tree confirmed clean", manualInputs.treeClean, "Confirm there are no uncommitted release changes."),
     manualCheck("user_approved", "User approved publishing", manualInputs.userApproved, "Publishing remains blocked until explicitly approved."),
@@ -174,7 +178,7 @@ function checkPackageSurface(rootDirectory: string): ReleaseReadinessCheck {
       missing.push(`files includes ${fileEntry}`);
     }
   }
-  for (const scriptName of ["check", "test", "pack:check"]) {
+  for (const scriptName of ["check", "test", "pack:check", "demo", "demo:dashboard"]) {
     if (!manifest.scripts?.[scriptName]) {
       missing.push(`script ${scriptName}`);
     }

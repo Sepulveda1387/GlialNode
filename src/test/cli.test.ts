@@ -261,6 +261,8 @@ test("CLI can report release readiness gates without mutating state", async () =
         "true",
         "--pack-green",
         "true",
+        "--demo-green",
+        "true",
         "--docs-reviewed",
         "true",
         "--tree-clean",
@@ -274,13 +276,14 @@ test("CLI can report release readiness gates without mutating state", async () =
     const ready = JSON.parse(readyResult.lines.join("\n")) as {
       status: string;
       blockers: string[];
-      manualInputs: { testsGreen: boolean; packGreen: boolean; docsReviewed: boolean; treeClean: boolean; userApproved: boolean };
+      manualInputs: { testsGreen: boolean; packGreen: boolean; demoGreen: boolean; docsReviewed: boolean; treeClean: boolean; userApproved: boolean };
     };
 
     assert.equal(ready.status, "ready");
     assert.deepEqual(ready.blockers, []);
     assert.equal(ready.manualInputs.testsGreen, true);
     assert.equal(ready.manualInputs.packGreen, true);
+    assert.equal(ready.manualInputs.demoGreen, true);
     assert.equal(ready.manualInputs.docsReviewed, true);
     assert.equal(ready.manualInputs.treeClean, true);
     assert.equal(ready.manualInputs.userApproved, true);

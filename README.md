@@ -799,7 +799,7 @@ The V1 publish gate is inspectable through a read-only release report:
 - CLI: `glialnode release readiness --json`
 - Client: `client.buildReleaseReadinessReport()`
 
-The default report stays blocked until manual confirmations are provided for the checks GlialNode should not infer on its own: current test status, package dry-run status, docs review, clean git tree, and explicit user approval. See `docs/release-readiness.md`.
+The default report stays blocked until manual confirmations are provided for the checks GlialNode should not infer on its own: current test status, package dry-run status, demo status, docs review, clean git tree, and explicit user approval. See `docs/release-readiness.md`.
 
 ## Packaging Notes
 
@@ -988,11 +988,12 @@ Recommended handling:
 ## Publishing Checklist
 
 - `npm run check`
-- `npm run test`
+- `npm test`
 - `npm run demo`
 - `npm run demo:client`
+- `npm run demo:dashboard`
 - `npm run pack:check`
-- `glialnode release readiness --tests-green true --pack-green true --docs-reviewed true --tree-clean true --user-approved true --json`
+- `glialnode release readiness --tests-green true --pack-green true --demo-green true --docs-reviewed true --tree-clean true --user-approved true --json`
 - review `README.md`, `CHANGELOG.md`, and `docs/architecture.md`
 - review `docs/live-roadmap.gnl.md`
 - review `docs/launch-checklist.md`
