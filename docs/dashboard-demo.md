@@ -45,3 +45,4 @@ The fixture is useful for:
 - opening a standalone local dashboard HTML file without starting a server
 - preparing screenshots without exposing private memory
 - testing alert, recall-quality, trust, and executive overview panels
+- previewing the operations benchmark baseline panel from `docs/benchmarks/latest.json`

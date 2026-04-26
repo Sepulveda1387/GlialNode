@@ -213,7 +213,7 @@ export function usageText(): string {
     "  glialnode dashboard executive [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard agent --agent-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
-    "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--json]",
+    "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--benchmark-baseline <path>] [--json]",
     "  glialnode dashboard memory-health [--stale-freshness-threshold <0..1>] [--json]",
     "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
     "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
@@ -701,6 +701,7 @@ async function runDashboardCommand(
       maxNeverRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-never-recalled"], "max-never-recalled"),
       presetDirectory: parsed.flags["preset-directory"],
       recentTrustEventLimit: parseOptionalNonNegativeInteger(parsed.flags["recent-trust-events"], "recent-trust-events"),
+      operationsBenchmarkBaseline: parseOperationsBenchmarkBaselineFlag(parsed.flags["benchmark-baseline"]),
     };
 
     if (action === "memory-health") {
@@ -885,6 +886,9 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
       `databaseBytes=${snapshot.storage.databaseBytes.value ?? ""}`,
       `doctorStatus=${snapshot.reliability.doctorStatus.value ?? ""}`,
       `criticalWarnings=${snapshot.reliability.criticalWarnings.value ?? ""}`,
+      `benchmarkRecords=${snapshot.performance?.benchmarkBaseline.records.value ?? ""}`,
+      `benchmarkSearchMs=${snapshot.performance?.benchmarkBaseline.searchMs.value ?? ""}`,
+      `benchmarkRecallMs=${snapshot.performance?.benchmarkBaseline.recallMs.value ?? ""}`,
     ];
   }
 
@@ -3937,6 +3941,63 @@ function parseDashboardAlertThresholdFlags(flags: Record<string, string>) {
     databaseWarningBytes: parseOptionalNonNegativeNumber(flags["database-warning-bytes"], "database-warning-bytes"),
     databaseCriticalBytes: parseOptionalNonNegativeNumber(flags["database-critical-bytes"], "database-critical-bytes"),
   };
+}
+
+function parseOperationsBenchmarkBaselineFlag(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(readFileSync(resolve(value), "utf8")) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("--benchmark-baseline must point to a benchmark JSON object.");
+  }
+
+  const root = parsed as {
+    generatedAt?: unknown;
+    results?: unknown;
+  };
+  if (typeof root.generatedAt !== "string" || Number.isNaN(Date.parse(root.generatedAt))) {
+    throw new Error("--benchmark-baseline JSON must include generatedAt.");
+  }
+  if (!Array.isArray(root.results) || root.results.length === 0) {
+    throw new Error("--benchmark-baseline JSON must include at least one result.");
+  }
+
+  const result = root.results
+    .map((entry) => parseOperationsBenchmarkResult(entry))
+    .sort((left, right) => right.records - left.records)[0];
+  if (!result) {
+    throw new Error("--benchmark-baseline JSON did not include a usable result.");
+  }
+
+  return {
+    generatedAt: root.generatedAt,
+    ...result,
+  };
+}
+
+function parseOperationsBenchmarkResult(value: unknown) {
+  if (!value || typeof value !== "object") {
+    throw new Error("--benchmark-baseline result entries must be objects.");
+  }
+  const result = value as Record<string, unknown>;
+  return {
+    records: readRequiredNumber(result, "records"),
+    searchMs: readRequiredNumber(result, "searchMs"),
+    recallMs: readRequiredNumber(result, "recallMs"),
+    bundleBuildMs: readRequiredNumber(result, "bundleBuildMs"),
+    compactionDryRunMs: readRequiredNumber(result, "compactionDryRunMs"),
+    reportMs: readRequiredNumber(result, "reportMs"),
+  };
+}
+
+function readRequiredNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`--benchmark-baseline result field '${key}' must be a non-negative number.`);
+  }
+  return value;
 }
 
 function parseTokenCostModel(flags: Record<string, string>): TokenCostModel | undefined {

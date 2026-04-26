@@ -14,6 +14,7 @@ const databasePath = join(outputDirectory, "glialnode.dashboard-demo.sqlite");
 const metricsDatabasePath = join(outputDirectory, "glialnode.dashboard-demo.metrics.sqlite");
 const presetDirectory = join(outputDirectory, "presets");
 const artifactsDirectory = join(outputDirectory, "artifacts");
+const benchmarkBaselinePath = join(root, "docs", "benchmarks", "latest.json");
 
 removeIfExists(outputDirectory);
 mkdirSync(artifactsDirectory, { recursive: true });
@@ -198,7 +199,12 @@ logStep("Writing dashboard artifacts");
 const artifacts = {
   overview: exportDashboardJson("overview", "dashboard-overview.json"),
   executive: exportDashboardJson("executive", "dashboard-executive.json"),
-  operations: exportDashboardJson("operations", "dashboard-operations.json", ["--latest-backup-at", "2026-04-24T00:00:00.000Z"]),
+  operations: exportDashboardJson("operations", "dashboard-operations.json", [
+    "--latest-backup-at",
+    "2026-04-24T00:00:00.000Z",
+    "--benchmark-baseline",
+    benchmarkBaselinePath,
+  ]),
   memoryHealth: exportDashboardJson("memory-health", "dashboard-memory-health.json"),
   recallQuality: exportDashboardJson("recall-quality", "dashboard-recall-quality.json", ["--max-top-recalled", "10", "--max-never-recalled", "10"]),
   trust: exportDashboardJson("trust", "dashboard-trust.json", ["--preset-directory", presetDirectory]),
@@ -211,7 +217,10 @@ const artifacts = {
     "80",
   ]),
   tokenRoiCsv: exportDashboardArtifact("token-roi", "csv", "token-roi.csv"),
-  dashboardHtml: exportDashboardArtifact("dashboard-html", "html", "dashboard.html"),
+  dashboardHtml: exportDashboardArtifact("dashboard-html", "html", "dashboard.html", [
+    "--benchmark-baseline",
+    benchmarkBaselinePath,
+  ]),
 };
 
 const manifest = {
@@ -315,7 +324,7 @@ function exportDashboardJson(kind, fileName, extraArgs = []) {
   return outputPath;
 }
 
-function exportDashboardArtifact(kind, format, fileName) {
+function exportDashboardArtifact(kind, format, fileName, extraArgs = []) {
   const outputPath = join(artifactsDirectory, fileName);
   cli([
     "dashboard",
@@ -330,6 +339,7 @@ function exportDashboardArtifact(kind, format, fileName) {
     metricsDatabasePath,
     "--granularity",
     "all",
+    ...extraArgs,
   ]);
   return outputPath;
 }

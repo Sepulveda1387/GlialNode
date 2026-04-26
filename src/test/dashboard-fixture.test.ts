@@ -38,6 +38,7 @@ test("dashboard fixture script writes local demo artifacts", () => {
     assert.equal(existsSync(manifest.artifacts.dashboardHtml), true);
     assert.match(readFileSync(manifest.artifacts.tokenRoiCsv, "utf8"), /estimated_saved_tokens/);
     assert.match(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /GlialNode Dashboard/);
+    assert.match(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /Benchmark Baseline/);
     assert.doesNotMatch(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /Primary dashboard memory/);
 
     const executive = JSON.parse(readFileSync(manifest.artifacts.executive, "utf8")) as {
@@ -50,6 +51,9 @@ test("dashboard fixture script writes local demo artifacts", () => {
     const recallQuality = JSON.parse(readFileSync(manifest.artifacts.recallQuality, "utf8")) as {
       report: { totals: { recallRequests: number; bundleRequests: number }; topRecalled: unknown[] };
     };
+    const operations = JSON.parse(readFileSync(manifest.artifacts.operations, "utf8")) as {
+      snapshot: { performance?: { benchmarkBaseline: { records: { value: number } } } };
+    };
     const trust = JSON.parse(readFileSync(manifest.artifacts.trust, "utf8")) as {
       report: { totals: { policyFailureEvents: number; trustedSigners: number } };
     };
@@ -58,6 +62,7 @@ test("dashboard fixture script writes local demo artifacts", () => {
     assert.ok(executive.snapshot.value.savedTokens.value > 0);
     assert.ok((executive.snapshot.insights?.topRoi.length ?? 0) > 0);
     assert.ok((executive.snapshot.insights?.topRisk.length ?? 0) > 0);
+    assert.ok((operations.snapshot.performance?.benchmarkBaseline.records.value ?? 0) > 0);
     assert.equal(recallQuality.report.totals.recallRequests, 1);
     assert.equal(recallQuality.report.totals.bundleRequests, 1);
     assert.ok(recallQuality.report.topRecalled.length > 0);

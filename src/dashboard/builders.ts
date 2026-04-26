@@ -74,8 +74,19 @@ export interface BuildOperationsDashboardSnapshotInput {
   readonly doctorStatus: "ready" | "attention" | "unknown";
   readonly latestBackupAt?: string;
   readonly criticalWarnings: number;
+  readonly benchmarkBaseline?: OperationsDashboardBenchmarkBaselineInput;
   readonly warnings?: readonly DashboardSnapshotWarning[];
   readonly compatibilityNotes?: readonly string[];
+}
+
+export interface OperationsDashboardBenchmarkBaselineInput {
+  readonly generatedAt: string;
+  readonly records: number;
+  readonly searchMs: number;
+  readonly recallMs: number;
+  readonly bundleBuildMs: number;
+  readonly compactionDryRunMs: number;
+  readonly reportMs: number;
 }
 
 export function buildDashboardOverviewSnapshot(
@@ -308,6 +319,19 @@ export function buildOperationsDashboardSnapshot(
         : computedMetric("Latest backup", input.latestBackupAt, "timestamp", "doctor_status"),
       criticalWarnings: computedMetric("Critical warnings", input.criticalWarnings, "count", "doctor_status"),
     },
+    performance: input.benchmarkBaseline
+      ? {
+          benchmarkBaseline: {
+            generatedAt: computedMetric("Benchmark generated", input.benchmarkBaseline.generatedAt, "timestamp", "benchmark_baseline"),
+            records: computedMetric("Benchmark records", input.benchmarkBaseline.records, "count", "benchmark_baseline"),
+            searchMs: computedMetric("Search median", input.benchmarkBaseline.searchMs, "milliseconds", "benchmark_baseline"),
+            recallMs: computedMetric("Recall median", input.benchmarkBaseline.recallMs, "milliseconds", "benchmark_baseline"),
+            bundleBuildMs: computedMetric("Bundle build median", input.benchmarkBaseline.bundleBuildMs, "milliseconds", "benchmark_baseline"),
+            compactionDryRunMs: computedMetric("Compaction dry-run median", input.benchmarkBaseline.compactionDryRunMs, "milliseconds", "benchmark_baseline"),
+            reportMs: computedMetric("Report median", input.benchmarkBaseline.reportMs, "milliseconds", "benchmark_baseline"),
+          },
+        }
+      : undefined,
   };
 
   assertDashboardSnapshot(snapshot);

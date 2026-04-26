@@ -336,6 +336,10 @@ export function renderDashboardHtml(input: DashboardHtmlInput): string {
         ${row("Pending retention actions", formatMetric(input.operations.maintenance.pendingRetentionActions))}
       </div></section>
 
+      <section class="panel"><h2>Benchmark Baseline</h2><div class="rows">
+        ${formatBenchmarkBaselineRows(input.operations)}
+      </div></section>
+
       <section class="panel"><h2>Top ROI</h2><ol class="ranked-list">
         ${formatRankedItems(input.executive.insights?.topRoi ?? [], "No token ROI telemetry has been recorded for this scope yet.")}
       </ol></section>
@@ -411,6 +415,23 @@ function formatRankedItems(items: readonly ExecutiveDashboardRankedItem[], empty
     .join("\n");
 }
 
+function formatBenchmarkBaselineRows(operations: OperationsDashboardSnapshot): string {
+  const baseline = operations.performance?.benchmarkBaseline;
+  if (!baseline) {
+    return row("Status", "No local benchmark baseline attached");
+  }
+
+  return [
+    row("Generated", formatMetric(baseline.generatedAt)),
+    row("Records", formatMetric(baseline.records)),
+    row("Search median", formatMillisecondsMetric(baseline.searchMs)),
+    row("Recall median", formatMillisecondsMetric(baseline.recallMs)),
+    row("Bundle median", formatMillisecondsMetric(baseline.bundleBuildMs)),
+    row("Compaction dry-run", formatMillisecondsMetric(baseline.compactionDryRunMs)),
+    row("Report median", formatMillisecondsMetric(baseline.reportMs)),
+  ].join("\n");
+}
+
 function formatMetric(metric: DashboardMetric<number | string | boolean>): string {
   if (metric.value === null) return "Unavailable";
   if (metric.unit === "bytes" && typeof metric.value === "number") return formatBytes(metric.value);
@@ -453,6 +474,10 @@ function formatNumber(value: number): string {
 
 function formatMilliseconds(value: number | undefined): string {
   return value === undefined ? "Unavailable" : `${formatNumber(value)} ms`;
+}
+
+function formatMillisecondsMetric(metric: DashboardMetric<number>): string {
+  return metric.value === null ? "Unavailable" : `${formatNumber(metric.value)} ms`;
 }
 
 function formatRatio(value: number | undefined): string {

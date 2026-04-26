@@ -63,6 +63,7 @@ import {
   type DashboardTrustReport,
   type ExecutiveDashboardSnapshot,
   type ExecutiveDashboardRankedItem,
+  type OperationsDashboardBenchmarkBaselineInput,
   type OperationsDashboardSnapshot,
 } from "../dashboard/index.js";
 import {
@@ -173,6 +174,7 @@ export interface DashboardSnapshotBuildOptions {
   maxNeverRecalled?: number;
   presetDirectory?: string;
   recentTrustEventLimit?: number;
+  operationsBenchmarkBaseline?: OperationsDashboardBenchmarkBaselineInput;
 }
 
 export interface CreateSpaceInput {
@@ -987,6 +989,7 @@ export class GlialNodeClient {
       doctorStatus: criticalWarnings > 0 ? "attention" : "ready",
       latestBackupAt: options.latestBackupAt,
       criticalWarnings,
+      benchmarkBaseline: options.operationsBenchmarkBaseline,
       warnings: criticalWarnings > 0
         ? [
             {

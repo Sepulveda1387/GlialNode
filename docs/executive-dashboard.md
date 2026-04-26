@@ -268,6 +268,8 @@ Executive snapshots may include an additive `insights` section:
 - `insights.topRisk` ranks spaces by memory-health-derived risk score.
 - Ranked insights are metadata-only and must not include prompt text, completion text, raw memory content, or request/response payloads.
 
+Operations snapshots may include an additive `performance.benchmarkBaseline` section when a local benchmark JSON file is supplied. This section uses the largest dataset result in the baseline file and reports search, recall, bundle, compaction dry-run, and report median timings.
+
 Validation helpers:
 
 - `assertDashboardSnapshotVersion`
@@ -299,6 +301,7 @@ glialnode dashboard executive --json
 glialnode dashboard space --space-id <space-id> --json
 glialnode dashboard agent --agent-id <agent-id> --json
 glialnode dashboard operations --json
+glialnode dashboard operations --benchmark-baseline docs/benchmarks/latest.json --json
 glialnode dashboard memory-health --json
 glialnode dashboard recall-quality --json
 glialnode dashboard trust --json
@@ -320,6 +323,7 @@ Compatibility notes:
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
 - Executive dashboard insights are additive to schema version `1.0.0` and safe for older consumers to ignore.
+- Operations benchmark baselines are opt-in local files. The dashboard does not run benchmarks automatically.
 - Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
 - `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
 

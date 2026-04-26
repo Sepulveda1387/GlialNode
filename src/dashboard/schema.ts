@@ -28,6 +28,7 @@ export type DashboardMetricSource =
   | "storage_contract"
   | "metrics_store"
   | "cost_model"
+  | "benchmark_baseline"
   | "release_readiness"
   | "fixture";
 
@@ -187,6 +188,19 @@ export interface OperationsDashboardSnapshot extends DashboardSnapshotBase {
     readonly latestBackupAt: DashboardMetric<string>;
     readonly criticalWarnings: DashboardMetric<number>;
   };
+  readonly performance?: {
+    readonly benchmarkBaseline: OperationsDashboardBenchmarkSummary;
+  };
+}
+
+export interface OperationsDashboardBenchmarkSummary {
+  readonly generatedAt: DashboardMetric<string>;
+  readonly records: DashboardMetric<number>;
+  readonly searchMs: DashboardMetric<number>;
+  readonly recallMs: DashboardMetric<number>;
+  readonly bundleBuildMs: DashboardMetric<number>;
+  readonly compactionDryRunMs: DashboardMetric<number>;
+  readonly reportMs: DashboardMetric<number>;
 }
 
 export type DashboardSnapshot =
@@ -292,6 +306,9 @@ export function assertDashboardSnapshot(snapshot: DashboardSnapshot): void {
   assertMetricGroup(snapshot.storage);
   assertMetricGroup(snapshot.maintenance);
   assertMetricGroup(snapshot.reliability);
+  if (snapshot.performance) {
+    assertOperationsDashboardBenchmarkSummary(snapshot.performance.benchmarkBaseline);
+  }
 }
 
 function assertMetricGroup(group: Record<string, DashboardMetric<unknown>>): void {
@@ -309,4 +326,14 @@ function assertDashboardRankedItem(item: ExecutiveDashboardRankedItem): void {
   if (item.secondaryMetric) {
     assertDashboardMetric(item.secondaryMetric);
   }
+}
+
+function assertOperationsDashboardBenchmarkSummary(summary: OperationsDashboardBenchmarkSummary): void {
+  assertDashboardMetric(summary.generatedAt);
+  assertDashboardMetric(summary.records);
+  assertDashboardMetric(summary.searchMs);
+  assertDashboardMetric(summary.recallMs);
+  assertDashboardMetric(summary.bundleBuildMs);
+  assertDashboardMetric(summary.compactionDryRunMs);
+  assertDashboardMetric(summary.reportMs);
 }

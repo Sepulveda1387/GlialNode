@@ -580,8 +580,22 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       parseArgs(["dashboard", "executive", "--metrics-db", metricsPath, "--granularity", "all", "--json"]),
       { repository, databasePath },
     );
+    const benchmarkBaselinePath = join(tempDirectory, "benchmark-latest.json");
+    writeFileSync(benchmarkBaselinePath, JSON.stringify({
+      generatedAt: "2026-04-24T00:00:00.000Z",
+      results: [
+        {
+          records: 1000,
+          searchMs: 12,
+          recallMs: 34,
+          bundleBuildMs: 56,
+          compactionDryRunMs: 78,
+          reportMs: 9,
+        },
+      ],
+    }), "utf8");
     const operationsResult = await runCommand(
-      parseArgs(["dashboard", "operations", "--metrics-db", metricsPath, "--json"]),
+      parseArgs(["dashboard", "operations", "--metrics-db", metricsPath, "--benchmark-baseline", benchmarkBaselinePath, "--json"]),
       { repository, databasePath },
     );
     const memoryHealthResult = await runCommand(
@@ -662,6 +676,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
         metricsPath,
         "--space-id",
         spaceId,
+        "--benchmark-baseline",
+        benchmarkBaselinePath,
         "--json",
       ]),
       { repository, databasePath },
@@ -711,7 +727,12 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       };
     };
     const operations = JSON.parse(operationsResult.lines.join("\n")) as {
-      snapshot: { kind: string; storage: { backend: { value: string } }; reliability: { doctorStatus: { value: string } } };
+      snapshot: {
+        kind: string;
+        storage: { backend: { value: string } };
+        reliability: { doctorStatus: { value: string } };
+        performance?: { benchmarkBaseline: { records: { value: number }; searchMs: { value: number } } };
+      };
     };
     const memoryHealth = JSON.parse(memoryHealthResult.lines.join("\n")) as {
       report: { activeRecords: { value: number }; healthScore: { value: number } };
@@ -741,6 +762,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(operations.snapshot.kind, "operations");
     assert.equal(operations.snapshot.storage.backend.value, "sqlite");
     assert.equal(operations.snapshot.reliability.doctorStatus.value, "attention");
+    assert.equal(operations.snapshot.performance?.benchmarkBaseline.records.value, 1000);
+    assert.equal(operations.snapshot.performance?.benchmarkBaseline.searchMs.value, 12);
     assert.equal(memoryHealth.report.activeRecords.value, 1);
     assert.ok(memoryHealth.report.healthScore.value > 0);
     assert.equal(alerts.evaluation.summary.highestSeverity, "critical");
@@ -768,6 +791,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Executive Value/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top ROI/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top Risk/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Benchmark Baseline/);
     assert.doesNotMatch(readFileSync(dashboardHtmlPath, "utf8"), /Executive dashboard CLI memory/);
   } finally {
     repository.close();

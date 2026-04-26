@@ -239,6 +239,15 @@ test("GlialNodeClient builds operations dashboard snapshots", async () => {
 
     const operations = await client.buildOperationsDashboardSnapshot({
       latestBackupAt: "2026-04-24T00:00:00.000Z",
+      operationsBenchmarkBaseline: {
+        generatedAt: "2026-04-24T00:00:00.000Z",
+        records: 1000,
+        searchMs: 12,
+        recallMs: 34,
+        bundleBuildMs: 56,
+        compactionDryRunMs: 78,
+        reportMs: 9,
+      },
     });
 
     assert.equal(operations.kind, "operations");
@@ -246,6 +255,8 @@ test("GlialNodeClient builds operations dashboard snapshots", async () => {
     assert.equal(operations.reliability.doctorStatus.value, "attention");
     assert.equal(operations.reliability.criticalWarnings.value, 1);
     assert.equal(operations.reliability.latestBackupAt.value, "2026-04-24T00:00:00.000Z");
+    assert.equal(operations.performance?.benchmarkBaseline.records.value, 1000);
+    assert.equal(operations.performance?.benchmarkBaseline.reportMs.value, 9);
     assert.doesNotThrow(() => assertDashboardSnapshot(operations));
     assert.doesNotThrow(() => assertDashboardSnapshotPrivacy(operations));
   } finally {
