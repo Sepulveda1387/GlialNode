@@ -14,6 +14,10 @@
       "types": "./dist/dashboard/index.d.ts",
       "default": "./dist/dashboard/index.js"
     },
+    "./execution-context": {
+      "types": "./dist/execution-context/index.d.ts",
+      "default": "./dist/execution-context/index.js"
+    },
     "./metrics": {
       "types": "./dist/metrics/index.d.ts",
       "default": "./dist/metrics/index.js"

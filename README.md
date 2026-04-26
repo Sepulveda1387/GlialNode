@@ -956,6 +956,7 @@ GlialNode now exports reusable low-level helpers for host applications:
 - `buildSafeFtsQuery(...)` for consistent literal-safe FTS query construction
 - `buildMemoryBundleHints(...)` for route hint introspection
 - `resolveMemoryBundleRouteReasoning(...)` for route + reasoning metadata before bundle construction
+- `glialnode/execution-context` for task fingerprinting, execution-context record validation, and route recommendations without importing the full root surface
 
 These helpers are available from the main package entrypoint and match internal retrieval/runtime behavior.
 

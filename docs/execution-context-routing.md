@@ -41,8 +41,10 @@ import {
   createExecutionOutcomeRecord,
   recommendExecutionContext,
   assertExecutionContextRecord,
-} from "glialnode";
+} from "glialnode/execution-context";
 ```
+
+The same helpers are also re-exported from the root `glialnode` entrypoint for convenience.
 
 Example:
 

@@ -21,6 +21,7 @@ test("package manifest exposes a publishable cross-platform surface", () => {
   assert.equal(manifest.bin?.glialnode, "dist/cli/index.js");
   assert.ok(manifest.exports?.["."]);
   assert.ok(manifest.exports?.["./dashboard"]);
+  assert.ok(manifest.exports?.["./execution-context"]);
   assert.ok(manifest.exports?.["./metrics"]);
   assert.ok(manifest.exports?.["./cli"]);
   assert.ok(manifest.files?.includes("dist/**/*"));
@@ -36,6 +37,16 @@ test("package dashboard subpath resolves to the public dashboard contract", asyn
   assert.equal(typeof dashboard.assertDashboardSnapshotPrivacy, "function");
   assert.equal(typeof dashboard.assertDashboardExecutionContextRoutingReport, "function");
   assert.equal(typeof dashboard.buildDashboardExecutionContextRoutingReport, "function");
+});
+
+test("package execution-context subpath resolves to the public routing contract", async () => {
+  const executionContext = await import("glialnode/execution-context");
+
+  assert.equal(executionContext.EXECUTION_CONTEXT_SCHEMA_VERSION, "1.0.0");
+  assert.equal(typeof executionContext.createExecutionContextTaskFingerprint, "function");
+  assert.equal(typeof executionContext.createExecutionContextRecord, "function");
+  assert.equal(typeof executionContext.recommendExecutionContext, "function");
+  assert.equal(typeof executionContext.assertExecutionContextRecord, "function");
 });
 
 test("package metrics subpath resolves to the public metrics contract", async () => {
