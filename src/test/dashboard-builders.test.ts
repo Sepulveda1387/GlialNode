@@ -63,7 +63,7 @@ test("GlialNodeClient builds dashboard overview snapshots from memory and token 
 
     const snapshot = await client.buildDashboardOverviewSnapshot({
       tokenUsage: {
-        granularity: "all",
+        granularity: "day",
         costModel: {
           currency: "USD",
           model: "gpt-test",
@@ -200,7 +200,7 @@ test("GlialNodeClient builds executive and memory health dashboard reports", asy
 
     const executive = await client.buildExecutiveDashboardSnapshot({
       tokenUsage: {
-        granularity: "all",
+        granularity: "day",
         costModel: {
           currency: "USD",
           model: "gpt-test",
@@ -216,6 +216,8 @@ test("GlialNodeClient builds executive and memory health dashboard reports", asy
     assert.equal(executive.value.savedTokens.value, 650);
     assert.equal(executive.risk.openCriticalWarnings.value, 0);
     assert.ok((executive.risk.memoryHealthScore.value ?? 0) < 100);
+    assert.ok(executive.trends.some((metric) => metric.label === "Saved tokens 2026-04-24" && metric.value === 650));
+    assert.ok(executive.trends.some((metric) => metric.label === "Saved cost 2026-04-24" && metric.confidence === "estimated"));
     assert.equal(health.lowConfidenceRecords.value, 1);
     assert.equal(health.staleRecords.value, 1);
     assert.equal(health.lifecycleDue.spacesMissingMaintenance.value, 1);

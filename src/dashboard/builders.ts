@@ -198,6 +198,7 @@ export function buildExecutiveDashboardSnapshot(
       savedTokens,
       savedCost,
       memoryHealth.healthScore,
+      ...buildTokenTrendMetrics(input.tokenUsageReport, input.maxInsights ?? 5),
     ],
     insights: {
       topRoi: buildTopRoiInsights(input.tokenUsageRecords ?? [], input.maxInsights ?? 5),
@@ -208,6 +209,40 @@ export function buildExecutiveDashboardSnapshot(
   assertDashboardSnapshot(snapshot);
   assertDashboardSnapshotPrivacy(snapshot);
   return snapshot;
+}
+
+function buildTokenTrendMetrics(
+  report: TokenUsageReport | undefined,
+  maxTrendBuckets: number,
+): DashboardMetric<number>[] {
+  if (!report || report.buckets.length === 0 || report.granularity === "all") {
+    return [];
+  }
+
+  return report.buckets
+    .slice(-Math.max(0, maxTrendBuckets))
+    .flatMap((bucket) => {
+      const savedTokens = estimatedBucketMetric(
+        `Saved tokens ${bucket.key}`,
+        bucket.totals.estimatedSavedTokens,
+        "tokens",
+        report,
+        bucket,
+      );
+      const metrics = [savedTokens];
+
+      if (bucket.totals.costSaved !== undefined) {
+        metrics.push(estimatedBucketMetric(
+          `Saved cost ${bucket.key}`,
+          bucket.totals.costSaved,
+          "currency",
+          report,
+          bucket,
+        ));
+      }
+
+      return metrics;
+    });
 }
 
 function buildTopRoiInsights(
@@ -263,6 +298,48 @@ function buildTopRoiInsights(
         "Raw prompt, completion, and memory text are not stored in dashboard metrics.",
       ],
     }));
+}
+
+function estimatedBucketMetric(
+  label: string,
+  value: number,
+  unit: DashboardMetric<number>["unit"],
+  report: TokenUsageReport,
+  bucket: TokenUsageReport["buckets"][number],
+): DashboardMetric<number> {
+  return {
+    label,
+    value,
+    unit,
+    confidence: "estimated",
+    provenance: {
+      source: unit === "currency" ? "cost_model" : "metrics_store",
+      collectedAt: report.generatedAt,
+      window: {
+        granularity: report.granularity,
+        startedAt: bucket.startedAt,
+        endedAt: bucket.endedAt,
+      },
+      estimateBasis: {
+        method: "host_reported_baseline",
+        assumptions: [
+          "Host app supplied baseline and actual context token counts.",
+          "Trend buckets are aggregated from metrics telemetry and exclude raw prompt or memory text.",
+        ],
+        sampleSize: bucket.totals.recordCount,
+      },
+      costModel: unit === "currency" && report.costModel
+        ? {
+            currency: report.costModel.currency,
+            source: "operator_configured",
+            provider: report.costModel.provider,
+            model: report.costModel.model,
+            inputCostPerMillionTokens: report.costModel.inputCostPerMillionTokens,
+            outputCostPerMillionTokens: report.costModel.outputCostPerMillionTokens,
+          }
+        : undefined,
+    },
+  };
 }
 
 export function buildDashboardMemoryHealthReport(input: DashboardMemoryHealthInput): DashboardMemoryHealthReport {

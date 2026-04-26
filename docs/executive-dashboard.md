@@ -268,6 +268,8 @@ Executive snapshots may include an additive `insights` section:
 - `insights.topRisk` ranks spaces by memory-health-derived risk score.
 - Ranked insights are metadata-only and must not include prompt text, completion text, raw memory content, or request/response payloads.
 
+The `trends` array includes aggregate KPIs plus recent bucket-level token ROI metrics when the caller requests `day`, `week`, or `month` granularity. Bucket trend metrics carry the same estimate-basis and cost-model provenance as the aggregate ROI metrics.
+
 Operations snapshots may include an additive `performance.benchmarkBaseline` section when a local benchmark JSON file is supplied. This section uses the largest dataset result in the baseline file and reports search, recall, bundle, compaction dry-run, and report median timings.
 
 Validation helpers:
@@ -324,6 +326,7 @@ Compatibility notes:
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
 - Executive dashboard insights are additive to schema version `1.0.0` and safe for older consumers to ignore.
+- Executive dashboard trend metrics include recent bucket-level saved token/cost values when token metrics are requested with day/week/month granularity.
 - Memory health reports include `lifecycleDue.spacesMissingMaintenance`, `lifecycleDue.compactionCandidates`, and `lifecycleDue.retentionCandidates`. These are planner-derived counts only; they do not expose memory text.
 - Operations benchmark baselines are opt-in local files. The dashboard does not run benchmarks automatically.
 - Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
@@ -406,7 +409,8 @@ Snapshot privacy validation:
 14. Add seeded dashboard fixture/demo dataset. Complete for deterministic synthetic local artifacts via `npm run demo:dashboard`.
 15. Add optional read-only local HTTP routes. Complete for loopback-only, explicit-origin dashboard API routes.
 16. Add lifecycle-due memory health detail. Complete for planner-derived compaction/retention candidates and spaces missing maintenance.
-17. Build the UI from snapshot contracts, not directly from storage tables.
+17. Add executive historical trend detail. Complete for recent bucket-level token ROI trend metrics in existing snapshot contracts.
+18. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 
