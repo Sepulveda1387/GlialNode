@@ -38,6 +38,7 @@ Use `assertNoForbiddenExecutionContextFields(...)` and `assertExecutionContextRe
 import {
   createExecutionContextTaskFingerprint,
   createExecutionContextRecord,
+  createExecutionOutcomeRecord,
   recommendExecutionContext,
   assertExecutionContextRecord,
 } from "glialnode";
@@ -91,6 +92,33 @@ console.log(recommendation.explanations);
 
 Recommendations are advisory. They include `warnings` when previous records are expired or when a previously useful skill/tool is unavailable in the current runtime.
 
+Outcome persistence example:
+
+```ts
+const outcome = await client.recordExecutionOutcome({
+  taskText: "Fix a failing dashboard CLI test",
+  scope: { repoId: "GlialNode" },
+  features: ["typescript", "cli", "dashboard"],
+  selectedTools: ["functions.shell_command", "functions.apply_patch"],
+  skippedTools: ["web.run"],
+  firstReads: ["docs/live-roadmap.gnl.md", "src/cli/commands.ts"],
+  outcome: {
+    state: "success",
+    latencyMs: 1234,
+    toolCallCount: 5,
+    inputTokens: 1200,
+    outputTokens: 400,
+  },
+  confidence: "high",
+});
+
+const records = await client.listExecutionContextRecords({
+  fingerprintHash: outcome.taskFingerprint.hash,
+});
+```
+
+`recordExecutionOutcome(...)` accepts raw `taskText` only long enough to compute the local fingerprint. The stored SQLite row contains the fingerprint, scope IDs, selected/skipped tool names, first-read paths, outcome state, latency/tool-call/token counters, confidence, and retention timestamps.
+
 CLI JSON:
 
 ```bash
@@ -104,7 +132,34 @@ glialnode execution-context recommend \
   --json
 ```
 
-The CLI reads records from a local JSON array or `{ "records": [...] }` object. It does not persist recommendations yet.
+The CLI can read records from a local JSON array or `{ "records": [...] }` object. Passing `--metrics-db` also reads non-expired execution-context outcomes from the metrics SQLite database.
+
+Outcome recording:
+
+```bash
+glialnode execution-context record-outcome \
+  --task "Fix a failing dashboard CLI test" \
+  --repo-id GlialNode \
+  --features typescript,cli,dashboard \
+  --selected-tools functions.shell_command,functions.apply_patch \
+  --skipped-tools web.run \
+  --first-reads docs/live-roadmap.gnl.md,src/cli/commands.ts \
+  --outcome success \
+  --tool-call-count 5 \
+  --input-tokens 1200 \
+  --output-tokens 400 \
+  --metrics-db .glialnode/glialnode.metrics.sqlite \
+  --json
+```
+
+Outcome listing:
+
+```bash
+glialnode execution-context list-outcomes \
+  --repo-id GlialNode \
+  --metrics-db .glialnode/glialnode.metrics.sqlite \
+  --json
+```
 
 ## Retention
 
@@ -116,6 +171,6 @@ Long-lived recommendations should be earned by repeated successful outcomes, not
 
 1. Define the execution-context model, validation, privacy rules, and retention policy. Complete.
 2. Add a recommendation API that accepts task text and available tools/skills, but returns only explainable metadata. Complete for the pure API and CLI JSON.
-3. Add outcome recording to metrics storage without raw text.
+3. Add outcome recording to metrics storage without raw text. Complete for API, client, SQLite, CLI, docs, and tests.
 4. Surface routing efficiency in the dashboard after outcome telemetry exists.
 5. Add freshness/degrade behavior when skills, MCP tools, repo paths, or project conventions change.

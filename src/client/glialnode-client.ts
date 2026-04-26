@@ -92,13 +92,16 @@ import {
   SqliteMetricsRepository,
   createDisabledMetricsRepository,
   resolveDefaultMetricsDatabasePath,
+  type ExecutionContextRecordFilters,
   type MetricsRepository,
+  type RecordExecutionOutcomeInput,
   type RecordTokenUsageInput,
   type TokenUsageFilters,
   type TokenUsageRecord,
   type TokenUsageReport,
   type TokenUsageReportOptions,
 } from "../metrics/index.js";
+import type { ExecutionContextRecord } from "../execution-context/index.js";
 import {
   buildReleaseReadinessReport,
   type ReleaseReadinessInputs,
@@ -924,6 +927,14 @@ export class GlialNodeClient {
 
   async getTokenUsageReport(options: TokenUsageReportOptions = {}): Promise<TokenUsageReport> {
     return this.getMetricsRepository().getTokenUsageReport(options);
+  }
+
+  async recordExecutionOutcome(input: RecordExecutionOutcomeInput): Promise<ExecutionContextRecord> {
+    return this.getMetricsRepository().recordExecutionOutcome(input);
+  }
+
+  async listExecutionContextRecords(filters: ExecutionContextRecordFilters = {}): Promise<ExecutionContextRecord[]> {
+    return this.getMetricsRepository().listExecutionContextRecords(filters);
   }
 
   async buildDashboardOverviewSnapshot(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardOverviewSnapshot> {

@@ -1,5 +1,14 @@
 import { ValidationError } from "../core/errors.js";
 import { createId } from "../core/ids.js";
+import {
+  assertNoForbiddenExecutionContextFields,
+  createExecutionContextRecord,
+  createExecutionContextTaskFingerprint,
+  type CreateExecutionContextRecordInput,
+  type CreateExecutionContextTaskFingerprintInput,
+  type ExecutionContextRecord,
+  type ExecutionContextOutcomeState,
+} from "../execution-context/index.js";
 
 export type TokenUsageGranularity = "day" | "week" | "month" | "all";
 
@@ -122,6 +131,27 @@ export interface MetricsRepository {
   recordTokenUsage(input: RecordTokenUsageInput): Promise<TokenUsageRecord>;
   listTokenUsage(filters?: TokenUsageFilters): Promise<TokenUsageRecord[]>;
   getTokenUsageReport(options?: TokenUsageReportOptions): Promise<TokenUsageReport>;
+  recordExecutionOutcome(input: RecordExecutionOutcomeInput): Promise<ExecutionContextRecord>;
+  listExecutionContextRecords(filters?: ExecutionContextRecordFilters): Promise<ExecutionContextRecord[]>;
+}
+
+export interface RecordExecutionOutcomeInput extends Omit<CreateExecutionContextRecordInput, "taskFingerprint"> {
+  readonly taskText: string;
+  readonly features?: CreateExecutionContextTaskFingerprintInput["features"];
+}
+
+export interface ExecutionContextRecordFilters {
+  readonly fingerprintHash?: string;
+  readonly repoId?: string;
+  readonly projectId?: string;
+  readonly workflowId?: string;
+  readonly agentId?: string;
+  readonly outcomeState?: ExecutionContextOutcomeState;
+  readonly from?: string;
+  readonly to?: string;
+  readonly includeExpired?: boolean;
+  readonly now?: string;
+  readonly limit?: number;
 }
 
 const FORBIDDEN_TOKEN_USAGE_KEYS = new Set([
@@ -173,6 +203,29 @@ export function createTokenUsageRecord(input: RecordTokenUsageInput): TokenUsage
     totalCost: input.totalCost,
     dimensions: input.dimensions,
     createdAt: input.createdAt ?? new Date().toISOString(),
+  });
+}
+
+export function createExecutionOutcomeRecord(input: RecordExecutionOutcomeInput): ExecutionContextRecord {
+  const { taskText: _taskText, ...routingMetadata } = input as unknown as Record<string, unknown>;
+  assertNoForbiddenExecutionContextFields(routingMetadata, "executionOutcome");
+
+  const taskFingerprint = createExecutionContextTaskFingerprint({
+    taskText: input.taskText,
+    scope: input.scope,
+    features: input.features,
+  });
+  return createExecutionContextRecord({
+    taskFingerprint,
+    scope: input.scope,
+    selectedSkills: input.selectedSkills,
+    selectedTools: input.selectedTools,
+    skippedTools: input.skippedTools,
+    firstReads: input.firstReads,
+    outcome: input.outcome,
+    confidence: input.confidence,
+    createdAt: input.createdAt,
+    retentionDays: input.retentionDays,
   });
 }
 

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { ConfigurationError } from "../core/errors.js";
-import { METRICS_SQLITE_SCHEMA_VERSION, metricsBootstrapSql } from "./schema.js";
+import { METRICS_SQLITE_SCHEMA_VERSION, metricsBootstrapSql, metricsExecutionContextSql } from "./schema.js";
 
 export interface MetricsSqliteMigration {
   version: number;
@@ -28,6 +28,11 @@ export const metricsSqliteMigrations: MetricsSqliteMigration[] = [
     version: 1,
     description: "Bootstrap GlialNode token usage metrics schema.",
     sql: metricsBootstrapSql,
+  },
+  {
+    version: 2,
+    description: "Add execution context routing outcome records.",
+    sql: metricsExecutionContextSql,
   },
 ];
 

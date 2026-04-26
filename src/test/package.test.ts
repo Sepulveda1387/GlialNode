@@ -39,6 +39,6 @@ test("package dashboard subpath resolves to the public dashboard contract", asyn
 test("package metrics subpath resolves to the public metrics contract", async () => {
   const metrics = await import("glialnode/metrics");
 
-  assert.equal(metrics.METRICS_SQLITE_SCHEMA_VERSION, 1);
+  assert.equal(metrics.METRICS_SQLITE_SCHEMA_VERSION, 2);
   assert.equal(typeof metrics.SqliteMetricsRepository, "function");
 });

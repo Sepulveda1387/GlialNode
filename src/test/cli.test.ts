@@ -440,7 +440,7 @@ test("CLI execution-context recommend emits advisory JSON without raw task text"
         "--available-skills",
         "typescript",
         "--available-tools",
-        "functions.shell_command,functions.apply_patch",
+        "functions.shell_command,functions.apply_patch,web.run",
         "--records",
         recordsPath,
         "--json",
@@ -464,6 +464,91 @@ test("CLI execution-context recommend emits advisory JSON without raw task text"
     assert.deepEqual(payload.recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
     assert.ok(payload.recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
     assert.doesNotMatch(result.lines.join("\n"), /fix failing dashboard cli tests/i);
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI execution-context records outcomes and recommends from metrics database", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-execution-context-metrics-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const metricsPath = join(tempDirectory, "glialnode.metrics.sqlite");
+  const repository = createRepository(databasePath);
+
+  try {
+    const recordResult = await runCommand(
+      parseArgs([
+        "execution-context",
+        "record-outcome",
+        "--task",
+        "repair macos verification failure",
+        "--repo-id",
+        "GlialNode",
+        "--features",
+        "ci,sqlite",
+        "--selected-tools",
+        "functions.shell_command,functions.apply_patch",
+        "--skipped-tools",
+        "web.run",
+        "--first-reads",
+        "src/test/sqlite-repository.test.ts",
+        "--outcome",
+        "success",
+        "--tool-call-count",
+        "4",
+        "--input-tokens",
+        "500",
+        "--output-tokens",
+        "120",
+        "--metrics-db",
+        metricsPath,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const recordPayload = JSON.parse(recordResult.lines.join("\n")) as {
+      record: {
+        taskFingerprint: { hash: string };
+        outcome: { state: string };
+      };
+    };
+    assert.equal(recordPayload.record.taskFingerprint.hash.length, 64);
+    assert.equal(recordPayload.record.outcome.state, "success");
+    assert.doesNotMatch(recordResult.lines.join("\n"), /repair macos verification failure/i);
+
+    const recommendResult = await runCommand(
+      parseArgs([
+        "execution-context",
+        "recommend",
+        "--task",
+        "Repair macOS verification failure",
+        "--repo-id",
+        "GlialNode",
+        "--features",
+        "sqlite,ci",
+        "--available-tools",
+        "functions.shell_command,functions.apply_patch,web.run",
+        "--metrics-db",
+        metricsPath,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const recommendPayload = JSON.parse(recommendResult.lines.join("\n")) as {
+      recommendation: {
+        matchedRecords: number;
+        selectedTools: string[];
+        avoidTools: string[];
+      };
+    };
+    assert.equal(recommendPayload.recommendation.matchedRecords, 1);
+    assert.deepEqual(recommendPayload.recommendation.selectedTools, [
+      "functions.apply_patch",
+      "functions.shell_command",
+    ]);
+    assert.deepEqual(recommendPayload.recommendation.avoidTools, ["web.run"]);
+    assert.doesNotMatch(recommendResult.lines.join("\n"), /Repair macOS verification failure/i);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

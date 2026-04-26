@@ -16,14 +16,18 @@ import {
 } from "./migrations.js";
 import {
   buildTokenUsageReport,
+  createExecutionOutcomeRecord,
   createTokenUsageRecord,
+  type ExecutionContextRecordFilters,
   type MetricsRepository,
+  type RecordExecutionOutcomeInput,
   type RecordTokenUsageInput,
   type TokenUsageFilters,
   type TokenUsageRecord,
   type TokenUsageReport,
   type TokenUsageReportOptions,
 } from "./repository.js";
+import type { ExecutionContextRecord } from "../execution-context/index.js";
 
 export interface SqliteMetricsRepositoryOptions {
   filename?: string;
@@ -55,6 +59,30 @@ interface TokenUsageRow {
   total_cost: number | null;
   dimensions_json: string | null;
   created_at: string;
+}
+
+interface ExecutionContextRow {
+  id: string;
+  fingerprint_method: string;
+  fingerprint_hash: string;
+  fingerprint_feature_count: number;
+  repo_id: string | null;
+  project_id: string | null;
+  workflow_id: string | null;
+  agent_id: string | null;
+  selected_skills_json: string;
+  selected_tools_json: string;
+  skipped_tools_json: string;
+  first_reads_json: string;
+  outcome_state: ExecutionContextRecord["outcome"]["state"];
+  latency_ms: number | null;
+  tool_call_count: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  outcome_notes_json: string;
+  confidence: ExecutionContextRecord["confidence"];
+  created_at: string;
+  expires_at: string;
 }
 
 export class SqliteMetricsRepository implements MetricsRepository {
@@ -165,6 +193,71 @@ export class SqliteMetricsRepository implements MetricsRepository {
     return buildTokenUsageReport(records, options);
   }
 
+  async recordExecutionOutcome(input: RecordExecutionOutcomeInput): Promise<ExecutionContextRecord> {
+    const record = createExecutionOutcomeRecord(input);
+
+    this.db.prepare(
+      `
+      INSERT INTO execution_context_records (
+        id,
+        fingerprint_method,
+        fingerprint_hash,
+        fingerprint_feature_count,
+        repo_id,
+        project_id,
+        workflow_id,
+        agent_id,
+        selected_skills_json,
+        selected_tools_json,
+        skipped_tools_json,
+        first_reads_json,
+        outcome_state,
+        latency_ms,
+        tool_call_count,
+        input_tokens,
+        output_tokens,
+        outcome_notes_json,
+        confidence,
+        created_at,
+        expires_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    ).run(
+      record.id,
+      record.taskFingerprint.method,
+      record.taskFingerprint.hash,
+      record.taskFingerprint.featureCount,
+      record.scope?.repoId ?? null,
+      record.scope?.projectId ?? null,
+      record.scope?.workflowId ?? null,
+      record.scope?.agentId ?? null,
+      JSON.stringify(record.selectedSkills),
+      JSON.stringify(record.selectedTools),
+      JSON.stringify(record.skippedTools),
+      JSON.stringify(record.firstReads),
+      record.outcome.state,
+      record.outcome.latencyMs ?? null,
+      record.outcome.toolCallCount ?? null,
+      record.outcome.inputTokens ?? null,
+      record.outcome.outputTokens ?? null,
+      JSON.stringify(record.outcome.notes ?? []),
+      record.confidence,
+      record.createdAt,
+      record.expiresAt,
+    );
+
+    return record;
+  }
+
+  async listExecutionContextRecords(
+    filters: ExecutionContextRecordFilters = {},
+  ): Promise<ExecutionContextRecord[]> {
+    const { sql, values } = buildExecutionContextListQuery(filters);
+    const rows = this.db.prepare(sql).all(...values) as unknown as ExecutionContextRow[];
+    return rows.map(mapExecutionContextRow);
+  }
+
   getSchemaVersion(): number {
     return this.schemaVersion;
   }
@@ -227,6 +320,45 @@ function buildTokenUsageListQuery(filters: TokenUsageFilters): { sql: string; va
   };
 }
 
+function buildExecutionContextListQuery(filters: ExecutionContextRecordFilters): { sql: string; values: Array<string | number> } {
+  const where: string[] = [];
+  const values: Array<string | number> = [];
+
+  addFilter(where, values, "fingerprint_hash", filters.fingerprintHash);
+  addFilter(where, values, "repo_id", filters.repoId);
+  addFilter(where, values, "project_id", filters.projectId);
+  addFilter(where, values, "workflow_id", filters.workflowId);
+  addFilter(where, values, "agent_id", filters.agentId);
+  addFilter(where, values, "outcome_state", filters.outcomeState);
+
+  if (filters.from) {
+    where.push("created_at >= ?");
+    values.push(filters.from);
+  }
+  if (filters.to) {
+    where.push("created_at <= ?");
+    values.push(filters.to);
+  }
+  if (!filters.includeExpired) {
+    where.push("expires_at > ?");
+    values.push(filters.now ?? new Date().toISOString());
+  }
+
+  const limit = filters.limit ?? 500;
+  values.push(limit);
+
+  return {
+    sql: `
+      SELECT *
+      FROM execution_context_records
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `,
+    values,
+  };
+}
+
 function addFilter(where: string[], values: Array<string | number>, column: string, value: string | undefined): void {
   if (value === undefined) {
     return;
@@ -263,6 +395,39 @@ function mapTokenUsageRow(row: TokenUsageRow): TokenUsageRecord {
   });
 }
 
+function mapExecutionContextRow(row: ExecutionContextRow): ExecutionContextRecord {
+  return omitUndefined({
+    schemaVersion: "1.0.0" as const,
+    id: row.id,
+    taskFingerprint: {
+      method: row.fingerprint_method as ExecutionContextRecord["taskFingerprint"]["method"],
+      hash: row.fingerprint_hash,
+      featureCount: row.fingerprint_feature_count,
+    },
+    scope: omitUndefined({
+      repoId: row.repo_id ?? undefined,
+      projectId: row.project_id ?? undefined,
+      workflowId: row.workflow_id ?? undefined,
+      agentId: row.agent_id ?? undefined,
+    }),
+    selectedSkills: parseJsonStringArray(row.selected_skills_json),
+    selectedTools: parseJsonStringArray(row.selected_tools_json),
+    skippedTools: parseJsonStringArray(row.skipped_tools_json),
+    firstReads: parseJsonStringArray(row.first_reads_json),
+    outcome: omitUndefined({
+      state: row.outcome_state,
+      latencyMs: row.latency_ms ?? undefined,
+      toolCallCount: row.tool_call_count ?? undefined,
+      inputTokens: row.input_tokens ?? undefined,
+      outputTokens: row.output_tokens ?? undefined,
+      notes: parseJsonStringArray(row.outcome_notes_json),
+    }),
+    confidence: row.confidence,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  });
+}
+
 function serializeJson(value: unknown): string | null {
   if (value === undefined) {
     return null;
@@ -275,6 +440,14 @@ function parseJson(value: string | null): Record<string, string | number | boole
     return undefined;
   }
   return JSON.parse(value) as Record<string, string | number | boolean | null>;
+}
+
+function parseJsonStringArray(value: string): string[] {
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
+    return [];
+  }
+  return parsed;
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

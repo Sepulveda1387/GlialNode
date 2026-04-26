@@ -82,6 +82,8 @@ import {
 import {
   SqliteMetricsRepository,
   resolveDefaultMetricsDatabasePath,
+  type ExecutionContextRecordFilters,
+  type RecordExecutionOutcomeInput,
   type RecordTokenUsageInput,
   type TokenCostModel,
   type TokenUsageGranularity,
@@ -162,7 +164,7 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
   }
 
   if (resource === "execution-context") {
-    return runExecutionContextCommand(action, parsed);
+    return runExecutionContextCommand(action, parsed, context);
   }
 
   if (resource === "dashboard") {
@@ -220,7 +222,9 @@ export function usageText(): string {
     "  glialnode release readiness [--root <path>] [--tests-green true|false] [--pack-green true|false] [--docs-reviewed true|false] [--tree-clean true|false] [--user-approved true|false] [--json]",
     "  glialnode metrics token-record --operation <name> --model <model> --input-tokens <n> --output-tokens <n> [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--provider <name>] [--baseline-tokens <n>] [--actual-context-tokens <n>] [--glialnode-overhead-tokens <n>] [--estimated-saved-tokens <n>] [--estimated-saved-ratio <0..1>] [--latency-ms <n>] [--cost-currency <code>] [--input-cost <n>] [--output-cost <n>] [--total-cost <n>] [--dimensions <json>] [--created-at <iso>] [--metrics-db <path>] [--json]",
     "  glialnode metrics token-report [--granularity day|week|month|all] [--metrics-db <path>] [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--operation <name>] [--provider <name>] [--model <model>] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
-    "  glialnode execution-context recommend --task <text> [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--features a,b] [--available-skills a,b] [--available-tools a,b] [--records <path>] [--max-recommendations <n>] [--json]",
+    "  glialnode execution-context recommend --task <text> [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--features a,b] [--available-skills a,b] [--available-tools a,b] [--records <path>] [--metrics-db <path>] [--max-recommendations <n>] [--json]",
+    "  glialnode execution-context record-outcome --task <text> --outcome success|partial|failed|unknown [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--features a,b] [--selected-skills a,b] [--selected-tools a,b] [--skipped-tools a,b] [--first-reads a,b] [--latency-ms <n>] [--tool-call-count <n>] [--input-tokens <n>] [--output-tokens <n>] [--confidence low|medium|high] [--retention-days <n>] [--metrics-db <path>] [--json]",
+    "  glialnode execution-context list-outcomes [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--outcome success|partial|failed|unknown] [--include-expired true|false] [--metrics-db <path>] [--limit <n>] [--json]",
     "  glialnode dashboard overview [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard executive [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
@@ -689,8 +693,25 @@ async function runMetricsCommand(
   };
 }
 
-async function runExecutionContextCommand(action: string, parsed: ParsedArgs): Promise<CommandResult> {
+async function runExecutionContextCommand(
+  action: string,
+  parsed: ParsedArgs,
+  context: CommandContext,
+): Promise<CommandResult> {
+  const metricsDatabasePath = resolve(parsed.flags["metrics-db"] ?? resolveDefaultMetricsDatabasePath(context.databasePath));
+
   if (action === "recommend") {
+    const fileRecords = parseExecutionContextRecordsFile(parsed.flags.records);
+    const metricsRecords = parsed.flags["metrics-db"] !== undefined
+      ? await withMetricsRepository(metricsDatabasePath, (metricsRepository) =>
+          metricsRepository.listExecutionContextRecords({
+            repoId: parsed.flags["repo-id"],
+            projectId: parsed.flags["project-id"],
+            workflowId: parsed.flags["workflow-id"],
+            agentId: parsed.flags["agent-id"],
+            limit: parsePositiveOptionalNumber(parsed.flags["records-limit"], "records-limit"),
+          }))
+      : [];
     const recommendation = recommendExecutionContext({
       taskText: parseRequiredString(parsed.flags.task, "task"),
       scope: {
@@ -702,17 +723,21 @@ async function runExecutionContextCommand(action: string, parsed: ParsedArgs): P
       features: parseCommaSeparatedList(parsed.flags.features),
       availableSkills: parseCommaSeparatedList(parsed.flags["available-skills"]),
       availableTools: parseCommaSeparatedList(parsed.flags["available-tools"]),
-      records: parseExecutionContextRecordsFile(parsed.flags.records),
+      records: [...fileRecords, ...metricsRecords],
       maxRecommendations: parsePositiveOptionalNumber(parsed.flags["max-recommendations"], "max-recommendations"),
     });
 
     if (wantsJson(parsed)) {
-      return jsonResult(parsed, { recommendation });
+      return jsonResult(parsed, {
+        metricsDatabasePath: parsed.flags["metrics-db"] !== undefined ? metricsDatabasePath : undefined,
+        recommendation,
+      });
     }
 
     return {
       lines: [
         `schemaVersion=${recommendation.schemaVersion}`,
+        ...(parsed.flags["metrics-db"] !== undefined ? [`metricsDatabase=${metricsDatabasePath}`] : []),
         `confidence=${recommendation.confidence}`,
         `matchedRecords=${recommendation.matchedRecords}`,
         `ignoredExpiredRecords=${recommendation.ignoredExpiredRecords}`,
@@ -725,9 +750,67 @@ async function runExecutionContextCommand(action: string, parsed: ParsedArgs): P
     };
   }
 
+  if (action === "record-outcome") {
+    const input = parseExecutionOutcomeInput(parsed.flags);
+    const record = await withMetricsRepository(metricsDatabasePath, (metricsRepository) =>
+      metricsRepository.recordExecutionOutcome(input));
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        metricsDatabasePath,
+        record,
+      });
+    }
+
+    return {
+      lines: [
+        `id=${record.id}`,
+        `metricsDatabase=${metricsDatabasePath}`,
+        `fingerprint=${record.taskFingerprint.hash}`,
+        `outcome=${record.outcome.state}`,
+        `confidence=${record.confidence}`,
+        `expiresAt=${record.expiresAt}`,
+      ],
+    };
+  }
+
+  if (action === "list-outcomes") {
+    const filters = parseExecutionContextRecordFilters(parsed.flags);
+    const records = await withMetricsRepository(metricsDatabasePath, (metricsRepository) =>
+      metricsRepository.listExecutionContextRecords(filters));
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, {
+        metricsDatabasePath,
+        records,
+      });
+    }
+
+    return {
+      lines: [
+        `metricsDatabase=${metricsDatabasePath}`,
+        `records=${records.length}`,
+        ...records.map((record) =>
+          `record=${record.id}:${record.outcome.state}:${record.confidence}:${record.taskFingerprint.hash}:${record.createdAt}`),
+      ],
+    };
+  }
+
   return {
     lines: ["Unknown execution-context command.", usageText()],
   };
+}
+
+async function withMetricsRepository<T>(
+  metricsDatabasePath: string,
+  operation: (metricsRepository: SqliteMetricsRepository) => Promise<T>,
+): Promise<T> {
+  const metricsRepository = new SqliteMetricsRepository({ filename: metricsDatabasePath });
+  try {
+    return await operation(metricsRepository);
+  } finally {
+    metricsRepository.close();
+  }
 }
 
 async function runDashboardCommand(
@@ -4150,6 +4233,70 @@ function parseExecutionContextRecordsFile(value: string | undefined): ExecutionC
     assertExecutionContextRecord(record);
     return record;
   });
+}
+
+function parseExecutionOutcomeInput(flags: Record<string, string>): RecordExecutionOutcomeInput {
+  return {
+    taskText: parseRequiredString(flags.task, "task"),
+    scope: {
+      repoId: flags["repo-id"],
+      projectId: flags["project-id"],
+      workflowId: flags["workflow-id"],
+      agentId: flags["agent-id"],
+    },
+    features: parseCommaSeparatedList(flags.features),
+    selectedSkills: parseCommaSeparatedList(flags["selected-skills"]),
+    selectedTools: parseCommaSeparatedList(flags["selected-tools"]),
+    skippedTools: parseCommaSeparatedList(flags["skipped-tools"]),
+    firstReads: parseCommaSeparatedList(flags["first-reads"]),
+    outcome: {
+      state: parseExecutionOutcomeState(flags.outcome),
+      latencyMs: parseOptionalNonNegativeNumber(flags["latency-ms"], "latency-ms"),
+      toolCallCount: parseOptionalNonNegativeInteger(flags["tool-call-count"], "tool-call-count"),
+      inputTokens: parseOptionalNonNegativeInteger(flags["input-tokens"], "input-tokens"),
+      outputTokens: parseOptionalNonNegativeInteger(flags["output-tokens"], "output-tokens"),
+      notes: parseCommaSeparatedList(flags.notes),
+    },
+    confidence: parseExecutionContextConfidence(flags.confidence),
+    createdAt: flags["created-at"],
+    retentionDays: parsePositiveOptionalNumber(flags["retention-days"], "retention-days"),
+  };
+}
+
+function parseExecutionContextRecordFilters(flags: Record<string, string>): ExecutionContextRecordFilters {
+  return {
+    fingerprintHash: flags["fingerprint-hash"],
+    repoId: flags["repo-id"],
+    projectId: flags["project-id"],
+    workflowId: flags["workflow-id"],
+    agentId: flags["agent-id"],
+    outcomeState: flags.outcome ? parseExecutionOutcomeState(flags.outcome) : undefined,
+    from: flags.from,
+    to: flags.to,
+    includeExpired: parseOptionalBoolean(flags["include-expired"]) ?? false,
+    limit: parsePositiveOptionalNumber(flags.limit, "limit"),
+  };
+}
+
+function parseExecutionOutcomeState(
+  value: string | undefined,
+): NonNullable<RecordExecutionOutcomeInput["outcome"]>["state"] {
+  if (value === "success" || value === "partial" || value === "failed" || value === "unknown") {
+    return value;
+  }
+  throw new Error(`Invalid --outcome value: ${value ?? "undefined"}`);
+}
+
+function parseExecutionContextConfidence(
+  value: string | undefined,
+): RecordExecutionOutcomeInput["confidence"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  throw new Error(`Invalid --confidence value: ${value}`);
 }
 
 function parseCommaSeparatedList(value: string | undefined): string[] | undefined {
