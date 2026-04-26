@@ -234,9 +234,10 @@ Memory records now support a compact internal form as well. GlialNode keeps the 
 ```bash
 npm install
 npm run check
-npm run test
+npm test
 npm run demo
 npm run demo:client
+npm run demo:dashboard
 npm run pack:check
 glialnode doctor --json
 glialnode status --json --json-envelope
