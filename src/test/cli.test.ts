@@ -820,6 +820,37 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    await runCommand(
+      parseArgs([
+        "execution-context",
+        "record-outcome",
+        "--task",
+        "shape the local executive dashboard export",
+        "--project-id",
+        "dashboard-kinds",
+        "--agent-id",
+        scopeId,
+        "--selected-skills",
+        "typescript",
+        "--selected-tools",
+        "functions.shell_command",
+        "--skipped-tools",
+        "web.run",
+        "--outcome",
+        "success",
+        "--latency-ms",
+        "30",
+        "--tool-call-count",
+        "2",
+        "--input-tokens",
+        "200",
+        "--output-tokens",
+        "40",
+        "--metrics-db",
+        metricsPath,
+      ]),
+      { repository, databasePath },
+    );
 
     const executiveResult = await runCommand(
       parseArgs(["dashboard", "executive", "--metrics-db", metricsPath, "--granularity", "all", "--json"]),
@@ -887,9 +918,22 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const routingEfficiencyResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "routing-efficiency",
+        "--metrics-db",
+        metricsPath,
+        "--project-id",
+        "dashboard-kinds",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
     const tokenRoiCsvPath = join(tempDirectory, "token-roi.csv");
     const recallQualityJsonPath = join(tempDirectory, "recall-quality.json");
     const trustJsonPath = join(tempDirectory, "trust.json");
+    const routingEfficiencyJsonPath = join(tempDirectory, "routing-efficiency.json");
     const dashboardHtmlPath = join(tempDirectory, "dashboard.html");
     const tokenRoiExportResult = await runCommand(
       parseArgs([
@@ -941,6 +985,22 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const routingEfficiencyExportResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "export",
+        "--kind",
+        "routing-efficiency",
+        "--output",
+        routingEfficiencyJsonPath,
+        "--metrics-db",
+        metricsPath,
+        "--project-id",
+        "dashboard-kinds",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
     const dashboardHtmlExportResult = await runCommand(
       parseArgs([
         "dashboard",
@@ -969,6 +1029,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
           topRoi: Array<{ key: string; metric: { value: number } }>;
           topRisk: Array<{ key: string; metric: { value: number } }>;
         };
+        routing?: { totals: { recordedOutcomes: { value: number }; successRate: { value: number } } };
       };
     };
     const operations = JSON.parse(operationsResult.lines.join("\n")) as {
@@ -1002,9 +1063,13 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     const trust = JSON.parse(trustResult.lines.join("\n")) as {
       report: { totals: { spaces: number; trustedSigners: number; provenanceEvents: number } };
     };
+    const routingEfficiency = JSON.parse(routingEfficiencyResult.lines.join("\n")) as {
+      report: { totals: { recordedOutcomes: { value: number }; successRate: { value: number } } };
+    };
     const tokenRoiExport = JSON.parse(tokenRoiExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const recallQualityExport = JSON.parse(recallQualityExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const trustExport = JSON.parse(trustExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
+    const routingEfficiencyExport = JSON.parse(routingEfficiencyExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const dashboardHtmlExport = JSON.parse(dashboardHtmlExportResult.lines.join("\n")) as {
       kind: string;
       format: string;
@@ -1018,6 +1083,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.ok(executive.snapshot.risk.memoryHealthScore.value > 0);
     assert.ok(executive.snapshot.insights?.topRoi.some((item) => item.key === `space:${spaceId}` && item.metric.value === 600));
     assert.ok(executive.snapshot.insights?.topRisk.some((item) => item.key === `space:${spaceId}` && item.metric.value > 0));
+    assert.equal(executive.snapshot.routing?.totals.recordedOutcomes.value, 1);
+    assert.equal(executive.snapshot.routing?.totals.successRate.value, 1);
     assert.equal(operations.snapshot.kind, "operations");
     assert.equal(operations.snapshot.storage.backend.value, "sqlite");
     assert.equal(operations.snapshot.reliability.doctorStatus.value, "attention");
@@ -1037,6 +1104,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(trust.report.totals.spaces, 1);
     assert.equal(trust.report.totals.trustedSigners, 0);
     assert.equal(trust.report.totals.provenanceEvents, 0);
+    assert.equal(routingEfficiency.report.totals.recordedOutcomes.value, 1);
+    assert.equal(routingEfficiency.report.totals.successRate.value, 1);
     assert.equal(tokenRoiExport.kind, "token-roi");
     assert.equal(tokenRoiExport.format, "csv");
     assert.match(readFileSync(tokenRoiCsvPath, "utf8"), /estimated_saved_tokens/);
@@ -1047,6 +1116,9 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(trustExport.kind, "trust");
     assert.equal(trustExport.format, "json");
     assert.equal(JSON.parse(readFileSync(trustJsonPath, "utf8")).kind, "trust");
+    assert.equal(routingEfficiencyExport.kind, "routing-efficiency");
+    assert.equal(routingEfficiencyExport.format, "json");
+    assert.equal(JSON.parse(readFileSync(routingEfficiencyJsonPath, "utf8")).kind, "routing-efficiency");
     assert.equal(dashboardHtmlExport.kind, "dashboard-html");
     assert.equal(dashboardHtmlExport.format, "html");
     assert.equal(dashboardHtmlExport.screenshotsCaptured, false);
@@ -1057,6 +1129,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top ROI/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Top Risk/);
     assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Benchmark Baseline/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Routing Efficiency/);
     assert.doesNotMatch(readFileSync(dashboardHtmlPath, "utf8"), /Executive dashboard CLI memory/);
   } finally {
     repository.close();
