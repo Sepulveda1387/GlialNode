@@ -4,10 +4,14 @@ import assert from "node:assert/strict";
 import {
   DASHBOARD_SNAPSHOT_SCHEMA_VERSION,
   ValidationError,
+  assertDashboardCapabilityAllowed,
   assertDashboardPrivacyPolicy,
   assertDashboardSnapshotPrivacy,
+  assertOssDashboardBoundary,
+  createDashboardDistributionBoundary,
   createDefaultDashboardPrivacyPolicy,
   createUnavailableDashboardMetric,
+  type DashboardDistributionBoundary,
   type OperationsDashboardSnapshot,
 } from "../index.js";
 
@@ -27,6 +31,31 @@ test("dashboard privacy policy rejects hosted team mode in OSS contracts", () =>
   });
 
   assert.throws(() => assertDashboardPrivacyPolicy(policy), ValidationError);
+});
+
+test("dashboard distribution boundary reserves paid team capabilities outside OSS", () => {
+  const boundary = createDashboardDistributionBoundary("oss_local");
+
+  assert.equal(boundary.tier, "oss_local");
+  assert.ok(boundary.allowedCapabilities.includes("local_metrics_sqlite"));
+  assert.ok(boundary.allowedCapabilities.includes("local_read_only_http"));
+  assert.ok(boundary.reservedCapabilities.includes("supabase_project_backend"));
+  assert.ok(boundary.reservedCapabilities.includes("subscription_billing"));
+  assert.doesNotThrow(() => assertOssDashboardBoundary(boundary));
+  assert.doesNotThrow(() => assertDashboardCapabilityAllowed("local_static_html", boundary));
+  assert.throws(() => assertDashboardCapabilityAllowed("hosted_team_dashboard", boundary), ValidationError);
+});
+
+test("dashboard distribution boundary rejects malformed OSS capability mixes", () => {
+  const unsafeBoundary: DashboardDistributionBoundary = {
+    ...createDashboardDistributionBoundary("oss_local"),
+    allowedCapabilities: [
+      ...createDashboardDistributionBoundary("oss_local").allowedCapabilities,
+      "postgres_team_storage",
+    ],
+  };
+
+  assert.throws(() => assertOssDashboardBoundary(unsafeBoundary), ValidationError);
 });
 
 test("dashboard privacy policy requires origins for local HTTP access", () => {

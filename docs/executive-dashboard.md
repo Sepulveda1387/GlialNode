@@ -340,8 +340,11 @@ The package exports privacy helpers from `glialnode/dashboard`:
 
 ```ts
 import {
+  assertDashboardCapabilityAllowed,
   assertDashboardPrivacyPolicy,
   assertDashboardSnapshotPrivacy,
+  assertOssDashboardBoundary,
+  createDashboardDistributionBoundary,
   createDefaultDashboardPrivacyPolicy,
 } from "glialnode/dashboard";
 ```
@@ -361,6 +364,15 @@ Local HTTP notes:
 - CORS is deny-by-default for browser origins. Use `--allow-origin <origin[,origin]>`; wildcard origins are intentionally not supported.
 - The local server auto-shuts down after `--duration-ms` and is intended for local dashboard clients, CI probes, and temporary previews.
 - Hosted team dashboards are intentionally rejected in the OSS privacy contract and reserved for the future paid/Supabase path.
+
+## OSS Vs Paid Dashboard Boundary
+
+The open-source package intentionally ships the dashboard as local-first infrastructure:
+
+- Allowed in OSS: local `metrics.sqlite`, CLI JSON, standalone local HTML export, temporary loopback-only read-only HTTP API, and seeded demo fixtures.
+- Reserved for a future paid/team path: hosted dashboards, Supabase project backend, Postgres team storage, subscription billing, org role access control, and cross-user tenancy.
+- Validation helpers expose this boundary through `createDashboardDistributionBoundary()`, `assertOssDashboardBoundary()`, and `assertDashboardCapabilityAllowed(...)`.
+- The paid path must not be started as a hidden default in OSS. It should only begin after public OSS usage signals justify it, with tenant isolation, billing, and auth modeled explicitly.
 
 Read-only local HTTP routes:
 
@@ -410,7 +422,8 @@ Snapshot privacy validation:
 15. Add optional read-only local HTTP routes. Complete for loopback-only, explicit-origin dashboard API routes.
 16. Add lifecycle-due memory health detail. Complete for planner-derived compaction/retention candidates and spaces missing maintenance.
 17. Add executive historical trend detail. Complete for recent bucket-level token ROI trend metrics in existing snapshot contracts.
-18. Build the UI from snapshot contracts, not directly from storage tables.
+18. Define OSS vs paid dashboard boundary. Complete for exported capability boundary helpers plus documentation that keeps Supabase/Postgres/team dashboards reserved.
+19. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

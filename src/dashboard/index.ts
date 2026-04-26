@@ -1,4 +1,5 @@
 export * from "./alerts.js";
+export * from "./boundary.js";
 export * from "./builders.js";
 export * from "./html.js";
 export * from "./privacy.js";
