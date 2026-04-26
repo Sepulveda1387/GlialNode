@@ -52,11 +52,13 @@ import {
   buildExecutiveDashboardSnapshot as buildExecutiveDashboardSnapshotContract,
   buildOperationsDashboardSnapshot as buildOperationsDashboardSnapshotContract,
   buildSpaceDashboardSnapshot as buildSpaceDashboardSnapshotContract,
+  buildDashboardRecallQualityReport,
   evaluateDashboardAlerts as evaluateDashboardAlertsContract,
   type DashboardAlertEvaluation,
   type DashboardAlertThresholdOverrides,
   type DashboardMemoryHealthReport,
   type DashboardOverviewSnapshot,
+  type DashboardRecallQualityReport,
   type ExecutiveDashboardSnapshot,
   type OperationsDashboardSnapshot,
 } from "../dashboard/index.js";
@@ -164,6 +166,8 @@ export interface DashboardSnapshotBuildOptions {
   latestBackupAt?: string;
   tokenUsage?: TokenUsageReportOptions;
   alertThresholds?: DashboardAlertThresholdOverrides;
+  maxTopRecalled?: number;
+  maxNeverRecalled?: number;
 }
 
 export interface CreateSpaceInput {
@@ -997,6 +1001,23 @@ export class GlialNodeClient {
       latestBackupAt: options.latestBackupAt,
       databaseBytes,
       thresholds: options.alertThresholds,
+    });
+  }
+
+  async buildRecallQualityReport(options: DashboardSnapshotBuildOptions = {}): Promise<DashboardRecallQualityReport> {
+    const spaces = await this.repository.listSpaces();
+    const scopedSpaceIds = options.tokenUsage?.spaceId
+      ? spaces.filter((space) => space.id === options.tokenUsage?.spaceId).map((space) => space.id)
+      : spaces.map((space) => space.id);
+    const [records, tokenUsageRecords] = await Promise.all([
+      this.listDashboardRecords(scopedSpaceIds),
+      this.metricsOptions.disabled ? Promise.resolve([]) : this.listTokenUsage(options.tokenUsage),
+    ]);
+
+    return buildDashboardRecallQualityReport(records, tokenUsageRecords, {
+      tokenUsage: options.tokenUsage,
+      maxTopRecalled: options.maxTopRecalled,
+      maxNeverRecalled: options.maxNeverRecalled,
     });
   }
 
@@ -2786,6 +2807,13 @@ export class GlialNodeClient {
     }
 
     return { activeSpaces, activeRecords, staleRecords, maintenanceDue };
+  }
+
+  private async listDashboardRecords(spaceIds: readonly string[]): Promise<MemoryRecord[]> {
+    const recordGroups = await Promise.all(
+      spaceIds.map((spaceId) => this.repository.listRecords(spaceId, Number.MAX_SAFE_INTEGER)),
+    );
+    return recordGroups.flat();
   }
 
   private getMemoryDatabaseBytes(): number | undefined {

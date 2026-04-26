@@ -276,6 +276,7 @@ Builder APIs:
 - `client.buildExecutiveDashboardSnapshot()`
 - `client.buildMemoryHealthReport()`
 - `client.buildOperationsDashboardSnapshot()`
+- `client.buildRecallQualityReport()`
 - `client.evaluateDashboardAlerts()`
 - `buildDashboardOverviewSnapshot(input)`
 - `buildSpaceDashboardSnapshot(input)`
@@ -291,7 +292,10 @@ glialnode dashboard space --space-id <space-id> --json
 glialnode dashboard agent --agent-id <agent-id> --json
 glialnode dashboard operations --json
 glialnode dashboard memory-health --json
+glialnode dashboard recall-quality --json
 glialnode dashboard alerts --json
+glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
+glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 ```
 
 Compatibility notes:
@@ -301,6 +305,8 @@ Compatibility notes:
 - Estimated values must include `provenance.estimateBasis.assumptions`.
 - Snapshot builders validate the schema and privacy contract before returning JSON.
 - Alert evaluations are foreground/read-only; the OSS package does not run a background alert daemon.
+- Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
+- Dashboard exports write local artifacts only. `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, and `alerts` support JSON.
 
 ## Privacy And Access Contract
 
@@ -347,8 +353,10 @@ Snapshot privacy validation:
 8. Add dashboard snapshot builders. Complete for overview, space, and agent connector snapshots.
 9. Expand dashboard snapshot builders. Complete for executive and operations snapshots, plus memory health report API.
 10. Add dashboard alert threshold model. Complete for memory health, maintenance, backup freshness, and database size thresholds.
-11. Add optional read-only local HTTP routes.
-12. Build the UI from snapshot contracts, not directly from storage tables.
+11. Add recall quality reporting. Complete for retrieval request counts, latency percentiles, compact-vs-full token ratio, top recalled IDs, and never-recalled candidates.
+12. Add exportable dashboard artifacts. Complete for token ROI CSV/JSON plus memory health, recall quality, and alerts JSON.
+13. Add optional read-only local HTTP routes.
+14. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 

@@ -544,6 +544,8 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const recalledRecordId = (await repository.listRecords(spaceId, 10))[0]?.id;
+    assert.ok(recalledRecordId);
     await runCommand(
       parseArgs([
         "metrics",
@@ -566,6 +568,10 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
         "300",
         "--output-tokens",
         "80",
+        "--latency-ms",
+        "42",
+        "--dimensions",
+        JSON.stringify({ primaryRecordId: recalledRecordId }),
       ]),
       { repository, databasePath },
     );
@@ -596,6 +602,58 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const recallQualityResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "recall-quality",
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--max-top-recalled",
+        "5",
+        "--max-never-recalled",
+        "5",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const tokenRoiCsvPath = join(tempDirectory, "token-roi.csv");
+    const recallQualityJsonPath = join(tempDirectory, "recall-quality.json");
+    const tokenRoiExportResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "export",
+        "--kind",
+        "token-roi",
+        "--format",
+        "csv",
+        "--output",
+        tokenRoiCsvPath,
+        "--metrics-db",
+        metricsPath,
+        "--granularity",
+        "all",
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+    const recallQualityExportResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "export",
+        "--kind",
+        "recall-quality",
+        "--output",
+        recallQualityJsonPath,
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
 
     const executive = JSON.parse(executiveResult.lines.join("\n")) as {
       snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
@@ -609,6 +667,14 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     const alerts = JSON.parse(alertsResult.lines.join("\n")) as {
       evaluation: { summary: { total: number; highestSeverity: string }; alerts: Array<{ code: string }> };
     };
+    const recallQuality = JSON.parse(recallQualityResult.lines.join("\n")) as {
+      report: {
+        totals: { recallRequests: number; measuredLatencyRequests: number; p50LatencyMs: number };
+        topRecalled: Array<{ recordId: string; count: number }>;
+      };
+    };
+    const tokenRoiExport = JSON.parse(tokenRoiExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
+    const recallQualityExport = JSON.parse(recallQualityExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
 
     assert.equal(executive.snapshot.kind, "executive");
     assert.equal(executive.snapshot.value.savedTokens.value, 600);
@@ -620,6 +686,17 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.ok(memoryHealth.report.healthScore.value > 0);
     assert.equal(alerts.evaluation.summary.highestSeverity, "critical");
     assert.ok(alerts.evaluation.alerts.some((alert) => alert.code === "memory_health_critical"));
+    assert.equal(recallQuality.report.totals.recallRequests, 1);
+    assert.equal(recallQuality.report.totals.measuredLatencyRequests, 1);
+    assert.equal(recallQuality.report.totals.p50LatencyMs, 42);
+    assert.equal(recallQuality.report.topRecalled[0]?.recordId, recalledRecordId);
+    assert.equal(tokenRoiExport.kind, "token-roi");
+    assert.equal(tokenRoiExport.format, "csv");
+    assert.match(readFileSync(tokenRoiCsvPath, "utf8"), /estimated_saved_tokens/);
+    assert.match(readFileSync(tokenRoiCsvPath, "utf8"), /600/);
+    assert.equal(recallQualityExport.kind, "recall-quality");
+    assert.equal(recallQualityExport.format, "json");
+    assert.equal(JSON.parse(readFileSync(recallQualityJsonPath, "utf8")).kind, "recall-quality");
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

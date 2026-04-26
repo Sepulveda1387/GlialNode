@@ -214,7 +214,9 @@ export function usageText(): string {
     "  glialnode dashboard agent --agent-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard operations [--metrics-db <path>] [--metrics-disabled true|false] [--latest-backup-at <iso>] [--json]",
     "  glialnode dashboard memory-health [--stale-freshness-threshold <0..1>] [--json]",
+    "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
+    "  glialnode dashboard export --kind token-roi|memory-health|recall-quality|alerts --output <path> [--format json|csv] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -693,6 +695,8 @@ async function runDashboardCommand(
       latestBackupAt: parsed.flags["latest-backup-at"],
       tokenUsage: parseTokenUsageReportOptions(parsed.flags),
       alertThresholds: parseDashboardAlertThresholdFlags(parsed.flags),
+      maxTopRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-top-recalled"], "max-top-recalled"),
+      maxNeverRecalled: parseOptionalNonNegativeInteger(parsed.flags["max-never-recalled"], "max-never-recalled"),
     };
 
     if (action === "memory-health") {
@@ -741,6 +745,63 @@ async function runDashboardCommand(
           `info=${evaluation.summary.info}`,
           `highestSeverity=${evaluation.summary.highestSeverity}`,
           ...evaluation.alerts.map((alert) => `alert=${alert.severity}:${alert.code}:${alert.message}`),
+        ],
+      };
+    }
+
+    if (action === "recall-quality") {
+      const report = await client.buildRecallQualityReport(options);
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          report,
+        });
+      }
+
+      return {
+        lines: [
+          `schemaVersion=${report.schemaVersion}`,
+          `metricsDatabase=${metricsDatabasePath}`,
+          `recallRequests=${report.totals.recallRequests}`,
+          `bundleRequests=${report.totals.bundleRequests}`,
+          `traceRequests=${report.totals.traceRequests}`,
+          `measuredLatencyRequests=${report.totals.measuredLatencyRequests}`,
+          `averageLatencyMs=${report.totals.averageLatencyMs ?? ""}`,
+          `p50LatencyMs=${report.totals.p50LatencyMs ?? ""}`,
+          `p95LatencyMs=${report.totals.p95LatencyMs ?? ""}`,
+          `compactVsFullUsageRatio=${report.totals.compactVsFullUsageRatio ?? ""}`,
+          `topRecalled=${report.topRecalled.length}`,
+          `neverRecalledCandidates=${report.neverRecalledCandidates.length}`,
+        ],
+      };
+    }
+
+    if (action === "export") {
+      const exportKind = parseDashboardExportKind(parsed.flags.kind);
+      const exportFormat = parseDashboardExportFormat(parsed.flags.format, exportKind);
+      const outputPath = resolve(parseRequiredString(parsed.flags.output, "output"));
+      const artifact = await buildDashboardExportArtifact(client, exportKind, exportFormat, options);
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, artifact.content, "utf8");
+
+      if (wantsJson(parsed)) {
+        return jsonResult(parsed, {
+          metricsDatabasePath,
+          kind: exportKind,
+          format: exportFormat,
+          outputPath,
+          bytes: Buffer.byteLength(artifact.content, "utf8"),
+        });
+      }
+
+      return {
+        lines: [
+          "Dashboard export written.",
+          `kind=${exportKind}`,
+          `format=${exportFormat}`,
+          `output=${outputPath}`,
+          `bytes=${Buffer.byteLength(artifact.content, "utf8")}`,
         ],
       };
     }
@@ -816,6 +877,102 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
     `savedCost=${snapshot.value.savedCost.value ?? ""}`,
     `maintenanceDue=${snapshot.operations.maintenanceDue.value ?? ""}`,
   ];
+}
+
+type DashboardExportKind = "token-roi" | "memory-health" | "recall-quality" | "alerts";
+type DashboardExportFormat = "json" | "csv";
+
+async function buildDashboardExportArtifact(
+  client: GlialNodeClient,
+  kind: DashboardExportKind,
+  format: DashboardExportFormat,
+  options: Parameters<GlialNodeClient["buildDashboardOverviewSnapshot"]>[0],
+): Promise<{ content: string }> {
+  if (kind === "token-roi") {
+    const report = await client.getTokenUsageReport(options?.tokenUsage);
+    return {
+      content: format === "csv"
+        ? formatTokenRoiCsv(report)
+        : `${JSON.stringify({ schemaVersion: "1.0.0", kind, report }, null, 2)}\n`,
+    };
+  }
+
+  if (format !== "json") {
+    throw new Error(`Dashboard export kind '${kind}' only supports json format.`);
+  }
+
+  const payload = kind === "memory-health"
+    ? await client.buildMemoryHealthReport(options)
+    : kind === "recall-quality"
+    ? await client.buildRecallQualityReport(options)
+    : await client.evaluateDashboardAlerts(options);
+
+  return {
+    content: `${JSON.stringify({ schemaVersion: "1.0.0", kind, payload }, null, 2)}\n`,
+  };
+}
+
+function formatTokenRoiCsv(report: Awaited<ReturnType<GlialNodeClient["getTokenUsageReport"]>>): string {
+  const rows = [
+    [
+      "bucket",
+      "records",
+      "input_tokens",
+      "output_tokens",
+      "baseline_tokens",
+      "actual_context_tokens",
+      "glialnode_overhead_tokens",
+      "estimated_saved_tokens",
+      "estimated_saved_ratio",
+      "latency_ms",
+      "cost_before",
+      "cost_after",
+      "cost_saved",
+      "recorded_cost",
+    ],
+    ...report.buckets.map((bucket) => [
+      bucket.key,
+      String(bucket.totals.recordCount),
+      String(bucket.totals.inputTokens),
+      String(bucket.totals.outputTokens),
+      String(bucket.totals.baselineTokens),
+      String(bucket.totals.actualContextTokens),
+      String(bucket.totals.glialnodeOverheadTokens),
+      String(bucket.totals.estimatedSavedTokens),
+      String(bucket.totals.estimatedSavedRatio ?? ""),
+      String(bucket.totals.latencyMs),
+      String(bucket.totals.costBefore ?? ""),
+      String(bucket.totals.costAfter ?? ""),
+      String(bucket.totals.costSaved ?? ""),
+      String(bucket.totals.recordedCost ?? ""),
+    ]),
+  ];
+
+  return `${rows.map((row) => row.map(escapeCsvField).join(",")).join("\n")}\n`;
+}
+
+function escapeCsvField(value: string): string {
+  if (!/[",\n\r]/.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
+function parseDashboardExportKind(value: string | undefined): DashboardExportKind {
+  if (value === "token-roi" || value === "memory-health" || value === "recall-quality" || value === "alerts") {
+    return value;
+  }
+  throw new Error(`Invalid --kind value: ${value ?? ""}`);
+}
+
+function parseDashboardExportFormat(value: string | undefined, kind: DashboardExportKind): DashboardExportFormat {
+  if (value === undefined) {
+    return kind === "token-roi" ? "csv" : "json";
+  }
+  if (value === "json" || value === "csv") {
+    return value;
+  }
+  throw new Error(`Invalid --format value: ${value}`);
 }
 
 async function runSpaceCommand(

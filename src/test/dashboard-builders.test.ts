@@ -314,3 +314,109 @@ test("dashboard alerts evaluate memory health and operations thresholds", async 
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+test("GlialNodeClient builds recall quality reports from metrics-only telemetry", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-dashboard-recall-quality-"));
+  const client = new GlialNodeClient({
+    filename: join(tempDirectory, "glialnode.sqlite"),
+    metrics: {
+      filename: join(tempDirectory, "glialnode.metrics.sqlite"),
+    },
+  });
+
+  try {
+    const space = await client.createSpace({ name: "Recall Quality Space" });
+    const scope = await client.addScope({
+      spaceId: space.id,
+      type: "agent",
+      label: "retriever",
+    });
+    const primary = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "decision",
+      content: "Recall quality primary memory.",
+      summary: "Recall quality primary",
+      importance: 0.9,
+      confidence: 0.9,
+      freshness: 0.9,
+    });
+    const supporting = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "mid",
+      kind: "fact",
+      content: "Recall quality supporting memory.",
+      summary: "Recall quality support",
+      importance: 0.7,
+      confidence: 0.8,
+      freshness: 0.8,
+    });
+    const neverRecalled = await client.addRecord({
+      spaceId: space.id,
+      scope: { id: scope.id, type: scope.type },
+      tier: "long",
+      kind: "fact",
+      content: "Important but never recalled memory.",
+      summary: "Never recalled candidate",
+      importance: 1,
+      confidence: 1,
+      freshness: 1,
+    });
+
+    await client.recordTokenUsage({
+      spaceId: space.id,
+      agentId: scope.id,
+      operation: "memory.recall",
+      model: "gpt-test",
+      baselineTokens: 1200,
+      actualContextTokens: 400,
+      glialnodeOverheadTokens: 50,
+      inputTokens: 450,
+      outputTokens: 100,
+      latencyMs: 25,
+      dimensions: {
+        primaryRecordId: primary.id,
+        supportingRecordIds: supporting.id,
+      },
+    });
+    await client.recordTokenUsage({
+      spaceId: space.id,
+      agentId: scope.id,
+      operation: "memory.bundle",
+      model: "gpt-test",
+      baselineTokens: 1000,
+      actualContextTokens: 500,
+      inputTokens: 500,
+      outputTokens: 90,
+      latencyMs: 75,
+      dimensions: {
+        primaryRecordId: primary.id,
+      },
+    });
+
+    const report = await client.buildRecallQualityReport({
+      tokenUsage: {
+        granularity: "all",
+        spaceId: space.id,
+      },
+      maxTopRecalled: 2,
+      maxNeverRecalled: 3,
+    });
+
+    assert.equal(report.schemaVersion, DASHBOARD_SNAPSHOT_SCHEMA_VERSION);
+    assert.equal(report.totals.recallRequests, 1);
+    assert.equal(report.totals.bundleRequests, 1);
+    assert.equal(report.totals.measuredLatencyRequests, 2);
+    assert.equal(report.totals.p50LatencyMs, 25);
+    assert.equal(report.totals.p95LatencyMs, 75);
+    assert.equal(report.topRecalled[0]?.recordId, primary.id);
+    assert.equal(report.topRecalled[0]?.count, 2);
+    assert.ok(report.topRecalled.some((entry) => entry.recordId === supporting.id));
+    assert.ok(report.neverRecalledCandidates.some((entry) => entry.recordId === neverRecalled.id));
+  } finally {
+    client.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
