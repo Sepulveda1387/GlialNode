@@ -38,6 +38,7 @@ Use `assertNoForbiddenExecutionContextFields(...)` and `assertExecutionContextRe
 import {
   createExecutionContextTaskFingerprint,
   createExecutionContextRecord,
+  recommendExecutionContext,
   assertExecutionContextRecord,
 } from "glialnode";
 ```
@@ -72,6 +73,39 @@ const record = createExecutionContextRecord({
 assertExecutionContextRecord(record);
 ```
 
+Recommendation example:
+
+```ts
+const recommendation = recommendExecutionContext({
+  taskText: "Fix a failing dashboard CLI test",
+  scope: { repoId: "GlialNode" },
+  features: ["typescript", "cli", "dashboard"],
+  availableSkills: ["typescript"],
+  availableTools: ["functions.shell_command", "functions.apply_patch"],
+  records: [record],
+});
+
+console.log(recommendation.selectedTools);
+console.log(recommendation.explanations);
+```
+
+Recommendations are advisory. They include `warnings` when previous records are expired or when a previously useful skill/tool is unavailable in the current runtime.
+
+CLI JSON:
+
+```bash
+glialnode execution-context recommend \
+  --task "Fix a failing dashboard CLI test" \
+  --repo-id GlialNode \
+  --features typescript,cli,dashboard \
+  --available-skills typescript \
+  --available-tools functions.shell_command,functions.apply_patch \
+  --records execution-context-records.json \
+  --json
+```
+
+The CLI reads records from a local JSON array or `{ "records": [...] }` object. It does not persist recommendations yet.
+
 ## Retention
 
 The default retention window is 30 days. Callers can provide `retentionDays` when creating a record. Short retention is intentional because tool inventories, skill names, repo layout, and project conventions can change quickly.
@@ -81,7 +115,7 @@ Long-lived recommendations should be earned by repeated successful outcomes, not
 ## V2.08 Implementation Order
 
 1. Define the execution-context model, validation, privacy rules, and retention policy. Complete.
-2. Add a recommendation API that accepts task text and available tools/skills, but returns only explainable metadata.
+2. Add a recommendation API that accepts task text and available tools/skills, but returns only explainable metadata. Complete for the pure API and CLI JSON.
 3. Add outcome recording to metrics storage without raw text.
 4. Surface routing efficiency in the dashboard after outcome telemetry exists.
 5. Add freshness/degrade behavior when skills, MCP tools, repo paths, or project conventions change.

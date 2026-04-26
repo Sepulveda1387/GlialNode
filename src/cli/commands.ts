@@ -75,6 +75,11 @@ import {
 import { buildMemoryBundle, buildRecallPack, buildRecallTrace, rerankRecordsWithSemanticPrototype } from "../memory/retrieval.js";
 import { evaluateSemanticPrototypeCorpus, type SemanticEvalCorpus, type SemanticEvalReport } from "../memory/semantic-eval.js";
 import {
+  assertExecutionContextRecord,
+  recommendExecutionContext,
+  type ExecutionContextRecord,
+} from "../execution-context/index.js";
+import {
   SqliteMetricsRepository,
   resolveDefaultMetricsDatabasePath,
   type RecordTokenUsageInput,
@@ -156,6 +161,10 @@ export async function runCommand(parsed: ParsedArgs, context: CommandContext): P
     return runMetricsCommand(action, parsed, context);
   }
 
+  if (resource === "execution-context") {
+    return runExecutionContextCommand(action, parsed);
+  }
+
   if (resource === "dashboard") {
     return runDashboardCommand(action, parsed, context);
   }
@@ -211,6 +220,7 @@ export function usageText(): string {
     "  glialnode release readiness [--root <path>] [--tests-green true|false] [--pack-green true|false] [--docs-reviewed true|false] [--tree-clean true|false] [--user-approved true|false] [--json]",
     "  glialnode metrics token-record --operation <name> --model <model> --input-tokens <n> --output-tokens <n> [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--provider <name>] [--baseline-tokens <n>] [--actual-context-tokens <n>] [--glialnode-overhead-tokens <n>] [--estimated-saved-tokens <n>] [--estimated-saved-ratio <0..1>] [--latency-ms <n>] [--cost-currency <code>] [--input-cost <n>] [--output-cost <n>] [--total-cost <n>] [--dimensions <json>] [--created-at <iso>] [--metrics-db <path>] [--json]",
     "  glialnode metrics token-report [--granularity day|week|month|all] [--metrics-db <path>] [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--operation <name>] [--provider <name>] [--model <model>] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
+    "  glialnode execution-context recommend --task <text> [--repo-id <id>] [--project-id <id>] [--workflow-id <id>] [--agent-id <id>] [--features a,b] [--available-skills a,b] [--available-tools a,b] [--records <path>] [--max-recommendations <n>] [--json]",
     "  glialnode dashboard overview [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard executive [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
     "  glialnode dashboard space --space-id <id> [--metrics-db <path>] [--metrics-disabled true|false] [--granularity day|week|month|all] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
@@ -676,6 +686,47 @@ async function runMetricsCommand(
 
   return {
     lines: ["Unknown metrics command.", usageText()],
+  };
+}
+
+async function runExecutionContextCommand(action: string, parsed: ParsedArgs): Promise<CommandResult> {
+  if (action === "recommend") {
+    const recommendation = recommendExecutionContext({
+      taskText: parseRequiredString(parsed.flags.task, "task"),
+      scope: {
+        repoId: parsed.flags["repo-id"],
+        projectId: parsed.flags["project-id"],
+        workflowId: parsed.flags["workflow-id"],
+        agentId: parsed.flags["agent-id"],
+      },
+      features: parseCommaSeparatedList(parsed.flags.features),
+      availableSkills: parseCommaSeparatedList(parsed.flags["available-skills"]),
+      availableTools: parseCommaSeparatedList(parsed.flags["available-tools"]),
+      records: parseExecutionContextRecordsFile(parsed.flags.records),
+      maxRecommendations: parsePositiveOptionalNumber(parsed.flags["max-recommendations"], "max-recommendations"),
+    });
+
+    if (wantsJson(parsed)) {
+      return jsonResult(parsed, { recommendation });
+    }
+
+    return {
+      lines: [
+        `schemaVersion=${recommendation.schemaVersion}`,
+        `confidence=${recommendation.confidence}`,
+        `matchedRecords=${recommendation.matchedRecords}`,
+        `ignoredExpiredRecords=${recommendation.ignoredExpiredRecords}`,
+        `selectedSkills=${recommendation.selectedSkills.join(",")}`,
+        `selectedTools=${recommendation.selectedTools.join(",")}`,
+        `avoidTools=${recommendation.avoidTools.join(",")}`,
+        `firstReads=${recommendation.firstReads.join(",")}`,
+        ...recommendation.warnings.map((warning) => `warning=${warning}`),
+      ],
+    };
+  }
+
+  return {
+    lines: ["Unknown execution-context command.", usageText()],
   };
 }
 
@@ -4076,6 +4127,40 @@ function parseOperationsBenchmarkBaselineFlag(value: string | undefined) {
     generatedAt: root.generatedAt,
     ...result,
   };
+}
+
+function parseExecutionContextRecordsFile(value: string | undefined): ExecutionContextRecord[] {
+  if (!value) {
+    return [];
+  }
+
+  const parsed = JSON.parse(readFileSync(resolve(value), "utf8")) as unknown;
+  const records = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray((parsed as { records?: unknown }).records)
+    ? (parsed as { records: unknown[] }).records
+    : undefined;
+
+  if (!records) {
+    throw new Error("--records must point to a JSON array or object with a records array.");
+  }
+
+  return records.map((entry) => {
+    const record = entry as ExecutionContextRecord;
+    assertExecutionContextRecord(record);
+    return record;
+  });
+}
+
+function parseCommaSeparatedList(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function parseOperationsBenchmarkResult(value: unknown) {

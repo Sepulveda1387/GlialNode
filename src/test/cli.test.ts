@@ -6,6 +6,10 @@ import { join } from "node:path";
 
 import { parseArgs } from "../cli/args.js";
 import { createRepository, runCommand } from "../cli/commands.js";
+import {
+  createExecutionContextRecord,
+  createExecutionContextTaskFingerprint,
+} from "../execution-context/index.js";
 
 test("CLI commands create and query persisted memory", async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-"));
@@ -393,6 +397,73 @@ test("CLI metrics token-record rejects raw text flags", async () => {
         ),
       /raw text or secret payloads/,
     );
+  } finally {
+    repository.close();
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("CLI execution-context recommend emits advisory JSON without raw task text", async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "glialnode-cli-execution-context-"));
+  const databasePath = join(tempDirectory, "glialnode.sqlite");
+  const repository = createRepository(databasePath);
+  const recordsPath = join(tempDirectory, "execution-context-records.json");
+
+  try {
+    const record = createExecutionContextRecord({
+      taskFingerprint: createExecutionContextTaskFingerprint({
+        taskText: "Fix failing dashboard CLI tests.",
+        scope: { repoId: "GlialNode" },
+        features: ["dashboard", "cli"],
+      }),
+      selectedSkills: ["typescript", "github"],
+      selectedTools: ["functions.shell_command", "functions.apply_patch"],
+      skippedTools: ["web.run"],
+      firstReads: ["docs/live-roadmap.gnl.md", "src/cli/commands.ts"],
+      outcome: { state: "success", toolCallCount: 4 },
+      confidence: "high",
+      createdAt: "2026-04-24T00:00:00.000Z",
+      retentionDays: 30,
+    });
+    writeFileSync(recordsPath, JSON.stringify({ records: [record] }), "utf8");
+
+    const result = await runCommand(
+      parseArgs([
+        "execution-context",
+        "recommend",
+        "--task",
+        "fix failing dashboard cli tests",
+        "--repo-id",
+        "GlialNode",
+        "--features",
+        "cli,dashboard",
+        "--available-skills",
+        "typescript",
+        "--available-tools",
+        "functions.shell_command,functions.apply_patch",
+        "--records",
+        recordsPath,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
+
+    const payload = JSON.parse(result.lines.join("\n")) as {
+      recommendation: {
+        confidence: string;
+        matchedRecords: number;
+        selectedSkills: string[];
+        selectedTools: string[];
+        warnings: string[];
+      };
+    };
+
+    assert.equal(payload.recommendation.confidence, "medium");
+    assert.equal(payload.recommendation.matchedRecords, 1);
+    assert.deepEqual(payload.recommendation.selectedSkills, ["typescript"]);
+    assert.deepEqual(payload.recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
+    assert.ok(payload.recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
+    assert.doesNotMatch(result.lines.join("\n"), /fix failing dashboard cli tests/i);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

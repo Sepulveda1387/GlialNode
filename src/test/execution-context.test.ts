@@ -8,6 +8,7 @@ import {
   assertNoForbiddenExecutionContextFields,
   createExecutionContextRecord,
   createExecutionContextTaskFingerprint,
+  recommendExecutionContext,
   type CreateExecutionContextRecordInput,
   type ExecutionContextRecord,
 } from "../index.js";
@@ -110,4 +111,70 @@ test("execution context schema validation rejects unsupported versions", () => {
   } as unknown as ExecutionContextRecord;
 
   assert.throws(() => assertExecutionContextRecord(unsupported), ValidationError);
+});
+
+test("execution context recommendation returns advisory metadata without raw task text", () => {
+  const fingerprint = createExecutionContextTaskFingerprint({
+    taskText: "Fix failing dashboard CLI tests.",
+    scope: { repoId: "GlialNode" },
+    features: ["dashboard", "cli"],
+  });
+  const record = createExecutionContextRecord({
+    taskFingerprint: fingerprint,
+    scope: { repoId: "GlialNode" },
+    selectedSkills: ["typescript", "github"],
+    selectedTools: ["functions.shell_command", "functions.apply_patch", "web.run"],
+    skippedTools: ["web.run"],
+    firstReads: ["docs/live-roadmap.gnl.md", "src/cli/commands.ts"],
+    outcome: { state: "success", toolCallCount: 6 },
+    confidence: "high",
+    createdAt: "2026-04-24T00:00:00.000Z",
+    retentionDays: 30,
+  });
+
+  const recommendation = recommendExecutionContext({
+    taskText: "fix failing dashboard cli tests",
+    scope: { repoId: "GlialNode" },
+    features: ["cli", "dashboard"],
+    availableSkills: ["typescript"],
+    availableTools: ["functions.shell_command", "functions.apply_patch"],
+    records: [record],
+    now: "2026-04-25T00:00:00.000Z",
+  });
+
+  assert.equal(recommendation.schemaVersion, "1.0.0");
+  assert.equal(recommendation.matchedRecords, 1);
+  assert.equal(recommendation.confidence, "medium");
+  assert.deepEqual(recommendation.selectedSkills, ["typescript"]);
+  assert.deepEqual(recommendation.selectedTools, ["functions.apply_patch", "functions.shell_command"]);
+  assert.deepEqual(recommendation.avoidTools, []);
+  assert.ok(recommendation.firstReads.includes("docs/live-roadmap.gnl.md"));
+  assert.ok(recommendation.warnings.some((warning) => warning.includes("Ignored unavailable skill")));
+  assert.ok(recommendation.warnings.some((warning) => warning.includes("Ignored unavailable tool")));
+  assert.doesNotMatch(JSON.stringify(recommendation), /fix failing dashboard cli tests/i);
+});
+
+test("execution context recommendation degrades when records expire or are missing", () => {
+  const expired = createExecutionContextRecord({
+    taskFingerprint: createExecutionContextTaskFingerprint({
+      taskText: "Add package export tests.",
+    }),
+    selectedTools: ["functions.shell_command"],
+    outcome: { state: "success" },
+    confidence: "high",
+    createdAt: "2026-04-01T00:00:00.000Z",
+    retentionDays: 1,
+  });
+
+  const recommendation = recommendExecutionContext({
+    taskText: "Add package export tests",
+    records: [expired],
+    now: "2026-04-25T00:00:00.000Z",
+  });
+
+  assert.equal(recommendation.confidence, "low");
+  assert.equal(recommendation.matchedRecords, 0);
+  assert.equal(recommendation.ignoredExpiredRecords, 1);
+  assert.deepEqual(recommendation.selectedTools, []);
+  assert.ok(recommendation.warnings.some((warning) => warning.includes("expired")));
 });

@@ -211,6 +211,7 @@ function normalizeTaskText(value: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
+    .trim()
     .slice(0, 1_000);
 }
 
