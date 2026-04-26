@@ -35,7 +35,10 @@ test("dashboard fixture script writes local demo artifacts", () => {
     assert.equal(existsSync(manifest.artifacts.recallQuality), true);
     assert.equal(existsSync(manifest.artifacts.trust), true);
     assert.equal(existsSync(manifest.artifacts.tokenRoiCsv), true);
+    assert.equal(existsSync(manifest.artifacts.dashboardHtml), true);
     assert.match(readFileSync(manifest.artifacts.tokenRoiCsv, "utf8"), /estimated_saved_tokens/);
+    assert.match(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /GlialNode Dashboard/);
+    assert.doesNotMatch(readFileSync(manifest.artifacts.dashboardHtml, "utf8"), /Primary dashboard memory/);
 
     const executive = JSON.parse(readFileSync(manifest.artifacts.executive, "utf8")) as {
       snapshot: { kind: string; value: { savedTokens: { value: number } } };

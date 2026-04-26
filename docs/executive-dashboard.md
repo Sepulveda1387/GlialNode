@@ -296,6 +296,7 @@ glialnode dashboard memory-health --json
 glialnode dashboard recall-quality --json
 glialnode dashboard trust --json
 glialnode dashboard alerts --json
+glialnode dashboard export --kind dashboard-html --format html --output dashboard.html --json
 glialnode dashboard export --kind token-roi --format csv --output token-roi.csv --json
 glialnode dashboard export --kind recall-quality --output recall-quality.json --json
 glialnode dashboard export --kind trust --output trust.json --json
@@ -311,8 +312,8 @@ Compatibility notes:
 - Alert evaluations are foreground/read-only; the OSS package does not run a background alert daemon.
 - Recall quality reports are metrics-only: host apps may provide record IDs in `dimensions.primaryRecordId` and comma-separated `dimensions.supportingRecordIds`, but raw memory text remains excluded.
 - Trust dashboard reports are metadata-only: signer posture, trust-pack counts, per-space trust settings, and provenance event summaries without bundle/snapshot contents.
-- Dashboard exports write local artifacts only. `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
-- `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work.
+- Dashboard exports write local artifacts only. `dashboard-html` writes a standalone local HTML dashboard; `token-roi` supports CSV/JSON; `memory-health`, `recall-quality`, `trust`, and `alerts` support JSON.
+- `npm run demo:dashboard` generates a synthetic local fixture under `.glialnode/dashboard-demo/` for parser tests, screenshots, and early dashboard UI work, including `artifacts/dashboard.html`.
 
 ## Privacy And Access Contract
 

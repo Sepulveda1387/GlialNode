@@ -631,6 +631,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     const tokenRoiCsvPath = join(tempDirectory, "token-roi.csv");
     const recallQualityJsonPath = join(tempDirectory, "recall-quality.json");
     const trustJsonPath = join(tempDirectory, "trust.json");
+    const dashboardHtmlPath = join(tempDirectory, "dashboard.html");
     const tokenRoiExportResult = await runCommand(
       parseArgs([
         "dashboard",
@@ -679,6 +680,24 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
       ]),
       { repository, databasePath },
     );
+    const dashboardHtmlExportResult = await runCommand(
+      parseArgs([
+        "dashboard",
+        "export",
+        "--kind",
+        "dashboard-html",
+        "--format",
+        "html",
+        "--output",
+        dashboardHtmlPath,
+        "--metrics-db",
+        metricsPath,
+        "--space-id",
+        spaceId,
+        "--json",
+      ]),
+      { repository, databasePath },
+    );
 
     const executive = JSON.parse(executiveResult.lines.join("\n")) as {
       snapshot: { kind: string; value: { savedTokens: { value: number } }; risk: { memoryHealthScore: { value: number } } };
@@ -704,6 +723,7 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     const tokenRoiExport = JSON.parse(tokenRoiExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const recallQualityExport = JSON.parse(recallQualityExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
     const trustExport = JSON.parse(trustExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
+    const dashboardHtmlExport = JSON.parse(dashboardHtmlExportResult.lines.join("\n")) as { kind: string; format: string; outputPath: string };
 
     assert.equal(executive.snapshot.kind, "executive");
     assert.equal(executive.snapshot.value.savedTokens.value, 600);
@@ -732,6 +752,11 @@ test("CLI dashboard executive and operations emit schema-versioned JSON snapshot
     assert.equal(trustExport.kind, "trust");
     assert.equal(trustExport.format, "json");
     assert.equal(JSON.parse(readFileSync(trustJsonPath, "utf8")).kind, "trust");
+    assert.equal(dashboardHtmlExport.kind, "dashboard-html");
+    assert.equal(dashboardHtmlExport.format, "html");
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /GlialNode Dashboard/);
+    assert.match(readFileSync(dashboardHtmlPath, "utf8"), /Executive Value/);
+    assert.doesNotMatch(readFileSync(dashboardHtmlPath, "utf8"), /Executive dashboard CLI memory/);
   } finally {
     repository.close();
     rmSync(tempDirectory, { recursive: true, force: true });

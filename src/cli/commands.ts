@@ -81,6 +81,7 @@ import {
   type TokenUsageGranularity,
   type TokenUsageReportOptions,
 } from "../metrics/index.js";
+import { renderDashboardHtml } from "../dashboard/html.js";
 import {
   applyRetentionPlan,
   createRetentionEvents,
@@ -217,7 +218,7 @@ export function usageText(): string {
     "  glialnode dashboard recall-quality [--metrics-db <path>] [--metrics-disabled true|false] [--space-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--from <iso>] [--to <iso>] [--max-top-recalled <n>] [--max-never-recalled <n>] [--json]",
     "  glialnode dashboard trust [--preset-directory <path>] [--recent-trust-events <n>] [--json]",
     "  glialnode dashboard alerts [--stale-freshness-threshold <0..1>] [--latest-backup-at <iso>] [--memory-health-warning-below <0..100>] [--memory-health-critical-below <0..100>] [--stale-record-warning-ratio <0..1>] [--stale-record-critical-ratio <0..1>] [--low-confidence-warning-ratio <0..1>] [--low-confidence-critical-ratio <0..1>] [--backup-warning-age-hours <n>] [--backup-critical-age-hours <n>] [--database-warning-bytes <n>] [--database-critical-bytes <n>] [--json]",
-    "  glialnode dashboard export --kind token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format json|csv] [dashboard filters...] [--json]",
+    "  glialnode dashboard export --kind dashboard-html|token-roi|memory-health|recall-quality|trust|alerts --output <path> [--format html|json|csv] [dashboard filters...] [--json]",
     "  glialnode preset list",
     "  glialnode preset show --name <preset> | --input <path>",
     "  glialnode preset diff --left <builtin:name|local:name|file:path> --right <builtin:name|local:name|file:path> [--directory <path>]",
@@ -909,8 +910,8 @@ function formatDashboardSnapshotCliLines(snapshot: Awaited<ReturnType<GlialNodeC
   ];
 }
 
-type DashboardExportKind = "token-roi" | "memory-health" | "recall-quality" | "trust" | "alerts";
-type DashboardExportFormat = "json" | "csv";
+type DashboardExportKind = "dashboard-html" | "token-roi" | "memory-health" | "recall-quality" | "trust" | "alerts";
+type DashboardExportFormat = "html" | "json" | "csv";
 
 async function buildDashboardExportArtifact(
   client: GlialNodeClient,
@@ -918,7 +919,30 @@ async function buildDashboardExportArtifact(
   format: DashboardExportFormat,
   options: Parameters<GlialNodeClient["buildDashboardOverviewSnapshot"]>[0],
 ): Promise<{ content: string }> {
+  if (kind === "dashboard-html") {
+    if (format !== "html") {
+      throw new Error("Dashboard HTML export only supports html format.");
+    }
+
+    const [executive, operations, memoryHealth, recallQuality, trust, alerts] = await Promise.all([
+      client.buildExecutiveDashboardSnapshot(options),
+      client.buildOperationsDashboardSnapshot(options),
+      client.buildMemoryHealthReport(options),
+      client.buildRecallQualityReport(options),
+      client.buildTrustDashboardReport(options),
+      client.evaluateDashboardAlerts(options),
+    ]);
+
+    return {
+      content: renderDashboardHtml({ executive, operations, memoryHealth, recallQuality, trust, alerts }),
+    };
+  }
+
   if (kind === "token-roi") {
+    if (format !== "json" && format !== "csv") {
+      throw new Error("Dashboard token ROI export only supports json or csv format.");
+    }
+
     const report = await client.getTokenUsageReport(options?.tokenUsage);
     return {
       content: format === "csv"
@@ -991,7 +1015,14 @@ function escapeCsvField(value: string): string {
 }
 
 function parseDashboardExportKind(value: string | undefined): DashboardExportKind {
-  if (value === "token-roi" || value === "memory-health" || value === "recall-quality" || value === "trust" || value === "alerts") {
+  if (
+    value === "dashboard-html" ||
+    value === "token-roi" ||
+    value === "memory-health" ||
+    value === "recall-quality" ||
+    value === "trust" ||
+    value === "alerts"
+  ) {
     return value;
   }
   throw new Error(`Invalid --kind value: ${value ?? ""}`);
@@ -999,9 +1030,9 @@ function parseDashboardExportKind(value: string | undefined): DashboardExportKin
 
 function parseDashboardExportFormat(value: string | undefined, kind: DashboardExportKind): DashboardExportFormat {
   if (value === undefined) {
-    return kind === "token-roi" ? "csv" : "json";
+    return kind === "dashboard-html" ? "html" : kind === "token-roi" ? "csv" : "json";
   }
-  if (value === "json" || value === "csv") {
+  if (value === "html" || value === "json" || value === "csv") {
     return value;
   }
   throw new Error(`Invalid --format value: ${value}`);

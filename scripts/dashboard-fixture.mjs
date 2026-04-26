@@ -211,6 +211,7 @@ const artifacts = {
     "80",
   ]),
   tokenRoiCsv: exportDashboardArtifact("token-roi", "csv", "token-roi.csv"),
+  dashboardHtml: exportDashboardArtifact("dashboard-html", "html", "dashboard.html"),
 };
 
 const manifest = {

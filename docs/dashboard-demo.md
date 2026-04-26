@@ -28,6 +28,7 @@ The generated directory contains:
 - `artifacts/dashboard-trust.json`
 - `artifacts/dashboard-alerts.json`
 - `artifacts/token-roi.csv`
+- `artifacts/dashboard.html`
 
 You can override the output directory:
 
@@ -41,5 +42,6 @@ The fixture is useful for:
 
 - validating dashboard parser integrations
 - checking CLI JSON and CSV artifact shapes
+- opening a standalone local dashboard HTML file without starting a server
 - preparing screenshots without exposing private memory
 - testing alert, recall-quality, trust, and executive overview panels
