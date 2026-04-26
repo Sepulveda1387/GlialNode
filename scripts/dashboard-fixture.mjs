@@ -195,6 +195,50 @@ recordTokenUsage({
   },
 });
 
+logStep("Seeding execution-context routing outcomes");
+recordExecutionOutcome({
+  task: "Tune the executive dashboard routing panel from local execution telemetry.",
+  outcome: "success",
+  features: "dashboard,routing,executive",
+  selectedSkills: "github:gh-fix-ci",
+  selectedTools: "functions.shell_command,functions.apply_patch",
+  skippedTools: "web.run",
+  firstReads: "docs/executive-dashboard.md,src/dashboard/builders.ts",
+  latencyMs: "720",
+  toolCallCount: "4",
+  inputTokens: "1120",
+  outputTokens: "260",
+  confidence: "high",
+});
+recordExecutionOutcome({
+  task: "Validate recall quality artifact shape for the dashboard demo fixture.",
+  outcome: "partial",
+  features: "dashboard,fixture,recall-quality",
+  selectedSkills: "github:github",
+  selectedTools: "functions.shell_command",
+  skippedTools: "image_gen.imagegen",
+  firstReads: "docs/dashboard-demo.md,src/test/dashboard-fixture.test.ts",
+  latencyMs: "940",
+  toolCallCount: "3",
+  inputTokens: "860",
+  outputTokens: "210",
+  confidence: "medium",
+});
+recordExecutionOutcome({
+  task: "Attempt browser-only dashboard verification without local build artifacts.",
+  outcome: "failed",
+  features: "dashboard,verification",
+  selectedSkills: "playwright",
+  selectedTools: "web.run",
+  skippedTools: "functions.shell_command",
+  firstReads: "website/index.html",
+  latencyMs: "410",
+  toolCallCount: "1",
+  inputTokens: "480",
+  outputTokens: "96",
+  confidence: "low",
+});
+
 logStep("Writing dashboard artifacts");
 const artifacts = {
   overview: exportDashboardJson("overview", "dashboard-overview.json"),
@@ -208,6 +252,7 @@ const artifacts = {
   memoryHealth: exportDashboardJson("memory-health", "dashboard-memory-health.json"),
   recallQuality: exportDashboardJson("recall-quality", "dashboard-recall-quality.json", ["--max-top-recalled", "10", "--max-never-recalled", "10"]),
   trust: exportDashboardJson("trust", "dashboard-trust.json", ["--preset-directory", presetDirectory]),
+  routingEfficiency: exportDashboardJson("routing-efficiency", "dashboard-routing-efficiency.json", ["--max-routing-insights", "10"]),
   alerts: exportDashboardJson("alerts", "dashboard-alerts.json", [
     "--latest-backup-at",
     "2026-04-24T00:00:00.000Z",
@@ -305,6 +350,47 @@ function recordTokenUsage(input) {
     input.latencyMs,
     "--dimensions",
     JSON.stringify(input.dimensions),
+  ]);
+}
+
+function recordExecutionOutcome(input) {
+  cli([
+    "execution-context",
+    "record-outcome",
+    "--metrics-db",
+    metricsDatabasePath,
+    "--repo-id",
+    "glialnode",
+    "--project-id",
+    "dashboard-demo",
+    "--workflow-id",
+    "fixture-generation",
+    "--agent-id",
+    agentScopeId,
+    "--task",
+    input.task,
+    "--outcome",
+    input.outcome,
+    "--features",
+    input.features,
+    "--selected-skills",
+    input.selectedSkills,
+    "--selected-tools",
+    input.selectedTools,
+    "--skipped-tools",
+    input.skippedTools,
+    "--first-reads",
+    input.firstReads,
+    "--latency-ms",
+    input.latencyMs,
+    "--tool-call-count",
+    input.toolCallCount,
+    "--input-tokens",
+    input.inputTokens,
+    "--output-tokens",
+    input.outputTokens,
+    "--confidence",
+    input.confidence,
   ]);
 }
 

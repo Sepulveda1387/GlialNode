@@ -34,6 +34,8 @@ test("package dashboard subpath resolves to the public dashboard contract", asyn
   assert.equal(dashboard.DASHBOARD_SNAPSHOT_SCHEMA_VERSION, "1.0.0");
   assert.equal(typeof dashboard.assertDashboardSnapshot, "function");
   assert.equal(typeof dashboard.assertDashboardSnapshotPrivacy, "function");
+  assert.equal(typeof dashboard.assertDashboardExecutionContextRoutingReport, "function");
+  assert.equal(typeof dashboard.buildDashboardExecutionContextRoutingReport, "function");
 });
 
 test("package metrics subpath resolves to the public metrics contract", async () => {

@@ -26,6 +26,7 @@ The generated directory contains:
 - `artifacts/dashboard-memory-health.json`
 - `artifacts/dashboard-recall-quality.json`
 - `artifacts/dashboard-trust.json`
+- `artifacts/dashboard-routing-efficiency.json`
 - `artifacts/dashboard-alerts.json`
 - `artifacts/token-roi.csv`
 - `artifacts/dashboard.html`
@@ -44,5 +45,5 @@ The fixture is useful for:
 - checking CLI JSON and CSV artifact shapes
 - opening a standalone local dashboard HTML file without starting a server
 - preparing screenshots without exposing private memory
-- testing alert, recall-quality, trust, and executive overview panels
+- testing alert, recall-quality, trust, routing-efficiency, and executive overview panels
 - previewing the operations benchmark baseline panel from `docs/benchmarks/latest.json`
