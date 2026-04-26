@@ -11,6 +11,7 @@ npm run check
 npm test
 npm run pack:check
 npm run demo
+npm run demo:client
 npm run demo:dashboard
 ```
 

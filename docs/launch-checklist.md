@@ -7,6 +7,7 @@
 - run `npm run check`
 - run `npm test`
 - run `npm run demo`
+- run `npm run demo:client`
 - run `npm run demo:dashboard`
 - run `npm run pack:check`
 - review `CHANGELOG.md`

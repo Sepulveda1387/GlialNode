@@ -2,7 +2,7 @@
 
 `glialnode release readiness` turns the `GT:V1.PUB` roadmap gate into a concrete report.
 
-The command is read-only. It checks the source tree for release-critical docs, the package surface, the V1/P0 roadmap status, and the SQLite storage contract. It also requires explicit manual confirmations for checks that should not be guessed by the library, such as whether tests passed in the current environment, the package dry-run is green, demo flows are green, docs were reviewed, the git tree is clean, and publishing has been approved.
+The command is read-only. It checks the source tree for release-critical docs, the package surface, the V1/P0 roadmap status, and the SQLite storage contract. It also requires explicit manual confirmations for checks that should not be guessed by the library, such as whether tests passed in the current environment, the package dry-run is green, CLI/client/dashboard demo flows are green, docs were reviewed, the git tree is clean, and publishing has been approved.
 
 ## CLI
 

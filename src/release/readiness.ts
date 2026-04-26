@@ -78,7 +78,7 @@ export function buildReleaseReadinessReport(inputs: ReleaseReadinessInputs = {})
     checkStorageContract(),
     manualCheck("tests_green", "Tests confirmed green", manualInputs.testsGreen, "Run `npm test` and confirm it passes."),
     manualCheck("pack_green", "Package check confirmed green", manualInputs.packGreen, "Run `npm run pack:check` and confirm it passes."),
-    manualCheck("demo_green", "Demo flows confirmed green", manualInputs.demoGreen, "Run `npm run demo` and `npm run demo:dashboard` and confirm they pass."),
+    manualCheck("demo_green", "Demo flows confirmed green", manualInputs.demoGreen, "Run `npm run demo`, `npm run demo:client`, and `npm run demo:dashboard` and confirm they pass."),
     manualCheck("docs_reviewed", "Release docs reviewed", manualInputs.docsReviewed, "Review launch, publish, compatibility, operator, and storage docs."),
     manualCheck("tree_clean", "Git tree confirmed clean", manualInputs.treeClean, "Confirm there are no uncommitted release changes."),
     manualCheck("user_approved", "User approved publishing", manualInputs.userApproved, "Publishing remains blocked until explicitly approved."),
@@ -178,7 +178,7 @@ function checkPackageSurface(rootDirectory: string): ReleaseReadinessCheck {
       missing.push(`files includes ${fileEntry}`);
     }
   }
-  for (const scriptName of ["check", "test", "pack:check", "demo", "demo:dashboard"]) {
+  for (const scriptName of ["check", "test", "pack:check", "demo", "demo:client", "demo:dashboard"]) {
     if (!manifest.scripts?.[scriptName]) {
       missing.push(`script ${scriptName}`);
     }
