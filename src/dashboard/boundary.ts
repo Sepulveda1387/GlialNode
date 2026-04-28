@@ -1,6 +1,6 @@
 import { ValidationError } from "../core/errors.js";
 
-export type DashboardDistributionTier = "oss_local" | "paid_team";
+export type DashboardDistributionTier = "oss_local" | "managed_private";
 
 export type DashboardCapability =
   | "local_metrics_sqlite"
@@ -8,12 +8,9 @@ export type DashboardCapability =
   | "local_static_html"
   | "local_read_only_http"
   | "seeded_demo_fixture"
-  | "hosted_team_dashboard"
-  | "supabase_project_backend"
-  | "postgres_team_storage"
-  | "subscription_billing"
-  | "org_role_access_control"
-  | "cross_user_tenancy";
+  | "managed_remote_dashboard"
+  | "managed_remote_storage"
+  | "managed_access_control";
 
 export interface DashboardDistributionBoundary {
   readonly tier: DashboardDistributionTier;
@@ -30,26 +27,23 @@ export const OSS_DASHBOARD_CAPABILITIES: readonly DashboardCapability[] = [
   "seeded_demo_fixture",
 ];
 
-export const PAID_TEAM_DASHBOARD_CAPABILITIES: readonly DashboardCapability[] = [
-  "hosted_team_dashboard",
-  "supabase_project_backend",
-  "postgres_team_storage",
-  "subscription_billing",
-  "org_role_access_control",
-  "cross_user_tenancy",
+export const RESERVED_MANAGED_DASHBOARD_CAPABILITIES: readonly DashboardCapability[] = [
+  "managed_remote_dashboard",
+  "managed_remote_storage",
+  "managed_access_control",
 ];
 
 export function createDashboardDistributionBoundary(
   tier: DashboardDistributionTier = "oss_local",
 ): DashboardDistributionBoundary {
-  if (tier === "paid_team") {
+  if (tier === "managed_private") {
     return {
       tier,
-      allowedCapabilities: PAID_TEAM_DASHBOARD_CAPABILITIES,
+      allowedCapabilities: RESERVED_MANAGED_DASHBOARD_CAPABILITIES,
       reservedCapabilities: [],
       privacyNotes: [
-        "Paid team dashboard work must use isolated tenant boundaries before any shared hosted deployment.",
-        "Supabase/Postgres, billing, and role-based access remain outside the OSS package until product demand validates them.",
+        "Managed remote dashboard work must define isolation boundaries before any shared deployment.",
+        "Managed remote capabilities remain outside the OSS package.",
       ],
     };
   }
@@ -57,10 +51,10 @@ export function createDashboardDistributionBoundary(
   return {
     tier,
     allowedCapabilities: OSS_DASHBOARD_CAPABILITIES,
-    reservedCapabilities: PAID_TEAM_DASHBOARD_CAPABILITIES,
+    reservedCapabilities: RESERVED_MANAGED_DASHBOARD_CAPABILITIES,
     privacyNotes: [
       "OSS dashboard capability is local-first, metrics-only, and safe to run without a hosted backend.",
-      "Hosted team dashboards, Supabase/Postgres team storage, subscriptions, roles, and org tenancy are reserved for the paid path.",
+      "Managed remote dashboard capabilities are outside the OSS scope.",
     ],
   };
 }
@@ -89,12 +83,12 @@ export function assertOssDashboardBoundary(
     }
   }
 
-  for (const capability of PAID_TEAM_DASHBOARD_CAPABILITIES) {
+  for (const capability of RESERVED_MANAGED_DASHBOARD_CAPABILITIES) {
     if (boundary.allowedCapabilities.includes(capability)) {
-      throw new ValidationError(`OSS dashboard boundary must not allow paid capability '${capability}'.`);
+      throw new ValidationError(`OSS dashboard boundary must not allow managed capability '${capability}'.`);
     }
     if (!boundary.reservedCapabilities.includes(capability)) {
-      throw new ValidationError(`OSS dashboard boundary must reserve paid capability '${capability}'.`);
+      throw new ValidationError(`OSS dashboard boundary must reserve managed capability '${capability}'.`);
     }
   }
 }

@@ -1,7 +1,7 @@
 import { ValidationError } from "../core/errors.js";
 import type { DashboardSnapshot } from "./schema.js";
 
-export type DashboardAccessMode = "local_process" | "local_read_only_http" | "hosted_team";
+export type DashboardAccessMode = "local_process" | "local_read_only_http" | "managed_remote";
 
 export type DashboardRedactionRule =
   | "no_prompt_text"
@@ -40,8 +40,8 @@ export function createDefaultDashboardPrivacyPolicy(
 }
 
 export function assertDashboardPrivacyPolicy(policy: DashboardPrivacyPolicy): void {
-  if (policy.accessMode === "hosted_team") {
-    throw new ValidationError("Hosted team dashboard access is reserved for the paid/Supabase path.");
+  if (policy.accessMode === "managed_remote") {
+    throw new ValidationError("Managed remote dashboard access is outside the OSS local dashboard scope.");
   }
 
   if (policy.accessMode === "local_read_only_http" && policy.allowedOrigins.length === 0) {

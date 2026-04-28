@@ -42,7 +42,7 @@ glialnode storage contract --json
 Preview a future migration path to a server-backed adapter:
 
 ```bash
-glialnode storage migration-plan --target postgres --json
+glialnode storage migration-plan --target server-backed --json
 ```
 
 The migration plan is read-only. It reports whether snapshot export/import is expected, whether schema migration work is required, what write-coordination assumptions change, and the recommended validation steps before cutover.
@@ -53,12 +53,12 @@ Host applications can inspect the same contract without shelling out:
 
 ```ts
 const contract = client.getStorageContract();
-const plan = client.planStorageMigration({ target: "postgres" });
+const plan = client.planStorageMigration({ target: "server-backed" });
 ```
 
 ## Future Server Backend
 
-A Postgres or server-backed source-of-truth adapter should not reuse the SQLite contract claims. It should declare:
+A server-backed source-of-truth adapter should not reuse the SQLite contract claims. It should declare:
 
 - `serverBacked=true`
 - `embedded=false`

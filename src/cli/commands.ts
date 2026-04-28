@@ -218,7 +218,7 @@ export function usageText(): string {
     "  glialnode status",
     "  glialnode doctor [--preset-directory <path>] [--db <path>] [--json]",
     "  glialnode storage contract [--json]",
-    "  glialnode storage migration-plan [--target postgres|server-backed] [--target-schema-version 1] [--target-full-text-search true|false] [--json]",
+    "  glialnode storage migration-plan [--target server-backed] [--target-schema-version 1] [--target-full-text-search true|false] [--json]",
     "  glialnode release readiness [--root <path>] [--tests-green true|false] [--pack-green true|false] [--demo-green true|false] [--docs-reviewed true|false] [--tree-clean true|false] [--user-approved true|false] [--json]",
     "  glialnode metrics token-record --operation <name> --model <model> --input-tokens <n> --output-tokens <n> [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--provider <name>] [--baseline-tokens <n>] [--actual-context-tokens <n>] [--glialnode-overhead-tokens <n>] [--estimated-saved-tokens <n>] [--estimated-saved-ratio <0..1>] [--latency-ms <n>] [--cost-currency <code>] [--input-cost <n>] [--output-cost <n>] [--total-cost <n>] [--dimensions <json>] [--created-at <iso>] [--metrics-db <path>] [--json]",
     "  glialnode metrics token-report [--granularity day|week|month|all] [--metrics-db <path>] [--space-id <id>] [--scope-id <id>] [--agent-id <id>] [--project-id <id>] [--workflow-id <id>] [--operation <name>] [--provider <name>] [--model <model>] [--from <iso>] [--to <iso>] [--cost-currency <code>] [--input-cost-per-million <n>] [--output-cost-per-million <n>] [--json]",
@@ -556,9 +556,7 @@ function runStorageCommand(action: string, parsed: ParsedArgs): CommandResult {
   if (action === "migration-plan") {
     const target = createServerBackedStorageContract({
       name: parsed.flags.target ?? "server-backed",
-      dialect: parsed.flags.target === "postgres" || parsed.flags.target === undefined
-        ? "postgres"
-        : parsed.flags.target,
+      dialect: parsed.flags.target ?? "server-backed",
       schemaVersion: parsed.flags["target-schema-version"]
         ? parseRequiredPositiveNumber(parsed.flags["target-schema-version"], "target-schema-version")
         : 1,

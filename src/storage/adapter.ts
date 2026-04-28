@@ -92,7 +92,7 @@ export function createServerBackedStorageContract(
 
   return {
     name: options.name ?? "server-backed",
-    dialect: options.dialect ?? "postgres",
+    dialect: options.dialect ?? "server-backed",
     schemaVersion: options.schemaVersion ?? 1,
     capabilities,
     guarantees: buildStorageGuarantees(capabilities),

@@ -209,7 +209,7 @@ test("CLI can inspect storage contracts and migration plans", async () => {
     assert.equal(contract.capabilities.crossProcessWrites, "single_writer");
 
     const planResult = await runCommand(
-      parseArgs(["storage", "migration-plan", "--target", "postgres", "--json"]),
+      parseArgs(["storage", "migration-plan", "--target", "server-backed", "--json"]),
       { repository },
     );
     const plan = JSON.parse(planResult.lines.join("\n")) as {
@@ -221,8 +221,8 @@ test("CLI can inspect storage contracts and migration plans", async () => {
     };
 
     assert.equal(plan.source.name, "sqlite");
-    assert.equal(plan.target.name, "postgres");
-    assert.equal(plan.target.dialect, "postgres");
+    assert.equal(plan.target.name, "server-backed");
+    assert.equal(plan.target.dialect, "server-backed");
     assert.equal(plan.requiresSnapshotExport, true);
     assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));
     assert.ok(plan.steps.some((step) => /snapshot restore path/i.test(step)));

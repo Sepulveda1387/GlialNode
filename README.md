@@ -196,7 +196,7 @@ What GlialNode does not guarantee:
 These defaults make the local single-writer story sturdier, but they do not turn SQLite into a high-concurrency distributed store.
 
 Storage adapters also expose a small backend contract through `describeStorageAdapter(...)`, including capability flags for local-first operation, full-text search, schema migrations, and cross-process write coordination. See `docs/storage-backends.md` for the current SQLite contract and future server-backed adapter boundary.
-Host apps can inspect the same path with `client.getStorageContract()` and `client.planStorageMigration({ target: "postgres" })`.
+Host apps can inspect the same path with `client.getStorageContract()` and `client.planStorageMigration({ target: "server-backed" })`.
 
 ## Portable Snapshots
 
@@ -819,7 +819,7 @@ glialnode space create --name "Team Memory"
 glialnode space create --name "Review Memory" --preset conservative-review
 glialnode status
 glialnode storage contract --json
-glialnode storage migration-plan --target postgres --json
+glialnode storage migration-plan --target server-backed --json
 glialnode release readiness --json
 glialnode metrics token-report --granularity day --json
 glialnode preset list

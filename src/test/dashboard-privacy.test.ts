@@ -25,25 +25,25 @@ test("dashboard privacy policy defaults to local metrics-only access", () => {
   assert.doesNotThrow(() => assertDashboardPrivacyPolicy(policy));
 });
 
-test("dashboard privacy policy rejects hosted team mode in OSS contracts", () => {
+test("dashboard privacy policy rejects managed remote mode in OSS contracts", () => {
   const policy = createDefaultDashboardPrivacyPolicy({
-    accessMode: "hosted_team",
+    accessMode: "managed_remote",
   });
 
   assert.throws(() => assertDashboardPrivacyPolicy(policy), ValidationError);
 });
 
-test("dashboard distribution boundary reserves paid team capabilities outside OSS", () => {
+test("dashboard distribution boundary reserves managed capabilities outside OSS", () => {
   const boundary = createDashboardDistributionBoundary("oss_local");
 
   assert.equal(boundary.tier, "oss_local");
   assert.ok(boundary.allowedCapabilities.includes("local_metrics_sqlite"));
   assert.ok(boundary.allowedCapabilities.includes("local_read_only_http"));
-  assert.ok(boundary.reservedCapabilities.includes("supabase_project_backend"));
-  assert.ok(boundary.reservedCapabilities.includes("subscription_billing"));
+  assert.ok(boundary.reservedCapabilities.includes("managed_remote_dashboard"));
+  assert.ok(boundary.reservedCapabilities.includes("managed_access_control"));
   assert.doesNotThrow(() => assertOssDashboardBoundary(boundary));
   assert.doesNotThrow(() => assertDashboardCapabilityAllowed("local_static_html", boundary));
-  assert.throws(() => assertDashboardCapabilityAllowed("hosted_team_dashboard", boundary), ValidationError);
+  assert.throws(() => assertDashboardCapabilityAllowed("managed_remote_dashboard", boundary), ValidationError);
 });
 
 test("dashboard distribution boundary rejects malformed OSS capability mixes", () => {
@@ -51,7 +51,7 @@ test("dashboard distribution boundary rejects malformed OSS capability mixes", (
     ...createDashboardDistributionBoundary("oss_local"),
     allowedCapabilities: [
       ...createDashboardDistributionBoundary("oss_local").allowedCapabilities,
-      "postgres_team_storage",
+      "managed_remote_storage",
     ],
   };
 

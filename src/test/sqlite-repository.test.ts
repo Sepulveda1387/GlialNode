@@ -174,14 +174,14 @@ test("sqlite storage adapter declares a valid local-first contract", () => {
 
 test("storage backend migration planner describes sqlite to server-backed migration risks", () => {
   const target = createServerBackedStorageContract({
-    name: "postgres",
-    dialect: "postgres",
+    name: "server-backed",
+    dialect: "server-backed",
     schemaVersion: 1,
   });
   const plan = planStorageBackendMigration(sqliteAdapter, target);
 
   assert.equal(plan.source.name, "sqlite");
-  assert.equal(plan.target.name, "postgres");
+  assert.equal(plan.target.name, "server-backed");
   assert.equal(plan.requiresSnapshotExport, true);
   assert.equal(plan.requiresSchemaMigration, true);
   assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));

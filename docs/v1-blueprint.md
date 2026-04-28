@@ -28,7 +28,7 @@ GlialNode v1 stays as one package with clear internal module boundaries:
 
 ### Memory Space
 
-Top-level tenant boundary used to isolate one orchestrator set from another.
+Top-level workspace boundary used to isolate one orchestrator set from another.
 
 ### Scope
 

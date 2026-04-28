@@ -93,9 +93,9 @@ test("GlialNodeClient exposes storage contract and migration planning helpers", 
     assert.equal(contract.capabilities.crossProcessWrites, "single_writer");
     assert.equal(contract.capabilities.fullTextSearch, true);
 
-    const plan = client.planStorageMigration({ target: "postgres" });
+    const plan = client.planStorageMigration({ target: "server-backed" });
     assert.equal(plan.source.name, "sqlite");
-    assert.equal(plan.target.name, "postgres");
+    assert.equal(plan.target.name, "server-backed");
     assert.equal(plan.requiresSnapshotExport, true);
     assert.ok(plan.warnings.some((warning) => /Write coordination changes/i.test(warning)));
   } finally {

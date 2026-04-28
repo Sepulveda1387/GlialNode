@@ -125,7 +125,7 @@ Highlights:
 Current limitations:
 - SQLite is currently best suited for local single-writer usage
 - semantic reranking is opt-in prototype functionality, not the default retrieval path
-- hosted/team dashboards, Supabase/Postgres storage, auth, billing, and org tenancy are reserved for a future paid path if open-source usage validates demand
+- managed remote dashboard capabilities are outside the OSS local-first scope
 - Node's built-in sqlite module is still experimental in Node 24
 ```
 

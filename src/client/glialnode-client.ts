@@ -692,7 +692,7 @@ export interface PreparedReplyContext {
 }
 
 export interface StorageMigrationPlanOptions {
-  target?: "postgres" | "server-backed" | string;
+  target?: "server-backed" | string;
   targetSchemaVersion?: number;
   targetFullTextSearch?: boolean;
 }
@@ -907,9 +907,7 @@ export class GlialNodeClient {
   planStorageMigration(options: StorageMigrationPlanOptions = {}): StorageBackendMigrationPlan {
     const target = createServerBackedStorageContract({
       name: options.target ?? "server-backed",
-      dialect: options.target === "postgres" || options.target === undefined
-        ? "postgres"
-        : options.target,
+      dialect: options.target ?? "server-backed",
       schemaVersion: options.targetSchemaVersion ?? 1,
       fullTextSearch: options.targetFullTextSearch ?? true,
     });

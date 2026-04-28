@@ -9,14 +9,14 @@ This is a planning and product contract only. It does not introduce metrics stor
 - Every dashboard panel must map to a named decision.
 - Cost and token values must distinguish measured usage from estimates.
 - Dashboard metrics must not store raw prompts, completions, retrieved memory text, secrets, or private tool outputs by default.
-- The open-source dashboard stays local-first and metrics-only; hosted team dashboards, auth, roles, billing, and org-wide tenancy belong to the future paid/Supabase path if demand validates it.
+- The open-source dashboard stays local-first and metrics-only; managed remote dashboard capabilities are outside the OSS local dashboard scope.
 - Before implementing `metrics.sqlite`, token usage APIs, aggregate cost reports, or dashboard snapshot APIs, pause and ask the owner to switch `reasoning_level=extra_high`.
 
 ## Personas
 
 | Persona | Primary question | Decisions the dashboard must support |
 | --- | --- | --- |
-| CEO / founder | Is GlialNode creating enough value to keep using or promoting? | Continue investment, publish results, prioritize paid/team backend only if usage signals justify it |
+| CEO / founder | Is GlialNode creating enough value to keep using or promoting? | Continue investment, publish results, prioritize the OSS local dashboard and defer managed deployment work |
 | CPO / product owner | Is memory quality improving user and agent outcomes? | Tune memory policy, prioritize recall quality work, identify confusing or underused workflows |
 | COO / operator | Is the system reliable, safe, and maintainable? | Run maintenance, review trust posture, schedule backup/export, investigate operational warnings |
 | Technical operator | What changed, what is risky, and what needs attention now? | Inspect records/events, review graph topology, check storage/runtime health, validate release readiness |
@@ -380,16 +380,16 @@ Local HTTP notes:
 - The OSS local server binds only to loopback hosts: `127.0.0.1`, `localhost`, or `::1`.
 - CORS is deny-by-default for browser origins. Use `--allow-origin <origin[,origin]>`; wildcard origins are intentionally not supported.
 - The local server auto-shuts down after `--duration-ms` and is intended for local dashboard clients, CI probes, and temporary previews.
-- Hosted team dashboards are intentionally rejected in the OSS privacy contract and reserved for the future paid/Supabase path.
+- Managed remote dashboards are intentionally rejected in the OSS privacy contract and kept outside the local-first package.
 
-## OSS Vs Paid Dashboard Boundary
+## OSS Dashboard Boundary
 
 The open-source package intentionally ships the dashboard as local-first infrastructure:
 
 - Allowed in OSS: local `metrics.sqlite`, CLI JSON, standalone local HTML export, temporary loopback-only read-only HTTP API, and seeded demo fixtures.
-- Reserved for a future paid/team path: hosted dashboards, Supabase project backend, Postgres team storage, subscription billing, org role access control, and cross-user tenancy.
+- Outside OSS scope: managed remote dashboard capabilities.
 - Validation helpers expose this boundary through `createDashboardDistributionBoundary()`, `assertOssDashboardBoundary()`, and `assertDashboardCapabilityAllowed(...)`.
-- The paid path must not be started as a hidden default in OSS. It should only begin after public OSS usage signals justify it, with tenant isolation, billing, and auth modeled explicitly.
+- Managed deployment features must not be started as hidden defaults in OSS. If explored separately, isolation, access control, and distribution boundaries must be modeled explicitly.
 
 Read-only local HTTP routes:
 
@@ -440,16 +440,16 @@ Snapshot privacy validation:
 15. Add optional read-only local HTTP routes. Complete for loopback-only, explicit-origin dashboard API routes.
 16. Add lifecycle-due memory health detail. Complete for planner-derived compaction/retention candidates and spaces missing maintenance.
 17. Add executive historical trend detail. Complete for recent bucket-level token ROI trend metrics in existing snapshot contracts.
-18. Define OSS vs paid dashboard boundary. Complete for exported capability boundary helpers plus documentation that keeps Supabase/Postgres/team dashboards reserved.
+18. Define OSS Dashboard Boundary. Complete for exported capability boundary helpers plus documentation that keeps managed deployment capabilities outside OSS.
 19. Add optional dashboard screenshot capture. Complete for `dashboard export --kind dashboard-html --screenshot-output <png>` with explicit viewport flags and optional Playwright runtime dependency.
 20. Add routing efficiency reporting. Complete for execution-context outcome dashboard report, executive snapshot field, CLI JSON/export, local HTML panel, and local HTTP route.
 21. Build the UI from snapshot contracts, not directly from storage tables.
 
 ## Non-Goals For OSS V2.07
 
-- Hosted multi-tenant dashboard.
-- Supabase/Postgres team backend.
-- Subscription billing.
+- Managed remote dashboard.
+- Managed remote storage.
+- Managed access control.
 - Role-based org access control.
 - LLM-scored dashboard recommendations by default.
 - Raw prompt/completion logging.
