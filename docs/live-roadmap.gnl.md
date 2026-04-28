@@ -6,9 +6,20 @@ Goal: low-token review, easy append-only updates, fast diffing, compact roadmap 
 ## Snapshot
 
 ```text
-STAT: date=2026-04-24; v1=1.00; vision=0.96; core=0.99; stor=0.94; recall=0.98; trust=1.00; dx=1.00; ops=1.00; docs=1.00
+STAT: date=2026-04-27; v1=1.00; vision=0.97; core=0.99; stor=0.95; recall=0.98; trust=1.00; dx=1.00; ops=1.00; docs=1.00
 CTX: mode=local_first; db=sqlite; retr=lexical_first; pri=pub_v1>hardening>dx>scale
 STATE: repo=public_v1_ready; publish=approved_for_public_testing; tests=green; pack=green; ci=ready
+```
+
+## Scope Validation
+
+```text
+VAL: date=2026-04-27; oss_mvp=complete; dashboard_oss=complete; remaining_open_source_build=none_release_blocking
+VAL:DASH_DONE: local metrics.sqlite, token record/report, executive/space/agent/ops snapshots, memory health, recall quality, trust, alerts, routing efficiency, local HTML/JSON/CSV exports, seeded demo fixture, local read-only HTTP API, privacy validators, OSS/paid boundary helpers
+VAL:OSS_DONE: sqlite local-first storage, stable cli/client/json surfaces, signed snapshots, trust packs, safe import/restore, recall/bundle/trace, lifecycle maintenance, inspector/export tooling, release gates, package surface, demos, CI
+VAL:NOT_MISSING_OSS: hosted dashboard, Supabase/Postgres, auth, org roles, subscriptions, cross-user tenancy, cloud sync, background SaaS jobs, default LLM scoring
+VAL:INTENTIONAL_HOLD: CK:V2.01 is paid/team-path infrastructure, not an OSS MVP gap; start only after public usage validates need and owner switches reasoning_level=extra_high
+VAL:NEXT_NON_CODE: public tester onboarding, release notes/tag/npm publish decision, issue templates, external feedback capture
 ```
 
 ## Legend
@@ -51,10 +62,10 @@ BP:15 | S:D | AR:STOR | RULE: query input must be escaped/sanitized before FTS e
 BP:16 | S:D | AR:DX | RULE: machine-readable output matters; human-readable and JSON-like automation surface should not diverge semantically
 BP:17 | S:D | AR:DOC | RULE: docs must update in same slice as behavior changes; roadmap should track real repo state only
 BP:18 | S:D | AR:REL | RULE: publish only from clean tree + green checks + reviewed roadmap gate
-BP:19 | S:N | AR:OBS | RULE: token/cost telemetry must be metrics_only by default; never store raw prompts, completions, retrieved content, or private memory text in metrics
-BP:20 | S:N | AR:DATA | RULE: reporting data should stay queryable without polluting semantic memory; prefer separate metrics store for high-volume operational telemetry
-BP:21 | S:N | AR:OBS | RULE: dashboard panels must map to explicit operator decisions; no vanity metric panel without a named CEO/CPO/COO decision
-BP:22 | S:N | AR:SEC | RULE: before implementing metrics/dashboard storage, pause and ask owner to switch reasoning_level=extra_high because privacy, measurement accuracy, and API contracts are high-risk
+BP:19 | S:D | AR:OBS | RULE: token/cost telemetry must be metrics_only by default; never store raw prompts, completions, retrieved content, or private memory text in metrics | NXT:[validated: metrics repository, CLI token-record, dashboard privacy tests, json-contract, and executive-dashboard docs reject raw prompt/memory/request/secret fields]
+BP:20 | S:D | AR:DATA | RULE: reporting data should stay queryable without polluting semantic memory; prefer separate metrics store for high-volume operational telemetry | NXT:[validated: separate glialnode.metrics.sqlite repository, disabled metrics mode, reporting APIs, and docs keep operational telemetry outside semantic memory]
+BP:21 | S:D | AR:OBS | RULE: dashboard panels must map to explicit operator decisions; no vanity metric panel without a named CEO/CPO/COO decision | NXT:[validated: docs/executive-dashboard.md maps panels to CEO/CPO/COO/operator decisions and dashboard builders expose stable JSON/API surfaces]
+BP:22 | S:D | AR:SEC | RULE: before implementing metrics/dashboard storage, pause and ask owner to switch reasoning_level=extra_high because privacy, measurement accuracy, and API contracts are high-risk | NXT:[validated: checkpoint completed before metrics/dashboard implementation; repeat for future paid Supabase/Postgres/auth/billing design]
 ```
 
 ## Release Gates
@@ -127,7 +138,7 @@ CK:V1p.10 | S:D | PH:V1p | PR:P2 | EF:S | AR:SEC | IN: expand trust lifecycle re
 ## V2
 
 ```text
-CK:V2.01 | S:H | PH:V2 | PR:P2 | EF:XL | AR:STOR | IN: Postgres backend or server-backed source-of-truth for heavier concurrency/team deployments | DOD:[adapter contract, migration path, docs] | DEP:[V1 storage hardening] | RSK:[premature scale work] | NXT:[defer until proven need]
+CK:V2.01 | S:H | PH:V2 | PR:P2 | EF:XL | AR:STOR | IN: Postgres backend or server-backed source-of-truth for heavier concurrency/team deployments | DOD:[adapter contract, migration path, docs] | DEP:[V1 storage hardening] | RSK:[premature scale work] | NXT:[intentional paid/team hold, not OSS MVP missing; defer until public usage validates need, then switch reasoning_level=extra_high before Supabase/Postgres/auth/billing/tenancy design]
 CK:V2.01a | S:D | PH:V2 | PR:P2 | EF:S | AR:STOR | IN: define storage backend adapter contract metadata before any server-backed implementation | DOD:[capability model, validation helper, sqlite declaration, docs, tests] | DEP:[V1 storage hardening] | RSK:[false backend claims] | NXT:[completed: describeStorageAdapter + assertStorageAdapterContract + storage contract/migration-plan cli+client + docs/storage-backends.md + status visibility]
 CK:V2.02 | S:D | PH:V2 | PR:P2 | EF:L | AR:RETR | IN: optional semantic retrieval module with eval-gated enablement and hybrid ranking | DOD:[plugin design, eval set, docs] | DEP:[retrieval eval corpus] | RSK:[semantic noise] | NXT:[completed: semantic prototype rerank + client/cli flags + semantic-eval report command + optional gate-pass enforcement]
 CK:V2.03 | S:D | PH:V2 | PR:P2 | EF:L | AR:UX | IN: local dashboard / TUI / web inspector for spaces, policies, trust stores, reports, recall traces | DOD:[inspect flows, screenshots, docs] | DEP:[json outputs] | RSK:[ux drag] | NXT:[completed: html+json inspector snapshots, index exports, pack exports, screenshot automation, and optional live-served pack mode]
@@ -167,9 +178,9 @@ CK:V2.07t | S:D | PH:V2 | PR:P0 | EF:XS | AR:SEC | IN: before starting V2.07a-d 
 CK:V2.08 | S:D | PH:V2 | PR:P1 | EF:L | AR:DX | IN: add skill/mcp/tool routing memory so agents can choose the minimal useful execution context for recurring task patterns | DOD:[routing_memory_schema, recommendExecutionContext api, cli_json, docs, tests] | DEP:[recall,bundle_trace,V2.07a] | RSK:[stale_tool_advice, over_pruning_needed_context, tool_surface_drift] | NXT:[completed: schema/model, recommendation API/CLI JSON, metrics-backed outcome persistence, dashboard efficiency reporting, and freshness/degrade behavior]
 CK:V2.08a | S:D | PH:V2 | PR:P1 | EF:M | AR:DATA | IN: define execution context memory model for task fingerprints, selected skills/tools, skipped tools, outcomes, latency, token/tool-call cost, and confidence | DOD:[types, validation, privacy_rules, retention_policy, docs/tests] | DEP:[V2.08] | RSK:[prompt_leakage, overfitted_task_patterns] | NXT:[completed: src/execution-context exports schema/version/types, task fingerprint hashing, execution context record creation/validation, raw-field privacy rejection, 30-day default retention, docs, and tests]
 CK:V2.08b | S:D | PH:V2 | PR:P1 | EF:M | AR:API | IN: expose recommendation API that accepts task text, repo/project scope, available skills, available MCP tools, and local tool constraints | DOD:[recommendExecutionContext client api, explainable_result, avoidTools, firstReads, confidence, cli_json, tests] | DEP:[V2.08a] | RSK:[black_box_tool_choice] | NXT:[completed: recommendExecutionContext API and CLI JSON provide fingerprint matching, availability filtering, expired-record degradation, firstReads, avoidTools, confidence, explanations, warnings, and tests without returning raw task text]
-CK:V2.08c | S:D | PH:V2 | PR:P2 | EF:M | AR:OBS | IN: record execution context outcomes so successful and wasteful tool paths improve future recommendations | DOD:[recordExecutionOutcome api, metrics.sqlite integration, success/fail/partial states, latency/tool_call/token counters, docs/tests] | DEP:[V2.08a,V2.07a] | RSK:[self_reinforcing_bad_routes]
-CK:V2.08d | S:D | PH:V2 | PR:P2 | EF:M | AR:UX | IN: surface tool-routing efficiency in dashboard: tools avoided, useful skills, noisy tools, saved time/tokens, and confidence drift | DOD:[dashboard_panel, dashboard_snapshot_fields, cli_json, docs/tests] | DEP:[V2.08c,V2.07d] | RSK:[vanity_efficiency_claims]
-CK:V2.08e | S:D | PH:V2 | PR:P2 | EF:M | AR:RETR | IN: add freshness/degrade behavior when skill names, MCP tool inventories, repo paths, or project conventions change | DOD:[availability_diff, stale_recommendation_warning, fallback_to_normal_discovery, tests/docs] | DEP:[V2.08b] | RSK:[broken_recommendations_after_tool_changes]
+CK:V2.08c | S:D | PH:V2 | PR:P2 | EF:M | AR:OBS | IN: record execution context outcomes so successful and wasteful tool paths improve future recommendations | DOD:[recordExecutionOutcome api, metrics.sqlite integration, success/fail/partial states, latency/tool_call/token counters, docs/tests] | DEP:[V2.08a,V2.07a] | RSK:[self_reinforcing_bad_routes] | NXT:[completed: execution outcomes persist to metrics.sqlite with success/partial/failed state, latency/tool/token counters, privacy validation, and tests]
+CK:V2.08d | S:D | PH:V2 | PR:P2 | EF:M | AR:UX | IN: surface tool-routing efficiency in dashboard: tools avoided, useful skills, noisy tools, saved time/tokens, and confidence drift | DOD:[dashboard_panel, dashboard_snapshot_fields, cli_json, docs/tests] | DEP:[V2.08c,V2.07d] | RSK:[vanity_efficiency_claims] | NXT:[completed: routing-efficiency dashboard report, executive snapshot routing field, CLI JSON/export, local HTML panel, local HTTP route, fixture coverage, and docs]
+CK:V2.08e | S:D | PH:V2 | PR:P2 | EF:M | AR:RETR | IN: add freshness/degrade behavior when skill names, MCP tool inventories, repo paths, or project conventions change | DOD:[availability_diff, stale_recommendation_warning, fallback_to_normal_discovery, tests/docs] | DEP:[V2.08b] | RSK:[broken_recommendations_after_tool_changes] | NXT:[completed: recommendations degrade when saved skills/tools/first-read paths are unavailable or expired, with availability diff warnings and fallback guidance]
 ```
 
 ## Research / Open Questions
